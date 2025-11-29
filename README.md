@@ -1,8 +1,32 @@
-# BabelFlow (巴别流)
+# HoloDub (幻读)
 
-> Rebuild the tower, frame by frame.
+<div align="center">
 
-BabelFlow is a **self-hosted video translation & dubbing toolkit for creators**.
+  <img src="./header.svg" alt="HoloDub Logo" width="100%">
+
+  <h3>Holographic Audio Dubbing with Perfect Sync</h3>
+  <p>全息音频配音 · 智能语义切分 · 时长精准对齐</p>
+
+  <p>
+    <a href="https://golang.org/">
+      <img src="https://img.shields.io/badge/Go-1.22+-00ADD8?style=flat&logo=go&logoColor=white" alt="Go Version">
+    </a>
+    <a href="https://www.python.org/">
+      <img src="https://img.shields.io/badge/Python-3.10+-3776AB?style=flat&logo=python&logoColor=white" alt="Python Version">
+    </a>
+    <a href="#">
+      <img src="https://img.shields.io/badge/Model-IndexTTS2-FF6F00?style=flat" alt="IndexTTS2">
+    </a>
+    <a href="https://opensource.org/licenses/MIT">
+      <img src="https://img.shields.io/badge/License-MIT-green.svg" alt="License">
+    </a>
+  </p>
+
+</div>
+
+> Dub the whole performance, not just the words.
+
+HoloDub is a **self-hosted video translation & dubbing toolkit for creators**.
 
 It is designed for people who need to re-voice videos for platforms like **YouTube, Bilibili, TikTok** and beyond:
 - channel owners,
@@ -10,7 +34,7 @@ It is designed for people who need to re-voice videos for platforms like **YouTu
 - fansub groups,
 - small studios that want to keep everything on their own GPU box or cloud instance.
 
-Instead of just “translating subtitles and dropping a generic voice on top”, BabelFlow rebuilds the audio track **around the original timeline** using:
+Instead of just “translating subtitles and dropping a generic voice on top”, HoloDub rebuilds the audio track **around the original timeline** using:
 
 > **Smart semantic splitting + duration-aware TTS**, so dubbed audio stays in sync with the video.
 
@@ -23,11 +47,11 @@ Instead of just “translating subtitles and dropping a generic voice on top”,
 - **Smart semantic split**
   - Whisper-based ASR with **word-level timestamps**.
   - VAD-assisted pause detection (Pyannote).
-  - Splits by **meaning and natural pauses**, not fixed chunks.
+  - Splits by **meaning and natural pauses**, not fixed-length chunks.
   - Configurable segment length window (e.g. 2–15 seconds).
 
 - **Duration-aware TTS (IndexTTS2)**
-  - Every segment carries its **original duration**.
+  - Every segment carries its **original duration** as metadata.
   - IndexTTS2 uses this as a hard constraint: generated speech length ≈ original segment length.
   - Optional `atempo` / light time-stretching as fallback when needed.
 
@@ -38,12 +62,12 @@ Instead of just “translating subtitles and dropping a generic voice on top”,
   - Each segment is tagged with a speaker ID.
 
 - **Custom voice profiles**
-  - `sample` mode:
-    - Upload 1–N reference clips → zero-shot voice cloning.
-  - `checkpoint` mode:
-    - Load your own SoVITS / IndexTTS-style checkpoints  
-      (`.pth/.ckpt + .index + config`).
-  - Language tags and speaker IDs stored in the database.
+  - `sample` mode  
+    Upload 1–N reference clips and use zero-shot voice cloning.
+  - `checkpoint` mode  
+    Load your own SoVITS / IndexTTS-style checkpoints  
+    (`.pth/.ckpt + .index + config`).
+  - Language tags, internal speaker IDs and model paths are stored centrally.
 
 - **Speaker → voice mapping**
   - For each job, map `SPK_01 / SPK_02 / …` to different voice profiles.
@@ -54,11 +78,11 @@ Instead of just “translating subtitles and dropping a generic voice on top”,
 
 - **Run it where you want**
   - On your own GPU PC at home.
-  - On a cheap cloud GPU instance.
-  - No external SaaS required.
+  - On a single cloud GPU instance.
+  - No external SaaS required by default.
 
 - **Single-node by default**
-  - Simple “Ultimate” layout:
+  - Simple “one-box” layout:
     - Go control plane (API + worker)
     - Python ML service (GPU)
     - PostgreSQL + Redis
@@ -72,7 +96,8 @@ Instead of just “translating subtitles and dropping a generic voice on top”,
 
 ## 🧱 Architecture (short version)
 
-You don’t need to understand all of this to use BabelFlow — but if you’re curious or want to hack on it, here’s the rough picture.
+You don’t need to understand all of this to *use* HoloDub —  
+but if you want to hack on it, here’s the rough picture.
 
 ### Control plane (Go)
 
@@ -86,10 +111,10 @@ You don’t need to understand all of this to use BabelFlow — but if you’re 
   - `voice_profiles` (custom voices),
   - `speakers` (logical speakers per job),
   - `speaker_voice_bindings` (who uses which voice),
-  - `segments` (small time-aligned pieces).
+  - `segments` (time-aligned pieces).
 
 - Uses Redis as task queue:
-  - Job-level stage tasks, e.g. `job:123:stage:asr_smart`.
+  - Job-level stage tasks (e.g. `job:123:stage:asr_smart`).
   - Optionally segment-level TTS tasks.
 
 - Talks to an LLM (Qwen / DeepSeek / etc.) for translation:
@@ -109,7 +134,7 @@ You don’t need to understand all of this to use BabelFlow — but if you’re 
   - `POST /asr/smart_split`  
     → segments with `start_ms`, `end_ms`, `text`, `speaker_label`, `split_reason`.
   - `POST /tts/run`  
-    → takes text + `target_duration_sec` + `voice_config` + `output_relpath`,  
+    → takes `text` + `target_duration_sec` + `voice_config` + `output_relpath`,  
     → returns saved audio path + actual duration.
 
 ### Shared storage
@@ -138,7 +163,7 @@ You don’t need to understand all of this to use BabelFlow — but if you’re 
 
 - **speaker_voice_bindings**
   - Maps `speaker_id` → `voice_profile_id`.  
-    This is where you say: “for this job, SPK_01 uses Voice A, SPK_02 uses Voice B”.
+    This is where you say: *“for this job, SPK_01 uses Voice A, SPK_02 uses Voice B.”*
 
 - **segments**
   - Minimal units for translation & TTS.
@@ -153,7 +178,7 @@ You don’t need to understand all of this to use BabelFlow — but if you’re 
 
 ## 📊 Status
 
-BabelFlow is in **early design & prototyping**.
+HoloDub is in **early design & prototyping**.
 
 - [x] Architecture & schema design
 - [x] Speaker / voice mapping model

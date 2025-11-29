@@ -1,16 +1,41 @@
-# BabelFlow（巴别流）
+# HoloDub（幻读）
 
-> Rebuild the tower, frame by frame.
+<div align="center">
 
-BabelFlow 是一个 **面向创作者的、自托管的视频翻译与配音工具箱**。
+  <img src="./header.svg" alt="HoloDub Logo" width="100%">
+
+  <h3>Holographic Audio Dubbing with Perfect Sync</h3>
+  <p>全息音频配音 · 智能语义切分 · 时长精准对齐</p>
+
+  <p>
+    <a href="https://golang.org/">
+      <img src="https://img.shields.io/badge/Go-1.22+-00ADD8?style=flat&logo=go&logoColor=white" alt="Go Version">
+    </a>
+    <a href="https://www.python.org/">
+      <img src="https://img.shields.io/badge/Python-3.10+-3776AB?style=flat&logo=python&logoColor=white" alt="Python Version">
+    </a>
+    <a href="#">
+      <img src="https://img.shields.io/badge/Model-IndexTTS2-FF6F00?style=flat" alt="IndexTTS2">
+    </a>
+    <a href="https://opensource.org/licenses/MIT">
+      <img src="https://img.shields.io/badge/License-MIT-green.svg" alt="License">
+    </a>
+  </p>
+
+</div>
+
+> Dub the whole performance, not just the words.  
+> 不止翻译台词，而是重现整场表演。
+
+HoloDub 是一个 **面向创作者、自托管的视频翻译与配音工具箱**。
 
 它主要服务于这样一群人：
 
 - 想把 YouTube / B 站 / TikTok 视频搬运到其他语种平台的 UP / 博主  
-- 做剪辑、二创、混剪的个人创作者小团队  
+- 做剪辑、二创、混剪的个人创作者、小团队  
 - 想在本地 GPU 主机或云服务器上，用自己的模型做“私有译制”的字幕组 / Studio  
 
-BabelFlow 的目标不是“随便翻译一下、套一条通用 TTS 配音”，  
+HoloDub 的目标不是“翻完字幕 + 随便套一条 AI 配音”，  
 而是围绕整条时间轴，**重构音轨**，尽量接近「原生配音」的观看体验：
 
 > 核心能力：**智能语义切分 + 时长感知 TTS（Duration-aware TTS）**
@@ -27,7 +52,7 @@ BabelFlow 的目标不是“随便翻译一下、套一条通用 TTS 配音”�
   - 按“语义 + 停顿”拆分片段，而不是机械按固定时长切。
   - 可配置片段时长窗口（例如 2–15 秒 / 段）。
 
-- **时长感知 TTS（Duration-aware TTS，IndexTTS2）**
+- **时长感知 TTS（Duration-aware TTS, IndexTTS2）**
   - 每个片段记录「原始时长」，作为 TTS 的硬约束输入。
   - 利用 IndexTTS2 的时长控制能力，使合成语音的长度尽量贴近原片段。
   - 必要时配合 `atempo` 等轻量时间拉伸手段，保证「音画尽量对齐」。
@@ -39,16 +64,16 @@ BabelFlow 的目标不是“随便翻译一下、套一条通用 TTS 配音”�
   - 每个切分片段都会绑定一个说话人 ID。
 
 - **自定义音色配置（Voice Profiles）**
-  - `sample` 模式：
-    - 上传若干段参考音频，即可做 zero-shot 声纹克隆。
-  - `checkpoint` 模式：
-    - 直接加载已有的 SoVITS / IndexTTS 风格检查点  
-      （`.pth/.ckpt + .index + config`）。
+  - `sample` 模式：  
+    上传若干段参考音频，即可做 zero-shot 声纹克隆。
+  - `checkpoint` 模式：  
+    直接加载已有的 SoVITS / IndexTTS 风格检查点  
+    （`.pth/.ckpt + .index + config`）。
   - 支持统一管理模型路径、说话人 ID、语种标签等元数据。
 
 - **说话人与音色映射（Speaker → Voice Mapping）**
-  - 面向每条视频任务（Job）：
-    - 为 `SPK_01 / SPK_02 / …` 分别选择不同的 Voice Profile。
+  - 面向每条视频任务（Job）：  
+    为 `SPK_01 / SPK_02 / …` 分别选择不同的 Voice Profile。
   - 一个视频里，可以让主持人、嘉宾、旁白用完全不同的音色。
   - 修改映射后，可以只对受影响的片段重新生成配音。
 
@@ -60,7 +85,7 @@ BabelFlow 的目标不是“随便翻译一下、套一条通用 TTS 配音”�
   - 默认不依赖任何第三方 SaaS。
 
 - **默认单节点架构**
-  - 简单的 “Ultimate 单机版” 拓扑：
+  - 简单的“一机版”拓扑：
     - Go 控制面（API + Worker）
     - Python ML 服务（GPU 推理）
     - PostgreSQL + Redis
@@ -92,7 +117,7 @@ BabelFlow 的目标不是“随便翻译一下、套一条通用 TTS 配音”�
   - `segments`：切分片段（翻译 & TTS 的最小单位）。
 
 - 基于 Redis 做任务队列：
-  - Job 级别阶段任务（如 `job:123:stage:asr_smart`）。
+  - Job 级阶段任务（如 `job:123:stage:asr_smart`）。
   - 需要的时候可细化到 Segment 级别的 TTS 子任务。
 
 - 对接 LLM（Qwen / DeepSeek 等）做翻译：
@@ -102,7 +127,7 @@ BabelFlow 的目标不是“随便翻译一下、套一条通用 TTS 配音”�
 
 - 使用 Python 3.10+、FastAPI、PyTorch。
 - 提供全局 GPU 锁 / 信号量，避免 OOM。
-- 模型注册表管理：
+- 使用模型注册表管理：
   - Demucs / UVR5：人声 / 伴奏分离。
   - Faster-Whisper：ASR + 单词级时间戳。
   - Pyannote：VAD + 说话人识别。
@@ -111,7 +136,7 @@ BabelFlow 的目标不是“随便翻译一下、套一条通用 TTS 配音”�
 - 通过 HTTP 提供接口，例如：
   - `POST /asr/smart_split`：
     - 输入：`audio_path`（相对路径）、最小/最大片段时长。
-    - 输出：携带 `start_ms` / `end_ms` / `text` / `speaker_label` / `split_reason` 的片段列表。
+    - 输出：包含 `start_ms` / `end_ms` / `text` / `speaker_label` / `split_reason` 的片段列表。
   - `POST /tts/run`：
     - 输入：译文、`target_duration_sec`、`voice_config`、`output_relpath`。
     - 输出：音频保存路径 + 实际生成时长。
@@ -140,7 +165,7 @@ BabelFlow 的目标不是“随便翻译一下、套一条通用 TTS 配音”�
 
 ## 🚦 当前状态
 
-项目目前处于 **早期设计 & 原型** 阶段：
+HoloDub 目前处于 **早期设计 & 原型** 阶段：
 
 - [x] 架构与数据模型设计完成
 - [x] 说话人与音色映射抽象完成
