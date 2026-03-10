@@ -172,11 +172,11 @@ HoloDub 的目标不是“翻完字幕 + 随便套一条 AI 配音”，
 - [x] 烟测模式端到端（mock / ffmpeg_stub / silence）
 - [x] **真实 ASR**：Faster-Whisper large-v3，GPU 加速，词级时间戳
 - [x] **真实翻译**：OpenAI 兼容接口（已测 qwen-turbo / DeepSeek）
-- [x] **真实 TTS**：Edge-TTS（微软，免费，中文自然语音，含时长对齐）
+- [x] **真实 TTS（过渡方案）**：Edge-TTS（微软，免费，中文自然语音，含 atempo 时长对齐）
 - [x] GPU 直通（NVIDIA Container Toolkit + Docker Compose `deploy.devices`）
 - [ ] 真实人声 / 伴奏分离（Demucs，需 `ML_PYTHON_EXTRAS=real`）
 - [ ] 说话人分离（Pyannote，需 HuggingFace token）
-- [ ] 时长感知 TTS 集成（IndexTTS2，零样本声纹克隆）
+- [ ] **IndexTTS2 集成**（下一步重点，见下文）
 
 欢迎一起参与开发、提 Issue / PR。
 
@@ -273,7 +273,10 @@ docker compose down                       # 停止并移除容器
 docker compose --env-file .env up -d      # 显式指定 .env 重启（推荐）
 ```
 
-### Edge-TTS 音色选项
+### Edge-TTS 音色选项（过渡方案）
+
+> Edge-TTS 是当前的**临时 TTS 方案**，目的是在 IndexTTS2 接入之前验证完整的流水线。  
+> 它不支持零样本声纹克隆，所有说话人都使用相同的预设音色。
 
 默认音色为 `zh-CN-XiaoxiaoNeural`（女声）。可在 `.env` 中设置 `EDGE_TTS_VOICE` 更换：
 
@@ -283,6 +286,55 @@ docker compose --env-file .env up -d      # 显式指定 .env 重启（推荐）
 | `zh-CN-YunxiNeural` | 男声，新闻播报 |
 | `zh-CN-YunjianNeural` | 男声，激昂有力 |
 | `zh-TW-HsiaoChenNeural` | 台湾女声 |
+
+---
+
+## 🎯 下一步：IndexTTS2 集成
+
+[IndexTTS2](https://github.com/index-tts/index-tts) 是 HoloDub 真正想用的 TTS 后端，由 Bilibili 发布，Apache 2.0 协议。  
+它的核心能力与 HoloDub 的设计目标高度契合：
+
+### 核心能力
+
+**1. 时长精准控制（HoloDub 最需要的）**  
+- 自回归 TTS 历史上首次做到精确时长控制
+- 两种模式：指定生成 token 数量（硬约束） / 自由生成但复现参考音频的韵律节奏
+- 直接替代当前 Edge-TTS + `atempo` 变速的凑合方案，配音更自然
+
+**2. 零样本声纹克隆**  
+- 只需 3~10 秒参考音频即可克隆任意说话人音色
+- 结合 HoloDub 的 Voice Profile 体系，每个 `SPK_01 / SPK_02` 可绑定不同克隆音色
+- 不需要训练，推理即用
+
+**3. 情感控制**  
+- 音色与情感解耦：可以用 A 的声音表达 B 的情绪
+- 支持参考音频情感迁移、情感向量（8 维：快乐/愤怒/悲伤/恐惧/厌恶/忧郁/惊讶/平静）、文字描述三种方式
+- 对配音场景尤其有价值（愤怒的台词不能用平静的语气说）
+
+### 接入方式
+
+TTS 适配器已预留 `indextts2` 后端，支持两种接入模式：
+
+**HTTP 模式**（推荐，将 IndexTTS2 作为独立服务）：
+```env
+ML_TTS_BACKEND=indextts2
+INDEXTTS2_ENDPOINT=http://your-indextts2-service:8000/tts
+```
+
+**命令模式**（本地直接调用）：
+```env
+ML_TTS_BACKEND=indextts2
+INDEXTTS2_COMMAND=python run_tts.py --text "{text}" --duration "{duration}" --output "{output}"
+```
+
+### 待实现
+
+- [ ] 将 `indextts2-inference` 集成进 `ml-service`（`ML_TTS_BACKEND=indextts2` 内联模式）
+- [ ] `voice_config` 中传递 `spk_audio_prompt` 参数，打通 Voice Profile → 声纹克隆
+- [ ] `emo_audio_prompt` / `use_emo_text` 支持，实现情感感知配音
+- [ ] 时长控制参数（`target_duration_sec` → `max_mel_tokens`）映射
+
+---
 
 ### .env 配置说明
 

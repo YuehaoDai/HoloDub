@@ -185,11 +185,11 @@ but if you want to hack on it, here’s the rough picture.
 - [x] Smoke-mode end-to-end pipeline (`mock` / `ffmpeg_stub` / `silence`)
 - [x] **Real ASR**: Faster-Whisper large-v3, GPU-accelerated, word-level timestamps
 - [x] **Real translation**: OpenAI-compatible API (tested with qwen-turbo / DeepSeek)
-- [x] **Real TTS**: Edge-TTS (Microsoft, free, natural Chinese voice, with duration alignment)
+- [x] **Real TTS (interim)**: Edge-TTS (Microsoft, free, Chinese voice, atempo duration alignment)
 - [x] GPU passthrough (NVIDIA Container Toolkit + Docker Compose `deploy.devices`)
 - [ ] Real vocal / BGM separation (Demucs, requires `ML_PYTHON_EXTRAS=real`)
 - [ ] Speaker diarization (Pyannote, requires HuggingFace token)
-- [ ] Duration-aware TTS (IndexTTS2, zero-shot voice cloning)
+- [ ] **IndexTTS2 integration** (next major milestone, see below)
 
 If you’re interested in hacking on it, PRs and discussions are very welcome.
 
@@ -282,7 +282,10 @@ docker compose down                       # stop and remove containers
 docker compose --env-file .env up -d      # restart with explicit env file (recommended)
 ```
 
-### Edge-TTS voice options
+### Edge-TTS voice options (interim)
+
+> Edge-TTS is a **temporary TTS solution** to validate the full pipeline before IndexTTS2 is wired in.  
+> It does not support zero-shot voice cloning; all speakers use the same preset voice.
 
 Default is `zh-CN-XiaoxiaoNeural` (female, conversational). Override with `EDGE_TTS_VOICE` in `.env`:
 
@@ -292,6 +295,54 @@ Default is `zh-CN-XiaoxiaoNeural` (female, conversational). Override with `EDGE_
 | `zh-CN-YunxiNeural` | Male, news-reading |
 | `zh-CN-YunjianNeural` | Male, energetic |
 | `zh-TW-HsiaoChenNeural` | Female, Traditional Chinese |
+
+---
+
+## 🎯 Next milestone: IndexTTS2
+
+[IndexTTS2](https://github.com/index-tts/index-tts) (Bilibili, Apache 2.0) is the TTS backend HoloDub is built for.  
+Its core capabilities map directly onto HoloDub's design goals:
+
+### Why IndexTTS2
+
+**1. Precise duration control** ← the most critical feature for dubbing  
+- First autoregressive TTS to achieve hard duration constraints.
+- Two modes: explicit token count (hard target) / free generation that reproduces the reference audio's prosodic rhythm.
+- Replaces the current Edge-TTS + `atempo` workaround — no more robotic speed-up/slow-down artifacts.
+
+**2. Zero-shot voice cloning**  
+- Clone any speaker from 3–10 s of reference audio, no training needed.
+- Integrates naturally with HoloDub's Voice Profile system: bind a reference clip to `SPK_01`, another to `SPK_02`.
+
+**3. Emotion control**  
+- Timbre and emotion are disentangled — use Speaker A's voice to convey Speaker B's emotion.
+- Three control mechanisms: reference audio, emotion vector (8 dims: happy/angry/sad/afraid/disgusted/melancholic/surprised/calm), or natural-language description (via Qwen3 fine-tune).
+- Critical for dubbing: an angry line must sound angry, not calm.
+
+### Integration plan
+
+The TTS adapter already has an `indextts2` backend stub with two connection modes:
+
+**HTTP mode** (recommended — run IndexTTS2 as a sidecar service):
+```env
+ML_TTS_BACKEND=indextts2
+INDEXTTS2_ENDPOINT=http://your-indextts2-service:8000/tts
+```
+
+**Command mode** (call a local script):
+```env
+ML_TTS_BACKEND=indextts2
+INDEXTTS2_COMMAND=python run_tts.py --text "{text}" --duration "{duration}" --output "{output}"
+```
+
+### Remaining work
+
+- [ ] Inline `indextts2-inference` into `ml-service` (`ML_TTS_BACKEND=indextts2` native mode)
+- [ ] Thread `spk_audio_prompt` from Voice Profile through to IndexTTS2 for per-speaker voice cloning
+- [ ] `emo_audio_prompt` / `use_emo_text` support for emotion-aware dubbing
+- [ ] Map `target_duration_sec` → `max_mel_tokens` for hard duration control
+
+---
 
 ### .env quick reference
 
