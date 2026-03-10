@@ -1,0 +1,30 @@
+{
+  "translation": {
+    "provider": "openai_compatible",
+    "model": "gpt-4.1-mini",
+    "base_url": "https://api.openai.com/v1",
+    "notes": "Replace with your production gateway or vendor endpoint."
+  },
+  "separator": {
+    "backend": "demucs",
+    "package": "demucs",
+    "version": "latest-compatible",
+    "weights": "htdemucs"
+  },
+  "asr": {
+    "backend": "faster_whisper",
+    "package": "faster-whisper",
+    "model": "large-v3",
+    "version": "latest-compatible"
+  },
+  "vad": {
+    "backend": "pyannote",
+    "package": "pyannote.audio",
+    "pipeline": "pyannote/speaker-diarization-3.1"
+  },
+  "tts": {
+    "backend": "indextts2",
+    "integration_mode": "http_or_command",
+    "model": "replace-with-your-production-model"
+  }
+}

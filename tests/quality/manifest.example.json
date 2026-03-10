@@ -1,0 +1,22 @@
+{
+  "samples": [
+    {
+      "name": "single-speaker-short",
+      "job_id": 34,
+      "max_output_duration_delta_ms": 1000,
+      "max_segment_duration_delta_ms": 500,
+      "max_translation_length_ratio": 1.8,
+      "manual_review_required": true,
+      "notes": "Use a clean single-speaker clip with moderate pacing."
+    },
+    {
+      "name": "multi-speaker-dialogue",
+      "job_id": 0,
+      "max_output_duration_delta_ms": 1500,
+      "max_segment_duration_delta_ms": 700,
+      "max_translation_length_ratio": 1.9,
+      "manual_review_required": true,
+      "notes": "Use a two-speaker clip with overlap, interruption, and background music."
+    }
+  ]
+}

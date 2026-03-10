@@ -26,6 +26,38 @@ go.work.sum
 
 # env file
 .env
+.venv/
+.venv-smoke/
+
+# Python cache / build outputs
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+dist/
+build/
+*.egg-info/
+
+# Runtime data
+data/jobs/
+data/tmp/
+data/cache/
+
+# HuggingFace model cache (large files, populated at runtime)
+hf-cache/
+
+# Test / sample videos should not be committed
+*.mp4
+*.mkv
+*.webm
+*.avi
+
+# Secrets and local tokens
+token.txt
+
+# Local tooling / scratch files
+.DS_Store
+query
 
 # Editor/IDE
 # .idea/

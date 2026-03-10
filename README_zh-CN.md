@@ -9,7 +9,7 @@
 
   <p>
     <a href="https://golang.org/">
-      <img src="https://img.shields.io/badge/Go-1.22+-00ADD8?style=flat&logo=go&logoColor=white" alt="Go Version">
+      <img src="https://img.shields.io/badge/Go-1.25+-00ADD8?style=flat&logo=go&logoColor=white" alt="Go Version">
     </a>
     <a href="https://www.python.org/">
       <img src="https://img.shields.io/badge/Python-3.10+-3776AB?style=flat&logo=python&logoColor=white" alt="Python Version">
@@ -17,8 +17,8 @@
     <a href="#">
       <img src="https://img.shields.io/badge/Model-IndexTTS2-FF6F00?style=flat" alt="IndexTTS2">
     </a>
-    <a href="https://opensource.org/licenses/MIT">
-      <img src="https://img.shields.io/badge/License-MIT-green.svg" alt="License">
+    <a href="https://www.apache.org/licenses/LICENSE-2.0">
+      <img src="https://img.shields.io/badge/License-Apache%202.0-green.svg" alt="License">
     </a>
   </p>
 
@@ -104,7 +104,7 @@ HoloDub 的目标不是“翻完字幕 + 随便套一条 AI 配音”，
 
 ### 控制面（Go）
 
-- 使用 Go 1.22+、Gin、GORM。
+- 使用 Go 1.25+、Gin、GORM。
 - 驱动任务在以下阶段流转：
 
   `media` → `separate` → `asr_smart` → `translate` → `tts_duration` → `merge`
@@ -165,17 +165,135 @@ HoloDub 的目标不是“翻完字幕 + 随便套一条 AI 配音”，
 
 ## 🚦 当前状态
 
-HoloDub 目前处于 **早期设计 & 原型** 阶段：
-
 - [x] 架构与数据模型设计完成
 - [x] 说话人与音色映射抽象完成
-- [ ] Go 控制面骨架（API + Worker）
-- [ ] Python ML 服务骨架（FastAPI）
-- [ ] 智能切分实现（ASR + VAD + 规则）
-- [ ] 时长感知 TTS 集成（IndexTTS2）
-- [ ] 端到端 Demo Pipeline
+- [x] Go 控制面（API + Worker）
+- [x] Python ML 服务（FastAPI）
+- [x] 烟测模式端到端（mock / ffmpeg_stub / silence）
+- [x] **真实 ASR**：Faster-Whisper large-v3，GPU 加速，词级时间戳
+- [x] **真实翻译**：OpenAI 兼容接口（已测 qwen-turbo / DeepSeek）
+- [x] **真实 TTS**：Edge-TTS（微软，免费，中文自然语音，含时长对齐）
+- [x] GPU 直通（NVIDIA Container Toolkit + Docker Compose `deploy.devices`）
+- [ ] 真实人声 / 伴奏分离（Demucs，需 `ML_PYTHON_EXTRAS=real`）
+- [ ] 说话人分离（Pyannote，需 HuggingFace token）
+- [ ] 时长感知 TTS 集成（IndexTTS2，零样本声纹克隆）
 
-欢迎在架子搭好之后一起参与开发、提 Issue / PR。
+欢迎一起参与开发、提 Issue / PR。
+
+---
+
+## ▶ 运行当前原型
+
+### 前置条件
+
+- **Docker Desktop** 已安装并运行（Windows 使用 WSL2 后端）
+- NVIDIA GPU 用户需额外安装 **NVIDIA Container Toolkit**（Docker Desktop 自带 nvidia runtime 支持时可跳过）
+
+### 模式一：烟测（无需 GPU / API Key）
+
+```powershell
+Copy-Item .env.example .env
+docker compose up --build -d
+```
+
+默认配置为 mock 后端，无需任何外部依赖，可验证整条流水线。
+
+```powershell
+# 提交测试任务
+$body = '{"input_relpath":"input-smoke.mp4","target_language":"zh","auto_start":true}'
+Invoke-RestMethod -Uri "http://127.0.0.1:8080/jobs" -Method POST -ContentType "application/json" -Body $body
+```
+
+打开 **http://localhost:8080/ui/** 查看进度，输出在 `data/jobs/<id>/output/final.mp4`。
+
+### 模式二：接入真实后端（推荐）
+
+#### 第一步：翻译（只需 API Key）
+
+在 `.env` 中填写：
+
+```env
+TRANSLATION_PROVIDER=openai_compatible
+OPENAI_BASE_URL=https://api.deepseek.com/v1   # 或阿里云 / OpenAI 等任意兼容接口
+OPENAI_API_KEY=sk-xxxxxx
+OPENAI_MODEL=deepseek-chat
+```
+
+推荐 **DeepSeek**（国内可访问、极低价格、中文效果好）。
+
+#### 第二步：真实 ASR + TTS（需要 GPU）
+
+在 `.env` 中修改：
+
+```env
+ML_PYTHON_EXTRAS=real
+ML_ASR_BACKEND=faster_whisper
+FASTER_WHISPER_MODEL=large-v3     # 推荐；显存 < 6GB 可用 medium
+ML_TTS_BACKEND=edge_tts           # 免费，无需 API key，支持多种中文音色
+```
+
+重建 ml-service 镜像（首次约 10 分钟，主要是下载 PyTorch）：
+
+```powershell
+docker compose build ml-service
+docker compose --env-file .env up -d
+```
+
+> ⚠️ **重要**：务必用 `--env-file .env` 或确保环境变量 `COMPOSE_ENV_FILE` 未被设置为 `.env.example`，否则容器会读取旧配置。
+
+#### 第三步：Whisper 模型缓存（避免每次重启重新下载）
+
+首次运行时，ml-service 会自动从 HuggingFace 下载 Whisper 模型（large-v3 约 3GB）。  
+为避免每次重启容器都重新下载，`docker-compose.yml` 已将 `./hf-cache` 挂载到容器的 HuggingFace 缓存目录：
+
+```
+./hf-cache:/root/.cache/huggingface
+```
+
+模型一旦下载到 `hf-cache/`，后续重启无需重复下载。
+
+#### 可选：说话人分离（Pyannote）
+
+1. 在 HuggingFace 上接受 [pyannote/speaker-diarization-3.1](https://huggingface.co/pyannote/speaker-diarization-3.1) 的许可协议
+2. 生成 Access Token：https://hf.co/settings/tokens
+3. 在 `.env` 中填写：
+
+```env
+ML_VAD_BACKEND=pyannote
+PYANNOTE_AUTH_TOKEN=hf_xxxxxx
+```
+
+### 常用命令
+
+```powershell
+docker compose ps                         # 查看服务状态
+docker compose logs -f worker             # 查看 worker 日志
+docker compose logs -f ml-service         # 查看 ML 服务日志（含模型加载进度）
+docker compose down                       # 停止并移除容器
+docker compose --env-file .env up -d      # 显式指定 .env 重启（推荐）
+```
+
+### Edge-TTS 音色选项
+
+默认音色为 `zh-CN-XiaoxiaoNeural`（女声）。可在 `.env` 中设置 `EDGE_TTS_VOICE` 更换：
+
+| 音色 | 风格 |
+|------|------|
+| `zh-CN-XiaoxiaoNeural` | 女声，自然对话（默认） |
+| `zh-CN-YunxiNeural` | 男声，新闻播报 |
+| `zh-CN-YunjianNeural` | 男声，激昂有力 |
+| `zh-TW-HsiaoChenNeural` | 台湾女声 |
+
+### .env 配置说明
+
+| 变量 | 烟测默认 | 真实后端 |
+|------|----------|----------|
+| `TRANSLATION_PROVIDER` | `mock` | `openai_compatible` |
+| `ML_ASR_BACKEND` | `mock` | `faster_whisper` |
+| `ML_TTS_BACKEND` | `silence` | `edge_tts` |
+| `ML_VAD_BACKEND` | `none` | `pyannote`（可选）|
+| `ML_SEPARATOR_BACKEND` | `ffmpeg_stub` | `demucs`（可选）|
+| `ML_PYTHON_EXTRAS` | 空 | `real` |
 
 ---
 

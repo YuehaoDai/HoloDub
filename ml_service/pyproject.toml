@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "holodub-ml-service"
+version = "0.1.0"
+description = "ML service for the HoloDub dubbing pipeline."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "fastapi",
+  "httpx",
+  "pydantic",
+  "pydantic-settings",
+  "uvicorn",
+]
+
+[project.optional-dependencies]
+# Packages required for real ML backends (ASR, VAD, TTS, separation).
+# PyTorch 2.6+ is required for Blackwell (RTX 5080 / sm_120) support.
+# Install torch separately with the correct CUDA index URL before this group:
+#   pip install torch --index-url https://download.pytorch.org/whl/cu128
+real = [
+  "torch>=2.6.0",
+  "faster-whisper>=1.1.0",
+  "ctranslate2>=4.5.0",
+  "pyannote.audio>=3.3.0",
+  "demucs",
+  "soundfile",
+  "edge-tts",
+]
+# Lightweight TTS-only extras (no GPU required).
+edge_tts = [
+  "edge-tts",
+]
+dev = [
+  "pytest",
+  "pytest-asyncio",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

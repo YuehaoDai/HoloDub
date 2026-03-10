@@ -1,0 +1,21 @@
+services:
+  api:
+    restart: unless-stopped
+    environment:
+      APP_ENV: staging
+      LOG_FORMAT: json
+
+  worker:
+    restart: unless-stopped
+    environment:
+      APP_ENV: staging
+      LOG_FORMAT: json
+
+  ml-service:
+    restart: unless-stopped
+
+  postgres:
+    restart: unless-stopped
+
+  redis:
+    restart: unless-stopped

@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>HoloDub Console</title>
+    <link rel="stylesheet" href="/ui/styles.css" />
+  </head>
+  <body>
+    <main class="layout">
+      <header class="hero">
+        <div>
+          <h1>HoloDub Console</h1>
+          <p>Minimal operator UI for jobs, voice profiles, and stage diagnostics.</p>
+        </div>
+        <label class="inline-field">
+          <span>API key</span>
+          <input id="apiKey" type="password" placeholder="optional" />
+        </label>
+      </header>
+
+      <section class="card">
+        <h2>Create Job</h2>
+        <form id="jobForm" class="grid">
+          <label><span>Name</span><input name="name" placeholder="demo-job" /></label>
+          <label><span>Input relpath</span><input name="input_relpath" placeholder="input.mp4" required /></label>
+          <label><span>Source language</span><input name="source_language" placeholder="en" /></label>
+          <label><span>Target language</span><input name="target_language" placeholder="zh-CN" required /></label>
+          <label><span>Webhook URL</span><input name="webhook_url" placeholder="https://example.com/hook" /></label>
+          <label><span>Max retries</span><input name="max_retries" type="number" value="3" min="0" /></label>
+          <label class="checkbox"><input name="auto_start" type="checkbox" checked /> Auto start</label>
+          <button type="submit">Create job</button>
+        </form>
+      </section>
+
+      <section class="split">
+        <section class="card">
+          <div class="section-head">
+            <h2>Jobs</h2>
+            <button id="refreshJobs">Refresh</button>
+          </div>
+          <div id="jobs" class="list"></div>
+        </section>
+
+        <section class="card">
+          <div class="section-head">
+            <h2>Voice Profiles</h2>
+            <button id="refreshProfiles">Refresh</button>
+          </div>
+          <div id="profiles" class="list"></div>
+        </section>
+      </section>
+
+      <section class="card">
+        <div class="section-head">
+          <h2>Job Detail</h2>
+          <span id="jobDetailHint">Select a job to inspect segments, bindings, and stage runs.</span>
+        </div>
+        <div id="jobDetail" class="detail-grid"></div>
+      </section>
+    </main>
+    <script src="/ui/app.js"></script>
+  </body>
+</html>

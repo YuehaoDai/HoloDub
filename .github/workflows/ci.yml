@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run Go tests
+        run: go test ./...
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install ML service test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ./ml_service[dev]
+
+      - name: Run Python tests
+        run: python -m pytest ml_service/tests
+
+      - name: Validate compose config
+        run: |
+          cp .env.example .env
+          docker compose config > /tmp/compose.txt

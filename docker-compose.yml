@@ -1,0 +1,102 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: holodub
+      POSTGRES_USER: holodub
+      POSTGRES_PASSWORD: holodub
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U holodub -d holodub"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  ml-service:
+    build:
+      context: .
+      dockerfile: docker/ml.Dockerfile
+      args:
+        PYTHON_EXTRAS: ${ML_PYTHON_EXTRAS}
+    env_file:
+      - ${COMPOSE_ENV_FILE:-.env}
+    environment:
+      DATA_ROOT: /data
+    depends_on:
+      redis:
+        condition: service_started
+    volumes:
+      - ./data:/data
+      - ./hf-cache:/root/.cache/huggingface
+    # GPU passthrough via nvidia Container Toolkit.
+    # Requires: Docker Desktop with WSL2 backend + nvidia runtime (already verified).
+    # Remove the deploy block entirely if you want CPU-only mode.
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/go.Dockerfile
+      args:
+        APP_BIN: api
+    env_file:
+      - ${COMPOSE_ENV_FILE:-.env}
+    environment:
+      AUTO_MIGRATE_ON_START: "true"
+      DATA_ROOT: /data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      ml-service:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/data
+
+  worker:
+    build:
+      context: .
+      dockerfile: docker/go.Dockerfile
+      args:
+        APP_BIN: worker
+    env_file:
+      - ${COMPOSE_ENV_FILE:-.env}
+    environment:
+      AUTO_MIGRATE_ON_START: "false"
+      DATA_ROOT: /data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      ml-service:
+        condition: service_healthy
+    volumes:
+      - ./data:/data
+
+volumes:
+  postgres-data:
