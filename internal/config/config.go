@@ -46,8 +46,15 @@ type Config struct {
 	OpenAIModel         string
 	OpenAITemperature   float64
 	OpenAITimeout       time.Duration
-	FFmpegBin           string
-	FFprobeBin          string
+
+	// Re-translation: triggered when TTS output drifts too far from target duration.
+	RetranslationEnabled        bool
+	RetranslationDriftThreshold float64 // e.g. 0.20 = 20%
+	RetranslationMaxAttempts    int
+	RetranslationModel          string // e.g. "kimi-k2.5"; reuses OPENAI_BASE_URL/API_KEY
+
+	FFmpegBin  string
+	FFprobeBin string
 }
 
 func Load() (Config, error) {
@@ -132,6 +139,23 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("parse OPENAI_TEMPERATURE: %w", err)
 	}
+
+	cfg.RetranslationEnabled, err = getEnvBool("RETRANSLATION_ENABLED", true)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse RETRANSLATION_ENABLED: %w", err)
+	}
+
+	cfg.RetranslationDriftThreshold, err = getEnvFloat("RETRANSLATION_DRIFT_THRESHOLD", 0.20)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse RETRANSLATION_DRIFT_THRESHOLD: %w", err)
+	}
+
+	cfg.RetranslationMaxAttempts, err = getEnvInt("RETRANSLATION_MAX_ATTEMPTS", 2)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse RETRANSLATION_MAX_ATTEMPTS: %w", err)
+	}
+
+	cfg.RetranslationModel = getEnv("RETRANSLATION_MODEL", "kimi-k2.5")
 
 	cfg.RequestRateLimitRPS, err = getEnvFloat("REQUEST_RATE_LIMIT_RPS", 2.0)
 	if err != nil {

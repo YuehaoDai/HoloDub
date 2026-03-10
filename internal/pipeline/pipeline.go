@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"os"
 	"path/filepath"
 	"time"
@@ -253,8 +254,8 @@ func (s *Service) runASRSmart(ctx context.Context, task models.TaskPayload) erro
 	response, err := s.ml.SmartSplit(ctx, ml.SmartSplitRequest{
 		AudioRelPath:   audioRelPath,
 		SourceLanguage: job.SourceLanguage,
-		MinSegmentSec:  jobConfigFloat(job.Config, "min_segment_sec", 2.0),
-		MaxSegmentSec:  jobConfigFloat(job.Config, "max_segment_sec", 15.0),
+		MinSegmentSec:  jobConfigFloat(job.Config, "min_segment_sec", 4.0),
+		MaxSegmentSec:  jobConfigFloat(job.Config, "max_segment_sec", 20.0),
 	})
 	if err != nil {
 		return err
@@ -286,7 +287,8 @@ func (s *Service) runTranslate(ctx context.Context, task models.TaskPayload) err
 		return err
 	}
 	for idx := range segments {
-		translated, err := s.llm.TranslateText(ctx, job.SourceLanguage, job.TargetLanguage, segments[idx].SourceText)
+		targetSec := float64(segments[idx].DurationMs()) / 1000.0
+		translated, err := s.llm.TranslateTextWithDuration(ctx, job.SourceLanguage, job.TargetLanguage, segments[idx].SourceText, targetSec)
 		if err != nil {
 			return fmt.Errorf("translate segment %d: %w", segments[idx].ID, err)
 		}
@@ -322,19 +324,78 @@ func (s *Service) runTTSDuration(ctx context.Context, task models.TaskPayload) e
 			}
 		}
 
+		targetMs := segments[idx].DurationMs()
+		targetSec := float64(targetMs) / 1000.0
+
 		text := segments[idx].TargetText
 		if text == "" {
 			text = segments[idx].SourceText
 		}
-		response, err := s.ml.RunTTS(ctx, ml.TTSRequest{
-			Text:              text,
-			TargetDurationSec: float64(segments[idx].DurationMs()) / 1000.0,
-			VoiceConfig:       voiceConfig,
-			OutputRelPath:     fmt.Sprintf("jobs/%d/tts/segment-%04d.wav", job.ID, segments[idx].Ordinal),
-		})
-		if err != nil {
-			return fmt.Errorf("tts segment %d: %w", segments[idx].ID, err)
+
+		outputRelPath := fmt.Sprintf("jobs/%d/tts/segment-%04d.wav", job.ID, segments[idx].Ordinal)
+		maxAttempts := s.cfg.RetranslationMaxAttempts
+
+		var response *ml.TTSResponse
+		for attempt := 0; attempt <= maxAttempts; attempt++ {
+			response, err = s.ml.RunTTS(ctx, ml.TTSRequest{
+				Text:              text,
+				TargetDurationSec: targetSec,
+				VoiceConfig:       voiceConfig,
+				OutputRelPath:     outputRelPath,
+			})
+			if err != nil {
+				return fmt.Errorf("tts segment %d (attempt %d): %w", segments[idx].ID, attempt, err)
+			}
+
+			// Check whether re-translation is warranted.
+			if !s.cfg.RetranslationEnabled || attempt == maxAttempts {
+				break
+			}
+			drift := math.Abs(float64(response.ActualDurationMs-targetMs)) / float64(targetMs) //nolint:govet
+			if drift <= s.cfg.RetranslationDriftThreshold {
+				break // Within tolerance — accept result.
+			}
+
+			actualMs := response.ActualDurationMs
+			slog.Info("tts duration drift exceeds threshold, re-translating",
+				"job_id", job.ID,
+				"segment_id", segments[idx].ID,
+				"target_ms", targetMs,
+				"actual_ms", actualMs,
+				"drift_pct", fmt.Sprintf("%.1f%%", drift*100),
+				"attempt", attempt+1,
+				"max_attempts", maxAttempts,
+			)
+
+			newText, retErr := s.llm.RetranslateWithConstraint(
+				ctx,
+				job.SourceLanguage, job.TargetLanguage,
+				segments[idx].SourceText, text,
+				targetSec, float64(actualMs)/1000.0,
+				attempt+1, maxAttempts,
+			)
+			if retErr != nil {
+				// Non-fatal: log and accept the TTS result with atempo fallback.
+				slog.Warn("re-translation failed, keeping current result",
+					"job_id", job.ID,
+					"segment_id", segments[idx].ID,
+					"error", retErr,
+				)
+				break
+			}
+
+			text = newText
+			segments[idx].TargetText = newText
+			// Persist the improved translation so the segment history is accurate.
+			if saveErr := s.store.UpdateSegmentTranslations(ctx, []models.Segment{segments[idx]}); saveErr != nil {
+				slog.Warn("failed to persist re-translated text",
+					"job_id", job.ID,
+					"segment_id", segments[idx].ID,
+					"error", saveErr,
+				)
+			}
 		}
+
 		segments[idx].TTSAudioRelPath = response.AudioRelPath
 		segments[idx].TTSDurationMs = response.ActualDurationMs
 		segments[idx].Status = "synthesized"

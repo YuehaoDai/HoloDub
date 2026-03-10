@@ -53,15 +53,21 @@ func RenderDubTrack(dataRoot, ffmpegBin string, outputRelPath string, durationMs
 	if len(voiceLabels) == 1 {
 		filterParts = append(filterParts, fmt.Sprintf("%svolume=1.0[%s]", voiceLabels[0], voiceOut))
 	} else {
-		filterParts = append(filterParts, fmt.Sprintf("%samix=inputs=%d:duration=longest:dropout_transition=0,volume=1.0[%s]", strings.Join(voiceLabels, ""), len(voiceLabels), voiceOut))
+		// normalize=0: sum inputs instead of averaging them.  The segments are
+		// time-shifted (adelay) so at most one is active at any moment; summing
+		// gives the full original volume regardless of how many segments exist.
+		// With normalize=1 (default), a 81-segment track would be 1/81 as loud.
+		filterParts = append(filterParts, fmt.Sprintf("%samix=inputs=%d:duration=longest:dropout_transition=0:normalize=0,volume=1.0[%s]", strings.Join(voiceLabels, ""), len(voiceLabels), voiceOut))
 	}
 	if bgmRelPath != "" {
 		// asplit duplicates voice so it can feed both sidechaincompress (sidechain) and amix; pad labels cannot be reused
 		filterParts = append(filterParts, fmt.Sprintf("[%s]asplit=2[sc][mixin]", voiceOut))
 		filterParts = append(filterParts, "[bgm][sc]sidechaincompress=threshold=0.015:ratio=8:attack=20:release=250[duckedbgm]")
-		filterParts = append(filterParts, "[0:a][duckedbgm][mixin]amix=inputs=3:duration=first:dropout_transition=0,alimiter=limit=0.95,aresample=24000[mix]")
+		// normalize=0: base track is silence; summing is equivalent to pass-through at full volume.
+		filterParts = append(filterParts, "[0:a][duckedbgm][mixin]amix=inputs=3:duration=first:dropout_transition=0:normalize=0,alimiter=limit=0.95,aresample=24000[mix]")
 	} else {
-		filterParts = append(filterParts, fmt.Sprintf("[0:a][%s]amix=inputs=2:duration=first:dropout_transition=0,alimiter=limit=0.95,aresample=24000[mix]", voiceOut))
+		// normalize=0: [0:a] is anullsrc (silence), so sum = voice at full volume.
+		filterParts = append(filterParts, fmt.Sprintf("[0:a][%s]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,alimiter=limit=0.95,aresample=24000[mix]", voiceOut))
 	}
 	args = append(args,
 		"-filter_complex", strings.Join(filterParts, ";"),

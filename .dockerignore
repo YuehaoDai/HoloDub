@@ -1,0 +1,30 @@
+# Model caches — several GB, not needed inside the build container
+hf-cache/
+
+# Runtime data and job outputs
+data/jobs/
+data/tmp/
+data/cache/
+data/voices/
+
+# Demo videos
+demo/
+
+# Git and editor metadata
+.git/
+.venv/
+.venv-smoke/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+
+# Secrets
+.env
+token.txt
+
+# Local tooling
+query
+*.test
+*.out
+coverage.*

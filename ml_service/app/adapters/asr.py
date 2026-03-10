@@ -10,7 +10,9 @@ from app.config import Settings
 from app.models import Segment, WordToken
 from app.services.model_registry import ModelRegistry
 
-PUNCTUATION_ENDINGS = (".", "!", "?", "。", "！", "？", ",", "，", ";", "；", ":", "：")
+# Only hard sentence boundaries trigger a split — commas/semicolons/colons are
+# clause separators, not sentence ends, and splitting there creates tiny fragments.
+SENTENCE_ENDINGS = (".", "!", "?", "。", "！", "？")
 
 
 class ASRAdapter:
@@ -146,6 +148,12 @@ def segment_words(words: list[WordToken], min_segment_sec: float, max_segment_se
 
     min_ms = int(min_segment_sec * 1000)
     max_ms = int(max_segment_sec * 1000)
+    # Require at least this many words before allowing a punctuation/silence split.
+    # This prevents single-word or two-word micro-segments that TTS handles poorly.
+    min_word_count = 5
+    # Silence gap must be at least 800 ms to count as a phrase boundary.
+    # (500 ms was too aggressive — normal speech has many sub-second pauses.)
+    silence_threshold_ms = 800
 
     current: list[WordToken] = []
     segments: list[Segment] = []
@@ -159,13 +167,18 @@ def segment_words(words: list[WordToken], min_segment_sec: float, max_segment_se
             split_reason = "end"
         else:
             gap_ms = max(next_word.start_ms - word.end_ms, 0)
+            word_count = len(current)
             if next_word.speaker_label != current[0].speaker_label and current_duration >= min_ms:
                 split_reason = "speaker_change"
             elif current_duration >= max_ms:
                 split_reason = "max_duration"
-            elif current_duration >= min_ms and word.word.endswith(PUNCTUATION_ENDINGS):
+            elif (current_duration >= min_ms
+                  and word_count >= min_word_count
+                  and word.word.rstrip().endswith(SENTENCE_ENDINGS)):
                 split_reason = "punctuation"
-            elif current_duration >= min_ms and gap_ms >= 500:
+            elif (current_duration >= min_ms
+                  and word_count >= min_word_count
+                  and gap_ms >= silence_threshold_ms):
                 split_reason = "silence_gap"
 
         if split_reason:
@@ -179,6 +192,57 @@ def segment_words(words: list[WordToken], min_segment_sec: float, max_segment_se
                 )
             )
             current = []
+
+    # Post-pass: merge any segment that is too short (< min_word_count words) into
+    # its neighbour.  We prefer merging with the previous segment; if it is the
+    # first one, merge with the next.
+    return _merge_short_segments(segments, min_word_count)
+
+
+def _merge_short_segments(segments: list[Segment], min_word_count: int) -> list[Segment]:
+    """Merge segments that contain fewer than min_word_count words into a neighbour."""
+    if len(segments) <= 1:
+        return segments
+
+    def word_count(seg: Segment) -> int:
+        return len(seg.text.split())
+
+    merged = True
+    while merged:
+        merged = False
+        result: list[Segment] = []
+        i = 0
+        while i < len(segments):
+            seg = segments[i]
+            if word_count(seg) < min_word_count and len(segments) > 1:
+                # Merge: prefer merging with the previous segment if it exists.
+                if result:
+                    prev = result[-1]
+                    result[-1] = Segment(
+                        start_ms=prev.start_ms,
+                        end_ms=seg.end_ms,
+                        text=prev.text + " " + seg.text,
+                        speaker_label=prev.speaker_label,
+                        split_reason=prev.split_reason,
+                    )
+                elif i + 1 < len(segments):
+                    nxt = segments[i + 1]
+                    segments[i + 1] = Segment(
+                        start_ms=seg.start_ms,
+                        end_ms=nxt.end_ms,
+                        text=seg.text + " " + nxt.text,
+                        speaker_label=seg.speaker_label,
+                        split_reason=nxt.split_reason,
+                    )
+                    i += 1
+                    continue
+                else:
+                    result.append(seg)
+                merged = True
+            else:
+                result.append(seg)
+            i += 1
+        segments = result
 
     return segments
 
