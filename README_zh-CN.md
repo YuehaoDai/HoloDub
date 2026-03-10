@@ -27,6 +27,22 @@
 > Dub the whole performance, not just the words.  
 > 不止翻译台词，而是重现整场表演。
 
+## 🎬 运行案例 — 英语 → 中文（IndexTTS2，RTX 5080）
+
+MIT 6.824 分布式系统课程节选，60 秒。零样本声纹克隆配音，无需任何训练。
+
+**输入**（英文原版）：
+
+https://github.com/YuehaoDai/HoloDub/raw/refs/heads/dev-win/demo/input_en.mp4
+
+**输出**（中文配音，IndexTTS2 内联，平均时长误差 < 30 ms）：
+
+https://github.com/YuehaoDai/HoloDub/raw/refs/heads/dev-win/demo/output_zh_indextts2.mp4
+
+流水线：`Faster-Whisper large-v3`（ASR）→ `Qwen-turbo`（翻译）→ `IndexTTS2`（零样本 TTS）· RTX 5080 总耗时约 7 分钟
+
+---
+
 HoloDub 是一个 **面向创作者、自托管的视频翻译与配音工具箱**。
 
 它主要服务于这样一群人：
@@ -389,9 +405,6 @@ INDEXTTS2_COMMAND=python run_tts.py --text "{text}" --duration "{duration}" --ou
 **输入**：MIT 6.824 分布式系统课程节选，英语，60 秒，1920×1080，AV1+AAC  
 **流水线**：Faster-Whisper large-v3（ASR）→ Qwen-turbo（翻译）→ IndexTTS2 内联（TTS，零样本声纹克隆）  
 **硬件**：NVIDIA RTX 5080（16 GB VRAM），Docker + WSL2
-
-> 视频文件已在 `.gitignore` 中排除（`*.mp4`），无法直接提交。  
-> 提交 60 秒视频并设置 `source_language=en, target_language=zh` 即可本地复现。
 
 ### 分段时长对齐结果
 

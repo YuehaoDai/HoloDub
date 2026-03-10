@@ -26,6 +26,22 @@
 
 > Dub the whole performance, not just the words.
 
+## 🎬 Demo — English → Chinese (IndexTTS2, RTX 5080)
+
+60-second excerpt from MIT 6.824 Distributed Systems lecture. Dubbed with zero-shot voice cloning, no training required.
+
+**Input** (English original):
+
+https://github.com/YuehaoDai/HoloDub/raw/refs/heads/dev-win/demo/input_en.mp4
+
+**Output** (Chinese dubbed, IndexTTS2 inline, avg. timing error < 30 ms):
+
+https://github.com/YuehaoDai/HoloDub/raw/refs/heads/dev-win/demo/output_zh_indextts2.mp4
+
+Pipeline: `Faster-Whisper large-v3` (ASR) → `Qwen-turbo` (translation) → `IndexTTS2` (zero-shot TTS) · Total time: ~7 min on RTX 5080
+
+---
+
 HoloDub is a **self-hosted video translation & dubbing toolkit for creators**.
 
 It is designed for people who need to re-voice videos for platforms like **YouTube, Bilibili, TikTok** and beyond:
@@ -397,9 +413,6 @@ INDEXTTS2_COMMAND=python run_tts.py --text "{text}" --duration "{duration}" --ou
 **Input**: MIT 6.824 Distributed Systems lecture excerpt, English, 60 s, 1920×1080, AV1+AAC  
 **Pipeline**: Faster-Whisper large-v3 (ASR) → Qwen-turbo (translation) → IndexTTS2 inline (TTS, zero-shot voice clone)  
 **Hardware**: NVIDIA RTX 5080 (16 GB VRAM), Docker + WSL2
-
-> Video files are excluded from the repository (`*.mp4` in `.gitignore`).  
-> Run the pipeline yourself to reproduce: submit `test_60s.mp4` with `source_language=en, target_language=zh`.
 
 ### Segment-level results
 

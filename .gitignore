@@ -46,11 +46,14 @@ data/cache/
 # HuggingFace model cache (large files, populated at runtime)
 hf-cache/
 
-# Test / sample videos should not be committed
+# Large video files should not be committed — except curated demo clips
 *.mp4
 *.mkv
 *.webm
 *.avi
+!demo/*.mp4
+!demo/*.mkv
+!demo/*.webm
 
 # Secrets and local tokens
 token.txt
