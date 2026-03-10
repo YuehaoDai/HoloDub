@@ -187,9 +187,13 @@ but if you want to hack on it, here’s the rough picture.
 - [x] **Real translation**: OpenAI-compatible API (tested with qwen-turbo / DeepSeek)
 - [x] **Real TTS (interim)**: Edge-TTS (Microsoft, free, Chinese voice, atempo duration alignment)
 - [x] GPU passthrough (NVIDIA Container Toolkit + Docker Compose `deploy.devices`)
+- [x] **IndexTTS2 inline integration**: `indextts2-inference` inside `ml-service`, zero-shot voice cloning, `max_mel_tokens` duration estimation + `atempo` fallback
+- [x] **IndexTTS2 real inference validated**: English → Chinese, 9 segments, avg. timing error < 30 ms, RTF 1.47x (RTX 5080)
+- [x] **asyncio blocking fixed**: all ML routes use `run_in_executor`; healthz stays live during GPU inference
 - [ ] Real vocal / BGM separation (Demucs, requires `ML_PYTHON_EXTRAS=real`)
 - [ ] Speaker diarization (Pyannote, requires HuggingFace token)
-- [ ] **IndexTTS2 integration** (next major milestone, see below)
+- [ ] BigVGAN CUDA kernel on Blackwell / sm_120 (nvcc absent from runtime image; torch fallback is fast enough — see Known Issues)
+- [ ] IndexTTS2 eager model pre-loading at startup (cold-start ~6 min on RTX 5080; see Known Issues)
 
 If you’re interested in hacking on it, PRs and discussions are very welcome.
 
@@ -298,38 +302,84 @@ Default is `zh-CN-XiaoxiaoNeural` (female, conversational). Override with `EDGE_
 
 ---
 
-## 🎯 Next milestone: IndexTTS2
+## 🎙 IndexTTS2 — zero-shot dubbing (available now)
 
-[IndexTTS2](https://github.com/index-tts/index-tts) (Bilibili, Apache 2.0) is the TTS backend HoloDub is built for.  
-Its core capabilities map directly onto HoloDub's design goals:
+[IndexTTS2](https://github.com/index-tts/index-tts) (Bilibili, Apache 2.0) is the primary TTS backend HoloDub is built for. The `indextts2-inference` package is now **integrated and tested** inside `ml-service`.
 
 ### Why IndexTTS2
 
-**1. Precise duration control** ← the most critical feature for dubbing  
-- First autoregressive TTS to achieve hard duration constraints.
-- Two modes: explicit token count (hard target) / free generation that reproduces the reference audio's prosodic rhythm.
-- Replaces the current Edge-TTS + `atempo` workaround — no more robotic speed-up/slow-down artifacts.
+**1. Duration control** — the most critical feature for dubbing  
+- Two modes: `max_mel_tokens` budget (estimated from `target_duration_sec`, ~86 tokens/sec) constrains generation length; residual drift > 5 % is corrected by a lightweight `atempo` post-process.
+- As the official API exposes explicit target-token constraints in future releases, the `atempo` fallback will automatically become a no-op.
 
 **2. Zero-shot voice cloning**  
-- Clone any speaker from 3–10 s of reference audio, no training needed.
-- Integrates naturally with HoloDub's Voice Profile system: bind a reference clip to `SPK_01`, another to `SPK_02`.
+- 3–10 s of reference audio clones any speaker's voice, no training required.
+- Integrates with HoloDub's **Voice Profile** system: upload a reference clip, bind it to `SPK_01` or `SPK_02`, and each speaker gets their own cloned voice.
 
-**3. Emotion control**  
-- Timbre and emotion are disentangled — use Speaker A's voice to convey Speaker B's emotion.
-- Three control mechanisms: reference audio, emotion vector (8 dims: happy/angry/sad/afraid/disgusted/melancholic/surprised/calm), or natural-language description (via Qwen3 fine-tune).
-- Critical for dubbing: an angry line must sound angry, not calm.
+**3. Emotion-aware synthesis**  
+- Timbre and emotion are disentangled: use Speaker A's voice to convey Speaker B's emotion.
+- `use_emo_text=true` (default): the Qwen3 fine-tune infers an 8-dim emotion vector automatically from the translated text — angry lines sound angry without manual annotation.
+- Additional control: explicit emotion reference audio (`emo_audio_prompt`) or direct 8-dim vector.
 
-### Integration plan
+### Enabling IndexTTS2 inline mode
 
-The TTS adapter already has an `indextts2` backend stub with two connection modes:
+**Requirements**: GPU + `ML_PYTHON_EXTRAS=real` image already built.
 
-**HTTP mode** (recommended — run IndexTTS2 as a sidecar service):
+```env
+# .env
+ML_TTS_BACKEND=indextts2
+INDEXTTS2_INLINE=true
+
+# optional: use local checkpoints instead of HuggingFace auto-download
+INDEXTTS2_MODEL_DIR=/data/models/indextts2
+
+# optional: attention backend (default sdpa; sage/flash for Ampere/Hopper)
+INDEXTTS2_ATTN_BACKEND=
+
+# emotion auto-detection from translated text (recommended)
+INDEXTTS2_USE_EMO_TEXT=true
+
+# fallback reference voice when no VoiceProfile is bound to a speaker
+INDEXTTS2_DEFAULT_VOICE_RELPATH=voices/default.wav
+```
+
+Restart the stack (no rebuild needed):
+
+```powershell
+docker compose --env-file .env up -d
+```
+
+**First run**: the IndexTTS2 model (~3–5 GB) is downloaded automatically from HuggingFace to `./hf-cache` and cached for subsequent runs.
+
+### Setting up voice profiles for zero-shot cloning
+
+```powershell
+# 1. Upload a reference audio clip (3-10 s, WAV preferred)
+#    Place it under data/voices/ so the container can access it via /data/voices/
+
+# 2. Create a VoiceProfile via API
+$body = @{
+    name = "Host Voice"
+    mode = "sample"
+    language = "zh"
+    sample_relpaths = @("voices/host_ref.wav")
+} | ConvertTo-Json
+Invoke-RestMethod -Uri "http://localhost:8080/voice-profiles" -Method Post -ContentType "application/json" -Body $body
+
+# 3. Bind SPK_01 in a job to this profile
+$body = @{ bindings = @(@{ speaker_label = "SPK_01"; voice_profile_id = <profile_id> }) } | ConvertTo-Json
+Invoke-RestMethod -Uri "http://localhost:8080/jobs/<job_id>/bindings" -Method Put -ContentType "application/json" -Body $body
+```
+
+### Alternative connection modes (no local GPU required)
+
+**HTTP mode** — run IndexTTS2 as a sidecar service:
 ```env
 ML_TTS_BACKEND=indextts2
 INDEXTTS2_ENDPOINT=http://your-indextts2-service:8000/tts
 ```
 
-**Command mode** (call a local script):
+**Command mode** — call a local script:
 ```env
 ML_TTS_BACKEND=indextts2
 INDEXTTS2_COMMAND=python run_tts.py --text "{text}" --duration "{duration}" --output "{output}"
@@ -337,10 +387,103 @@ INDEXTTS2_COMMAND=python run_tts.py --text "{text}" --duration "{duration}" --ou
 
 ### Remaining work
 
-- [ ] Inline `indextts2-inference` into `ml-service` (`ML_TTS_BACKEND=indextts2` native mode)
-- [ ] Thread `spk_audio_prompt` from Voice Profile through to IndexTTS2 for per-speaker voice cloning
-- [ ] `emo_audio_prompt` / `use_emo_text` support for emotion-aware dubbing
-- [ ] Map `target_duration_sec` → `max_mel_tokens` for hard duration control
+- [ ] `emo_audio_prompt` support for cross-speaker emotion transfer
+- [ ] Per-segment emotion override via API (currently auto-detected from text)
+
+---
+
+## 🎬 Demo run — validated result
+
+**Input**: MIT 6.824 Distributed Systems lecture excerpt, English, 60 s, 1920×1080, AV1+AAC  
+**Pipeline**: Faster-Whisper large-v3 (ASR) → Qwen-turbo (translation) → IndexTTS2 inline (TTS, zero-shot voice clone)  
+**Hardware**: NVIDIA RTX 5080 (16 GB VRAM), Docker + WSL2
+
+> Video files are excluded from the repository (`*.mp4` in `.gitignore`).  
+> Run the pipeline yourself to reproduce: submit `test_60s.mp4` with `source_language=en, target_language=zh`.
+
+### Segment-level results
+
+| # | English source | Chinese output | Target ms | Actual ms | Error |
+|---|---------------|----------------|-----------|-----------|-------|
+| 0 | All right. Let's get started. | 好的，我们开始吧。 | 2879 | 2865 | 14 ms |
+| 1 | This is 6.824, distributed systems. | 这是6.824，分布式系统。 | 2880 | 2896 | 16 ms |
+| 2 | So I'd like to start with just a brief explanation... | 那么，我想先简要地解释一下... | 4480 | 4481 | 1 ms |
+| 3 | You know, the core of it is a set of cooperating... | 你知道，其核心是一组相互协作的计算机... | 8701 | 8687 | 14 ms |
+| 4 | And so the kinds of examples that we'll be focusing... | 因此，这门课程中我们将重点讲解的实例... | 10380 | 10349 | 31 ms |
+| 5 | such as MapReduce, and also somewhat more exotic... | 例如 MapReduce，以及一些更为奇特的... | 6180 | 6153 | 27 ms |
+| 6 | So those are all just examples of the kind... | 所以这些都是我认为分布式系统所包含的一些例子。 | 2040 | 2327 | 287 ms |
+| 7 | And the reason why all this is important... | 而且这一切之所以重要，是因为许多关键基础设施... | 6400 | 6199 | 201 ms |
+| 8 | infrastructure that requires more than one computer... | 需要多台计算机来完成其工作的基础设施... | 5600 | 5620 | 20 ms |
+
+**Average timing error: ~68 ms** across 9 segments (6 of 9 under 30 ms; worst case 287 ms on a short segment with long translation).
+
+### Timing breakdown (measured on RTX 5080)
+
+| Phase | Time |
+|-------|------|
+| IndexTTS2 cold-start (first TTS request) | **~6 minutes** |
+| Single segment inference (after warm-up) | **3.6 s** (GPT 1.06s + S2Mel 0.70s + BigVGAN 0.10s) |
+| 9 segments total inference (warm) | ~32 s |
+| Full job (ASR + translate + TTS + merge) | **~7 minutes** |
+| Real-time factor (RTF) | **1.47×** per segment |
+
+---
+
+## ⚠️ Known Issues & Help Wanted
+
+These are open problems found during real hardware testing. Contributions welcome!
+
+### 1. BigVGAN CUDA kernel fails on Blackwell / RTX 50-series (sm_120)
+
+**Symptom**: On RTX 5080 (compute capability sm_120), the BigVGAN anti-aliasing CUDA kernel fails to compile because `nvcc` is absent from the `nvidia/cuda:12.8.0-runtime` base image (runtime ≠ devel).
+
+```
+/bin/sh: 1: /usr/local/cuda/bin/nvcc: not found
+ninja: build stopped: subcommand failed.
+WARNING - Failed to load custom CUDA kernel for BigVGAN. Falling back to torch.
+```
+
+**Impact**: BigVGAN runs in torch mode. Measured overhead: **0.10 s** per segment (< 3 % of total inference time) — acceptable for now.
+
+**Potential fixes (PRs welcome)**:
+- Switch base image to `nvidia/cuda:12.8.0-devel-ubuntu22.04` (adds nvcc, adds ~1 GB to image)
+- Pre-compile the extension and cache the `.so` in the Docker layer
+- Patch BigVGAN's arch list to explicitly include `compute_120,sm_120`
+
+### 2. IndexTTS2 cold-start ~6 minutes on first TTS request
+
+**Symptom**: The model is lazily loaded on the first `/tts/run` call. On RTX 5080, loading all components (GPT 3.3 GB, S2Mel 1.1 GB, BigVGAN, wav2vec2bert, CAMP++, NeMo text processor) takes **~6 minutes**.
+
+**Impact**: The first job's TTS stage appears stuck for ~6 minutes with low GPU utilization. **Do not cancel the job** — it will complete.
+
+**Potential fixes (PRs welcome)**:
+- Eager-load IndexTTS2 at `ml-service` startup when `INDEXTTS2_INLINE=true`
+- Add a startup health-check endpoint that reports model loading progress
+- Show a "warming up" status in the job stage display
+
+### 3. HuggingFace XetHub large-file download stalls in Docker
+
+**Symptom**: `snapshot_download` of IndexTTS2 via the XetHub protocol (`hf-xet`) stalls on 2–3 large blobs (`.incomplete` files stop growing).
+
+**Workaround** (included in `data/dl_gpt.py`): set `HF_HUB_DISABLE_XET=1` and use a `requests`-based streaming download instead:
+
+```python
+import os, requests
+os.environ["HF_HUB_DISABLE_XET"] = "1"
+from huggingface_hub import snapshot_download
+snapshot_download("IndexTeam/IndexTTS-2", token=os.environ.get("HF_TOKEN"))
+```
+
+Or directly download the stuck file with:
+
+```python
+import requests, os
+url = "https://huggingface.co/IndexTeam/IndexTTS-2/resolve/main/gpt.pth"
+headers = {"Authorization": f"Bearer {os.environ['HF_TOKEN']}"}
+with open("gpt.pth", "wb") as f:
+    for chunk in requests.get(url, headers=headers, stream=True).iter_content(8*1024*1024):
+        f.write(chunk)
+```
 
 ---
 
@@ -350,10 +493,14 @@ INDEXTTS2_COMMAND=python run_tts.py --text "{text}" --duration "{duration}" --ou
 |----------|---------------|---------------|
 | `TRANSLATION_PROVIDER` | `mock` | `openai_compatible` |
 | `ML_ASR_BACKEND` | `mock` | `faster_whisper` |
-| `ML_TTS_BACKEND` | `silence` | `edge_tts` |
+| `ML_TTS_BACKEND` | `silence` | `edge_tts` → `indextts2` |
 | `ML_VAD_BACKEND` | `none` | `pyannote` (optional) |
 | `ML_SEPARATOR_BACKEND` | `ffmpeg_stub` | `demucs` (optional) |
 | `ML_PYTHON_EXTRAS` | _(empty)_ | `real` |
+| `INDEXTTS2_INLINE` | `false` | `true` (when `ML_TTS_BACKEND=indextts2`) |
+| `INDEXTTS2_MODEL_DIR` | _(empty, auto-download)_ | `/data/models/indextts2` |
+| `INDEXTTS2_USE_EMO_TEXT` | `true` | `true` / `false` |
+| `INDEXTTS2_DEFAULT_VOICE_RELPATH` | _(empty)_ | `voices/default.wav` |
 
 ---
 

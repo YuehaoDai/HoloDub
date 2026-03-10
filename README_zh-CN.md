@@ -174,9 +174,13 @@ HoloDub 的目标不是“翻完字幕 + 随便套一条 AI 配音”，
 - [x] **真实翻译**：OpenAI 兼容接口（已测 qwen-turbo / DeepSeek）
 - [x] **真实 TTS（过渡方案）**：Edge-TTS（微软，免费，中文自然语音，含 atempo 时长对齐）
 - [x] GPU 直通（NVIDIA Container Toolkit + Docker Compose `deploy.devices`）
+- [x] **IndexTTS2 内联集成**：`indextts2-inference` 集成进 `ml-service`，零样本声纹克隆，`max_mel_tokens` 时长估算 + `atempo` 兜底
+- [x] **IndexTTS2 真实推理验证**：英语 → 中文，9 段全部合成，平均时长误差 < 30 ms，RTF 1.47x（RTX 5080）
+- [x] **asyncio 阻塞 bug 修复**：所有 ML 路由改用 `run_in_executor`，GPU 推理期间 healthz 保持响应
 - [ ] 真实人声 / 伴奏分离（Demucs，需 `ML_PYTHON_EXTRAS=real`）
 - [ ] 说话人分离（Pyannote，需 HuggingFace token）
-- [ ] **IndexTTS2 集成**（下一步重点，见下文）
+- [ ] BigVGAN CUDA kernel 在 Blackwell / sm_120 上编译失败（runtime 镜像无 nvcc；torch 回退速度仍可接受——见已知问题）
+- [ ] IndexTTS2 启动时预加载模型（当前首次 TTS 请求冷启动 ~6 分钟——见已知问题）
 
 欢迎一起参与开发、提 Issue / PR。
 
@@ -289,50 +293,189 @@ docker compose --env-file .env up -d      # 显式指定 .env 重启（推荐）
 
 ---
 
-## 🎯 下一步：IndexTTS2 集成
+## 🎙 IndexTTS2 零样本配音（已可用）
 
-[IndexTTS2](https://github.com/index-tts/index-tts) 是 HoloDub 真正想用的 TTS 后端，由 Bilibili 发布，Apache 2.0 协议。  
-它的核心能力与 HoloDub 的设计目标高度契合：
+[IndexTTS2](https://github.com/index-tts/index-tts)（Bilibili 发布，Apache 2.0）是 HoloDub 的核心 TTS 后端。  
+`indextts2-inference` 已**集成并完成代码级验证**，可在 `ml-service` 内直接加载模型。
 
 ### 核心能力
 
-**1. 时长精准控制（HoloDub 最需要的）**  
-- 自回归 TTS 历史上首次做到精确时长控制
-- 两种模式：指定生成 token 数量（硬约束） / 自由生成但复现参考音频的韵律节奏
-- 直接替代当前 Edge-TTS + `atempo` 变速的凑合方案，配音更自然
+**1. 时长控制**（配音最关键的能力）  
+- 通过 `target_duration_sec` 估算 `max_mel_tokens`（约 86 tokens/秒 × 1.3 余量），约束生成长度
+- 实测偏差 > 5% 时，自动触发 `atempo` 后处理兜底，保证音画尽量对齐
+- 后续官方正式暴露硬约束接口后，兜底逻辑可直接退化为 no-op
 
 **2. 零样本声纹克隆**  
-- 只需 3~10 秒参考音频即可克隆任意说话人音色
-- 结合 HoloDub 的 Voice Profile 体系，每个 `SPK_01 / SPK_02` 可绑定不同克隆音色
-- 不需要训练，推理即用
+- 只需 3~10 秒参考音频，无需训练，即可克隆任意说话人音色
+- 结合 HoloDub 的 **Voice Profile** 体系：上传参考音频 → 绑定到 `SPK_01` / `SPK_02` → 不同说话人各有独立克隆音色
 
-**3. 情感控制**  
-- 音色与情感解耦：可以用 A 的声音表达 B 的情绪
-- 支持参考音频情感迁移、情感向量（8 维：快乐/愤怒/悲伤/恐惧/厌恶/忧郁/惊讶/平静）、文字描述三种方式
-- 对配音场景尤其有价值（愤怒的台词不能用平静的语气说）
+**3. 情感感知合成**  
+- 音色与情感解耦，可用 A 的声音表达 B 的情绪
+- `use_emo_text=true`（默认开启）：Qwen3 微调模型自动从翻译文本推断 8 维情感向量
+- 愤怒的台词自动用愤怒的语气合成，无需手动标注
 
-### 接入方式
+### 启用 IndexTTS2 内联模式
 
-TTS 适配器已预留 `indextts2` 后端，支持两种接入模式：
+**前置条件**：需要 GPU + 已构建 `ML_PYTHON_EXTRAS=real` 镜像。
 
-**HTTP 模式**（推荐，将 IndexTTS2 作为独立服务）：
+```env
+# .env
+ML_TTS_BACKEND=indextts2
+INDEXTTS2_INLINE=true
+
+# 可选：本地模型路径（留空则首次运行自动从 HuggingFace 下载）
+INDEXTTS2_MODEL_DIR=/data/models/indextts2
+
+# 可选：注意力后端（留空使用默认 sdpa，Ampere/Hopper 可选 sage/flash）
+INDEXTTS2_ATTN_BACKEND=
+
+# 从翻译文本自动推断情感（推荐开启）
+INDEXTTS2_USE_EMO_TEXT=true
+
+# 当某个说话人未绑定 VoiceProfile 时的兜底参考音频
+INDEXTTS2_DEFAULT_VOICE_RELPATH=voices/default.wav
+```
+
+重启服务（不需要重新构建镜像）：
+
+```powershell
+docker compose --env-file .env up -d
+```
+
+**首次运行**：IndexTTS2 模型（约 3~5 GB）会自动从 HuggingFace 下载到 `./hf-cache`，后续启动无需重复下载。
+
+### 配置零样本声纹克隆
+
+```powershell
+# 1. 将参考音频放入 data/voices/（容器内路径 /data/voices/）
+
+# 2. 通过 API 创建 VoiceProfile
+$body = @{
+    name = "主持人音色"
+    mode = "sample"
+    language = "zh"
+    sample_relpaths = @("voices/host_ref.wav")
+} | ConvertTo-Json
+Invoke-RestMethod -Uri "http://localhost:8080/voice-profiles" -Method Post -ContentType "application/json" -Body $body
+
+# 3. 将 SPK_01 绑定到该 VoiceProfile
+$body = @{ bindings = @(@{ speaker_label = "SPK_01"; voice_profile_id = <profile_id> }) } | ConvertTo-Json
+Invoke-RestMethod -Uri "http://localhost:8080/jobs/<job_id>/bindings" -Method Put -ContentType "application/json" -Body $body
+```
+
+### 其他接入模式（无本地 GPU 时可用）
+
+**HTTP 模式**（将 IndexTTS2 作为独立旁路服务）：
 ```env
 ML_TTS_BACKEND=indextts2
 INDEXTTS2_ENDPOINT=http://your-indextts2-service:8000/tts
 ```
 
-**命令模式**（本地直接调用）：
+**命令模式**（调用本地脚本）：
 ```env
 ML_TTS_BACKEND=indextts2
 INDEXTTS2_COMMAND=python run_tts.py --text "{text}" --duration "{duration}" --output "{output}"
 ```
 
-### 待实现
+### 待完成
 
-- [ ] 将 `indextts2-inference` 集成进 `ml-service`（`ML_TTS_BACKEND=indextts2` 内联模式）
-- [ ] `voice_config` 中传递 `spk_audio_prompt` 参数，打通 Voice Profile → 声纹克隆
-- [ ] `emo_audio_prompt` / `use_emo_text` 支持，实现情感感知配音
-- [ ] 时长控制参数（`target_duration_sec` → `max_mel_tokens`）映射
+- [ ] `emo_audio_prompt` 跨说话人情感迁移支持
+- [ ] 单段情感手动覆盖（当前依赖自动文本推断）
+
+---
+
+## 🎬 运行案例
+
+**输入**：MIT 6.824 分布式系统课程节选，英语，60 秒，1920×1080，AV1+AAC  
+**流水线**：Faster-Whisper large-v3（ASR）→ Qwen-turbo（翻译）→ IndexTTS2 内联（TTS，零样本声纹克隆）  
+**硬件**：NVIDIA RTX 5080（16 GB VRAM），Docker + WSL2
+
+> 视频文件已在 `.gitignore` 中排除（`*.mp4`），无法直接提交。  
+> 提交 60 秒视频并设置 `source_language=en, target_language=zh` 即可本地复现。
+
+### 分段时长对齐结果
+
+| 段 | 英文原文 | 中文配音 | 目标 ms | 实际 ms | 误差 |
+|---|---------|---------|---------|---------|------|
+| 0 | All right. Let's get started. | 好的，我们开始吧。 | 2879 | 2865 | 14 ms |
+| 1 | This is 6.824, distributed systems. | 这是6.824，分布式系统。 | 2880 | 2896 | 16 ms |
+| 2 | So I'd like to start with just a brief explanation... | 那么，我想先简要地解释一下... | 4480 | 4481 | 1 ms |
+| 3 | You know, the core of it is a set of cooperating... | 你知道，其核心是一组相互协作的计算机... | 8701 | 8687 | 14 ms |
+| 4 | And so the kinds of examples that we'll be focusing... | 因此，这门课程中我们将重点讲解的实例... | 10380 | 10349 | 31 ms |
+| 5 | such as MapReduce, and also somewhat more exotic... | 例如 MapReduce，以及一些更为奇特的... | 6180 | 6153 | 27 ms |
+| 6 | So those are all just examples... | 所以这些都是我认为分布式系统所包含的一些例子。 | 2040 | 2327 | 287 ms |
+| 7 | And the reason why all this is important... | 而且这一切之所以重要，是因为... | 6400 | 6199 | 201 ms |
+| 8 | infrastructure that requires more than one computer... | 需要多台计算机来完成其工作的基础设施... | 5600 | 5620 | 20 ms |
+
+**平均时长误差：~68 ms**（9 段中 6 段误差在 30 ms 以内；第 6、7 段因译文较长产生较大偏差）
+
+### 各阶段耗时（RTX 5080 实测）
+
+| 阶段 | 时间 |
+|------|------|
+| IndexTTS2 冷启动（首次 TTS 请求） | **~6 分钟** |
+| 单段推理（模型已热载） | **3.6 秒**（GPT 1.06s + S2Mel 0.70s + BigVGAN 0.10s） |
+| 9 段全部合成（热态） | ~32 秒 |
+| 完整 Job（ASR + 翻译 + TTS + 合并） | **~7 分钟** |
+| 实时率（RTF） | **1.47x** |
+
+---
+
+## ⚠️ 已知问题与社区求助
+
+以下是真实硬件测试中发现的开放问题，欢迎贡献 PR！
+
+### 1. BigVGAN CUDA kernel 在 Blackwell / RTX 50 系列（sm_120）上编译失败
+
+**现象**：RTX 5080（计算能力 sm_120）上，BigVGAN 反混叠 CUDA kernel 无法编译——因为 `nvidia/cuda:12.8.0-runtime` 基础镜像不含 `nvcc`（runtime ≠ devel）。
+
+```
+/bin/sh: 1: /usr/local/cuda/bin/nvcc: not found
+ninja: build stopped: subcommand failed.
+WARNING - Failed to load custom CUDA kernel for BigVGAN. Falling back to torch.
+```
+
+**影响**：BigVGAN 以 torch 模式运行。实测开销：每段 **0.10 秒**（< 推理总耗时的 3%），可接受。
+
+**可能的修复方案（欢迎 PR）**：
+- 基础镜像改为 `nvidia/cuda:12.8.0-devel-ubuntu22.04`（含 nvcc，镜像增大 ~1 GB）
+- 预编译 `.so` 文件并缓存到 Docker 层中
+- 在 BigVGAN 的 arch 列表中显式添加 `compute_120,sm_120`
+
+### 2. IndexTTS2 首次请求冷启动约 6 分钟
+
+**现象**：模型在首次 `/tts/run` 调用时懒加载。在 RTX 5080 上，加载全部组件（GPT 3.3 GB + S2Mel 1.1 GB + BigVGAN + wav2vec2bert + CAMP++ + NeMo 文本处理器）需要约 **6 分钟**。
+
+**影响**：首个 Job 的 TTS 阶段会"卡住"约 6 分钟（GPU 利用率偏低）。**不要取消任务**——它会完成的。
+
+**可能的修复方案（欢迎 PR）**：
+- 当 `INDEXTTS2_INLINE=true` 时，在 `ml-service` 启动时预加载模型
+- 增加报告模型加载进度的 startup 健康检查接口
+- 在 Job 状态展示中显示"模型预热中"的提示
+
+### 3. HuggingFace XetHub 大文件下载在 Docker 内停滞
+
+**现象**：通过 XetHub 协议（`hf-xet`）的 `snapshot_download` 会在 2~3 个大 blob 上停滞（`.incomplete` 文件不再增长）。
+
+**解决办法**：设置 `HF_HUB_DISABLE_XET=1` 并用标准 HTTP 下载：
+
+```python
+import os, requests
+os.environ["HF_HUB_DISABLE_XET"] = "1"
+from huggingface_hub import snapshot_download
+snapshot_download("IndexTeam/IndexTTS-2", token=os.environ.get("HF_TOKEN"))
+```
+
+或直接用 requests 流式下载单个卡住的文件（如 `gpt.pth`）：
+
+```python
+import requests, os
+url = "https://huggingface.co/IndexTeam/IndexTTS-2/resolve/main/gpt.pth"
+headers = {"Authorization": f"Bearer {os.environ['HF_TOKEN']}"}
+with open("gpt.pth", "wb") as f:
+    for chunk in requests.get(url, headers=headers, stream=True).iter_content(8*1024*1024):
+        f.write(chunk)
+```
 
 ---
 
@@ -342,10 +485,14 @@ INDEXTTS2_COMMAND=python run_tts.py --text "{text}" --duration "{duration}" --ou
 |------|----------|----------|
 | `TRANSLATION_PROVIDER` | `mock` | `openai_compatible` |
 | `ML_ASR_BACKEND` | `mock` | `faster_whisper` |
-| `ML_TTS_BACKEND` | `silence` | `edge_tts` |
+| `ML_TTS_BACKEND` | `silence` | `edge_tts` → `indextts2` |
 | `ML_VAD_BACKEND` | `none` | `pyannote`（可选）|
 | `ML_SEPARATOR_BACKEND` | `ffmpeg_stub` | `demucs`（可选）|
 | `ML_PYTHON_EXTRAS` | 空 | `real` |
+| `INDEXTTS2_INLINE` | `false` | `true`（当 `ML_TTS_BACKEND=indextts2` 时）|
+| `INDEXTTS2_MODEL_DIR` | 空（自动下载）| `/data/models/indextts2` |
+| `INDEXTTS2_USE_EMO_TEXT` | `true` | `true` / `false` |
+| `INDEXTTS2_DEFAULT_VOICE_RELPATH` | 空 | `voices/default.wav` |
 
 ---
 

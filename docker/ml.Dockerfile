@@ -10,6 +10,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         python3.11 python3.11-dev python3-pip \
         ffmpeg build-essential \
+        libsndfile1-dev \
     && ln -sf python3.11 /usr/bin/python3 \
     && ln -sf python3 /usr/bin/python \
     && rm -rf /var/lib/apt/lists/*
@@ -24,9 +25,11 @@ COPY config /app/config
 ARG PYTHON_EXTRAS=
 # When ML_PYTHON_EXTRAS=real, install PyTorch first with the CUDA 12.8 index so
 # the correct GPU wheels are pulled (avoids falling back to CPU-only torch).
+RUN python -m pip install --no-cache-dir ninja
+
 RUN python -m pip install --no-cache-dir --upgrade pip \
     && if [ -n "$PYTHON_EXTRAS" ]; then \
-        pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cu128 \
+        pip install --no-cache-dir torch torchaudio --index-url https://download.pytorch.org/whl/cu128 \
         && python -m pip install --no-cache-dir "/app/ml_service[$PYTHON_EXTRAS]"; \
        else \
         python -m pip install --no-cache-dir /app/ml_service; \

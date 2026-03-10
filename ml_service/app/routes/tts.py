@@ -1,3 +1,6 @@
+import asyncio
+from functools import partial
+
 from fastapi import APIRouter, Request
 
 from app.models import TTSRequest, TTSResponse
@@ -8,5 +11,9 @@ router = APIRouter(prefix="/tts", tags=["tts"])
 @router.post("/run", response_model=TTSResponse)
 async def run_tts(request: Request, payload: TTSRequest) -> TTSResponse:
     services = request.app.state.services
+    loop = asyncio.get_event_loop()
     async with services.gpu_guard.acquire():
-        return services.tts.synthesize(payload)
+        # Run the blocking TTS synthesis in a thread pool so the asyncio event
+        # loop stays free to handle healthz and other requests during long
+        # model loading or inference (IndexTTS2 can take minutes on first run).
+        return await loop.run_in_executor(None, partial(services.tts.synthesize, payload))

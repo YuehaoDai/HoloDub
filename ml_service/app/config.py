@@ -26,6 +26,17 @@ class Settings(BaseSettings):
     indextts2_model: str = ""
     indextts2_command: str = ""
 
+    # inline mode: load indextts2-inference directly inside ml-service process
+    indextts2_inline: bool = False
+    # path to local model checkpoints; empty = auto-download from HuggingFace
+    indextts2_model_dir: str = ""
+    # attention backend: "" (sdpa, default), "sage" (SageAttention), "flash" (Flash-Attn v2)
+    indextts2_attn_backend: str = ""
+    # auto-infer emotion vector from translated text via Qwen3 fine-tune
+    indextts2_use_emo_text: bool = True
+    # fallback spk_audio_prompt when no VoiceProfile is bound to the speaker
+    indextts2_default_voice_relpath: str = ""
+
     # edge-tts voice name; see `edge-tts --list-voices` for options.
     # zh-CN-XiaoxiaoNeural is a natural female Mandarin voice.
     edge_tts_voice: str = "zh-CN-XiaoxiaoNeural"
