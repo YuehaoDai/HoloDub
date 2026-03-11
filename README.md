@@ -203,13 +203,21 @@ but if you want to hack on it, here’s the rough picture.
 - [x] **Real translation**: OpenAI-compatible API (tested with qwen-turbo / DeepSeek)
 - [x] **Real TTS (interim)**: Edge-TTS (Microsoft, free, Chinese voice, atempo duration alignment)
 - [x] GPU passthrough (NVIDIA Container Toolkit + Docker Compose `deploy.devices`)
-- [x] **IndexTTS2 inline integration**: `indextts2-inference` inside `ml-service`, zero-shot voice cloning, `max_mel_tokens` duration estimation + `atempo` fallback
-- [x] **IndexTTS2 real inference validated**: English → Chinese, 9 segments, avg. timing error < 30 ms, RTF 1.47x (RTX 5080)
+- [x] **IndexTTS2 inline integration**: `indextts2-inference` inside `ml-service`, zero-shot voice cloning
+- [x] **IndexTTS2 real inference validated**: English → Chinese, RTF 1.47x (RTX 5080)
 - [x] **asyncio blocking fixed**: all ML routes use `run_in_executor`; healthz stays live during GPU inference
+- [x] **Duration-aware translation**: first-pass translation prompt carries character budget derived from segment duration; Kimi-k2.5 re-translation triggered when TTS audio overflows trailing silence gap
+- [x] **atempo removed**: duration alignment now uses gap-borrowing (overflow into trailing silence) + re-translation loop; no speed artifacts
+- [x] **ASR segmentation improved**: sentence-boundary-only splits, 5-word minimum, 800 ms silence threshold, short-segment post-merge; default min 4 s / max 20 s
+- [x] **amix volume bug fixed**: `normalize=0` on all amix filters; previously audio was divided by segment count (–38 dB for 81-segment videos)
+- [x] **Batched ffmpeg merge**: segments processed in groups of 50 to avoid `filter_complex` hang (O(N²) parser) on long videos
+- [x] **Per-segment TTS persistence**: each segment's result is written to DB immediately; timeout/retry only re-processes unfinished segments
+- [x] **Full 79-minute video validated**: 626 segments, English → Chinese, complete pipeline end-to-end
 - [ ] Real vocal / BGM separation (Demucs, requires `ML_PYTHON_EXTRAS=real`)
 - [ ] Speaker diarization (Pyannote, requires HuggingFace token)
 - [ ] BigVGAN CUDA kernel on Blackwell / sm_120 (nvcc absent from runtime image; torch fallback is fast enough — see Known Issues)
 - [ ] IndexTTS2 eager model pre-loading at startup (cold-start ~6 min on RTX 5080; see Known Issues)
+- [ ] Use a Chinese reference audio clip for better prosody alignment (current default uses English lecture audio)
 
 If you’re interested in hacking on it, PRs and discussions are very welcome.
 
@@ -325,8 +333,11 @@ Default is `zh-CN-XiaoxiaoNeural` (female, conversational). Override with `EDGE_
 ### Why IndexTTS2
 
 **1. Duration control** — the most critical feature for dubbing  
-- Two modes: `max_mel_tokens` budget (estimated from `target_duration_sec`, ~86 tokens/sec) constrains generation length; residual drift > 5 % is corrected by a lightweight `atempo` post-process.
-- As the official API exposes explicit target-token constraints in future releases, the `atempo` fallback will automatically become a no-op.
+- `max_mel_tokens` is estimated from the **translated text length** (empirical: ~50 AR tokens/sec, ~13.5 tokens/Chinese char) with 5 % headroom — not from the target duration.  Using text length as the primary constraint prevents the model from generating slow prosody to fill an over-generous budget.
+- `max_allowed_sec = target_sec + gap_to_next_segment` is passed as a hard ceiling so audio never exceeds the available silence window.
+- If generated audio overflows into the trailing silence gap: accepted silently (natural pacing).
+- If overflow exceeds the gap (would overlap next segment): Kimi-k2.5 re-translates with a tighter character budget (up to `RETRANSLATION_MAX_ATTEMPTS` times).
+- **No `atempo` time-stretching** — duration is aligned through re-translation and natural gap borrowing, not speed artifacts.
 
 **2. Zero-shot voice cloning**  
 - 3–10 s of reference audio clones any speaker's voice, no training required.
@@ -405,40 +416,42 @@ INDEXTTS2_COMMAND=python run_tts.py --text "{text}" --duration "{duration}" --ou
 
 - [ ] `emo_audio_prompt` support for cross-speaker emotion transfer
 - [ ] Per-segment emotion override via API (currently auto-detected from text)
+- [ ] Chinese reference audio for better prosody (current default is English; causes subtle rhythm mismatch)
 
 ---
 
-## 🎬 Demo run — validated result
+## 🎬 Demo run — validated results
 
-**Input**: MIT 6.824 Distributed Systems lecture excerpt, English, 60 s, 1920×1080, AV1+AAC  
-**Pipeline**: Faster-Whisper large-v3 (ASR) → Qwen-turbo (translation) → IndexTTS2 inline (TTS, zero-shot voice clone)  
-**Hardware**: NVIDIA RTX 5080 (16 GB VRAM), Docker + WSL2
+Video files are in `demo/` and render inline on GitHub.
 
-### Segment-level results
+### 60-second clip (9 segments)
 
-| # | English source | Chinese output | Target ms | Actual ms | Error |
-|---|---------------|----------------|-----------|-----------|-------|
-| 0 | All right. Let's get started. | 好的，我们开始吧。 | 2879 | 2865 | 14 ms |
-| 1 | This is 6.824, distributed systems. | 这是6.824，分布式系统。 | 2880 | 2896 | 16 ms |
-| 2 | So I'd like to start with just a brief explanation... | 那么，我想先简要地解释一下... | 4480 | 4481 | 1 ms |
-| 3 | You know, the core of it is a set of cooperating... | 你知道，其核心是一组相互协作的计算机... | 8701 | 8687 | 14 ms |
-| 4 | And so the kinds of examples that we'll be focusing... | 因此，这门课程中我们将重点讲解的实例... | 10380 | 10349 | 31 ms |
-| 5 | such as MapReduce, and also somewhat more exotic... | 例如 MapReduce，以及一些更为奇特的... | 6180 | 6153 | 27 ms |
-| 6 | So those are all just examples of the kind... | 所以这些都是我认为分布式系统所包含的一些例子。 | 2040 | 2327 | 287 ms |
-| 7 | And the reason why all this is important... | 而且这一切之所以重要，是因为许多关键基础设施... | 6400 | 6199 | 201 ms |
-| 8 | infrastructure that requires more than one computer... | 需要多台计算机来完成其工作的基础设施... | 5600 | 5620 | 20 ms |
-
-**Average timing error: ~68 ms** across 9 segments (6 of 9 under 30 ms; worst case 287 ms on a short segment with long translation).
-
-### Timing breakdown (measured on RTX 5080)
+**Input**: MIT 6.824 Distributed Systems lecture, English, 60 s  
+**Pipeline**: Faster-Whisper large-v3 → Qwen-turbo → IndexTTS2 (zero-shot)  
+**Hardware**: RTX 5080, Docker + WSL2
 
 | Phase | Time |
 |-------|------|
-| IndexTTS2 cold-start (first TTS request) | **~6 minutes** |
-| Single segment inference (after warm-up) | **3.6 s** (GPT 1.06s + S2Mel 0.70s + BigVGAN 0.10s) |
-| 9 segments total inference (warm) | ~32 s |
-| Full job (ASR + translate + TTS + merge) | **~7 minutes** |
+| IndexTTS2 cold-start (first job) | **~6 minutes** |
+| Single segment inference (warm) | **3.6 s** (GPT 1.06s + S2Mel 0.70s + BigVGAN 0.10s) |
+| Full 60-second job | **~7 minutes** |
 | Real-time factor (RTF) | **1.47×** per segment |
+
+### Full 79-minute lecture (626 segments)
+
+**Input**: MIT 6.824 full lecture video, English, 79 min, 946 MB  
+**Pipeline**: same as above  
+**Segmentation**: 626 segments, avg 6.9 s each (min 4 s, max 21.5 s)
+
+| Phase | Approximate time |
+|-------|-----------------|
+| ASR (Faster-Whisper large-v3) | ~8 min |
+| Translation (Qwen-turbo, 626 segments) | ~12 min |
+| TTS (IndexTTS2, warm after cold-start) | ~36 min |
+| Merge (batched ffmpeg, 13 chunks × 50 segs) | ~5 min |
+| **Total** | **~60 min** |
+
+**Timing accuracy**: avg drift < 1 % across all 626 segments; Kimi-k2.5 re-translation triggered on 3 segments where overflow exceeded trailing gap.
 
 ---
 
@@ -512,8 +525,12 @@ with open("gpt.pth", "wb") as f:
 | `ML_PYTHON_EXTRAS` | _(empty)_ | `real` |
 | `INDEXTTS2_INLINE` | `false` | `true` (when `ML_TTS_BACKEND=indextts2`) |
 | `INDEXTTS2_MODEL_DIR` | _(empty, auto-download)_ | `/data/models/indextts2` |
-| `INDEXTTS2_USE_EMO_TEXT` | `true` | `true` / `false` |
-| `INDEXTTS2_DEFAULT_VOICE_RELPATH` | _(empty)_ | `voices/default.wav` |
+| `INDEXTTS2_USE_EMO_TEXT` | `false` | `true` (needs Qwen3 emo model) |
+| `INDEXTTS2_DEFAULT_VOICE_RELPATH` | _(empty)_ | `voices/ref.wav` — **use a Chinese clip** for best results |
+| `RETRANSLATION_ENABLED` | `true` | `true` / `false` |
+| `RETRANSLATION_MODEL` | `kimi-k2.5` | any model on same `OPENAI_BASE_URL` |
+| `RETRANSLATION_MAX_ATTEMPTS` | `2` | increase for stricter duration compliance |
+| `STAGE_TIMEOUT_SECONDS` | `14400` | raise for very long videos |
 
 ---
 

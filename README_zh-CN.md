@@ -190,13 +190,21 @@ HoloDub 的目标不是“翻完字幕 + 随便套一条 AI 配音”，
 - [x] **真实翻译**：OpenAI 兼容接口（已测 qwen-turbo / DeepSeek）
 - [x] **真实 TTS（过渡方案）**：Edge-TTS（微软，免费，中文自然语音，含 atempo 时长对齐）
 - [x] GPU 直通（NVIDIA Container Toolkit + Docker Compose `deploy.devices`）
-- [x] **IndexTTS2 内联集成**：`indextts2-inference` 集成进 `ml-service`，零样本声纹克隆，`max_mel_tokens` 时长估算 + `atempo` 兜底
-- [x] **IndexTTS2 真实推理验证**：英语 → 中文，9 段全部合成，平均时长误差 < 30 ms，RTF 1.47x（RTX 5080）
+- [x] **IndexTTS2 内联集成**：`indextts2-inference` 集成进 `ml-service`，零样本声纹克隆
+- [x] **IndexTTS2 真实推理验证**：英语 → 中文，RTF 1.47x（RTX 5080）
 - [x] **asyncio 阻塞 bug 修复**：所有 ML 路由改用 `run_in_executor`，GPU 推理期间 healthz 保持响应
+- [x] **时长感知翻译**：第一遍翻译携带基于片段时长计算的字数约束；TTS 音频溢出超出尾随静音 gap 时触发 Kimi-k2.5 再翻译
+- [x] **彻底去除 atempo**：时长对齐改为 gap 借用 + 再翻译循环，不再产生速度失真
+- [x] **ASR 切分优化**：仅句尾标点触发切分，最少 5 词，800ms 静音阈值，短段后处理合并；默认最小 4s / 最大 20s
+- [x] **amix 音量 bug 修复**：所有 amix 加 `normalize=0`；此前多段视频音量被除以段数（81 段时衰减 38 dB）
+- [x] **ffmpeg 分批 merge**：每批最多 50 段，避免 `filter_complex` 在大视频上的 O(N²) 卡死
+- [x] **TTS 结果即时入库**：每段合成后立即写 DB，超时重试只处理未完成的段
+- [x] **79 分钟完整视频验证**：626 段，英语 → 中文，完整流水线端到端跑通
 - [ ] 真实人声 / 伴奏分离（Demucs，需 `ML_PYTHON_EXTRAS=real`）
 - [ ] 说话人分离（Pyannote，需 HuggingFace token）
 - [ ] BigVGAN CUDA kernel 在 Blackwell / sm_120 上编译失败（runtime 镜像无 nvcc；torch 回退速度仍可接受——见已知问题）
 - [ ] IndexTTS2 启动时预加载模型（当前首次 TTS 请求冷启动 ~6 分钟——见已知问题）
+- [ ] 使用中文参考音频改善韵律（当前默认使用英文片段，导致轻微语速不一致）
 
 欢迎一起参与开发、提 Issue / PR。
 
@@ -317,9 +325,11 @@ docker compose --env-file .env up -d      # 显式指定 .env 重启（推荐）
 ### 核心能力
 
 **1. 时长控制**（配音最关键的能力）  
-- 通过 `target_duration_sec` 估算 `max_mel_tokens`（约 86 tokens/秒 × 1.3 余量），约束生成长度
-- 实测偏差 > 5% 时，自动触发 `atempo` 后处理兜底，保证音画尽量对齐
-- 后续官方正式暴露硬约束接口后，兜底逻辑可直接退化为 no-op
+- `max_mel_tokens` 根据**译文字数**估算（实测约 50 AR tokens/秒、13.5 tokens/汉字），仅留 5% 余量——不依赖目标时长。字数驱动的上限可防止模型因预算宽裕而拖慢语速。
+- `max_allowed_sec = target_sec + 下一段前的静音 gap`，作为硬上限传入适配器，确保音频不超出可用静音窗口。
+- 音频溢出进入 gap：直接接受（自然占用静音，无音质损失）。
+- 溢出超出 gap（会覆盖下一段音频）：触发 Kimi-k2.5 再翻译压缩字数（最多 `RETRANSLATION_MAX_ATTEMPTS` 次）。
+- **完全不使用 `atempo`**：通过再翻译 + gap 借用实现对齐，不产生速度失真。
 
 **2. 零样本声纹克隆**  
 - 只需 3~10 秒参考音频，无需训练，即可克隆任意说话人音色
@@ -402,35 +412,36 @@ INDEXTTS2_COMMAND=python run_tts.py --text "{text}" --duration "{duration}" --ou
 
 ## 🎬 运行案例
 
-**输入**：MIT 6.824 分布式系统课程节选，英语，60 秒，1920×1080，AV1+AAC  
-**流水线**：Faster-Whisper large-v3（ASR）→ Qwen-turbo（翻译）→ IndexTTS2 内联（TTS，零样本声纹克隆）  
-**硬件**：NVIDIA RTX 5080（16 GB VRAM），Docker + WSL2
+视频文件在 `demo/` 目录，GitHub 页面可直接播放。
 
-### 分段时长对齐结果
+### 60 秒短片（9 段）
 
-| 段 | 英文原文 | 中文配音 | 目标 ms | 实际 ms | 误差 |
-|---|---------|---------|---------|---------|------|
-| 0 | All right. Let's get started. | 好的，我们开始吧。 | 2879 | 2865 | 14 ms |
-| 1 | This is 6.824, distributed systems. | 这是6.824，分布式系统。 | 2880 | 2896 | 16 ms |
-| 2 | So I'd like to start with just a brief explanation... | 那么，我想先简要地解释一下... | 4480 | 4481 | 1 ms |
-| 3 | You know, the core of it is a set of cooperating... | 你知道，其核心是一组相互协作的计算机... | 8701 | 8687 | 14 ms |
-| 4 | And so the kinds of examples that we'll be focusing... | 因此，这门课程中我们将重点讲解的实例... | 10380 | 10349 | 31 ms |
-| 5 | such as MapReduce, and also somewhat more exotic... | 例如 MapReduce，以及一些更为奇特的... | 6180 | 6153 | 27 ms |
-| 6 | So those are all just examples... | 所以这些都是我认为分布式系统所包含的一些例子。 | 2040 | 2327 | 287 ms |
-| 7 | And the reason why all this is important... | 而且这一切之所以重要，是因为... | 6400 | 6199 | 201 ms |
-| 8 | infrastructure that requires more than one computer... | 需要多台计算机来完成其工作的基础设施... | 5600 | 5620 | 20 ms |
-
-**平均时长误差：~68 ms**（9 段中 6 段误差在 30 ms 以内；第 6、7 段因译文较长产生较大偏差）
-
-### 各阶段耗时（RTX 5080 实测）
+**输入**：MIT 6.824 分布式系统课程节选，英语，60 秒  
+**流水线**：Faster-Whisper large-v3 → Qwen-turbo → IndexTTS2（零样本）  
+**硬件**：RTX 5080，Docker + WSL2
 
 | 阶段 | 时间 |
 |------|------|
-| IndexTTS2 冷启动（首次 TTS 请求） | **~6 分钟** |
-| 单段推理（模型已热载） | **3.6 秒**（GPT 1.06s + S2Mel 0.70s + BigVGAN 0.10s） |
-| 9 段全部合成（热态） | ~32 秒 |
-| 完整 Job（ASR + 翻译 + TTS + 合并） | **~7 分钟** |
+| IndexTTS2 冷启动（首次任务） | **~6 分钟** |
+| 单段推理（热态） | **3.6 秒**（GPT 1.06s + S2Mel 0.70s + BigVGAN 0.10s） |
+| 完整 60 秒任务 | **~7 分钟** |
 | 实时率（RTF） | **1.47x** |
+
+### 完整 79 分钟课程
+
+**输入**：MIT 6.824 完整讲座视频，英语，79 分钟，946 MB  
+**流水线**：同上  
+**切分**：626 段，平均 6.9 秒（最短 4s，最长 21.5s）
+
+| 阶段 | 大约耗时 |
+|------|---------|
+| ASR（Faster-Whisper large-v3） | ~8 分钟 |
+| 翻译（Qwen-turbo，626 段） | ~12 分钟 |
+| TTS（IndexTTS2，热态） | ~36 分钟 |
+| 合并（分批 ffmpeg，13 批 × 50 段） | ~5 分钟 |
+| **总计** | **~60 分钟** |
+
+**时长精度**：626 段平均漂移 < 1%；3 段因溢出超出 gap 触发 Kimi-k2.5 再翻译。
 
 ---
 
@@ -504,8 +515,12 @@ with open("gpt.pth", "wb") as f:
 | `ML_PYTHON_EXTRAS` | 空 | `real` |
 | `INDEXTTS2_INLINE` | `false` | `true`（当 `ML_TTS_BACKEND=indextts2` 时）|
 | `INDEXTTS2_MODEL_DIR` | 空（自动下载）| `/data/models/indextts2` |
-| `INDEXTTS2_USE_EMO_TEXT` | `true` | `true` / `false` |
-| `INDEXTTS2_DEFAULT_VOICE_RELPATH` | 空 | `voices/default.wav` |
+| `INDEXTTS2_USE_EMO_TEXT` | `false` | `true`（需 Qwen3 情感模型）|
+| `INDEXTTS2_DEFAULT_VOICE_RELPATH` | 空 | `voices/ref.wav`（**建议用中文音频**，效果更好）|
+| `RETRANSLATION_ENABLED` | `true` | `true` / `false` |
+| `RETRANSLATION_MODEL` | `kimi-k2.5` | 同一 `OPENAI_BASE_URL` 下的任意模型 |
+| `RETRANSLATION_MAX_ATTEMPTS` | `2` | 增大可提高时长合规率 |
+| `STAGE_TIMEOUT_SECONDS` | `14400` | 超长视频可适当调大 |
 
 ---
 

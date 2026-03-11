@@ -25,6 +25,15 @@ class TTSAdapter:
         return self.settings.ml_tts_backend
 
     def synthesize(self, request: TTSRequest) -> TTSResponse:
+        # If the text is empty or contains only whitespace/punctuation, generate
+        # silence instead of calling a TTS model.  This avoids models producing
+        # unexpectedly long audio for degenerate inputs like lone periods.
+        _printable = request.text.translate(
+            str.maketrans("", "", " \t\n\r.,!?。！？，、；：…—–")
+        )
+        if not _printable:
+            return self._run_silence(request)
+
         if self.settings.ml_tts_backend == "indextts2":
             if self.settings.indextts2_inline:
                 return self._run_indextts2_inline(request)
@@ -152,12 +161,36 @@ class TTSAdapter:
                 "or set INDEXTTS2_DEFAULT_VOICE_RELPATH."
             )
 
-        # Estimate max_mel_tokens from target duration.
-        # Empirical rate: ~86 AR tokens/sec at the model's 22 050 Hz output.
-        # A 1.3× headroom lets the model breathe; atempo corrects residual drift.
+        # Empirical token rate from IndexTTS2 benchmark:
+        #   121 AR tokens → 2.41 s audio  →  ~50 tokens / sec
+        # Chinese speech rate from IndexTTS2 output: ~3.7 chars / sec
+        #   → ~13.5 AR tokens / char  (50 / 3.7)
+        #
+        # max_mel_tokens is the budget cap.  When the model has generous budget it
+        # samples slower prosody to fill the extra tokens, producing the "stretched"
+        # sound.  We therefore set the budget tightly from the TEXT LENGTH alone,
+        # with only 5 % headroom for natural phoneme duration variation.  Any
+        # overflow beyond the target slot is handled by the pipeline: the audio
+        # borrows from the trailing silence gap, and re-translation is triggered
+        # when the overflow exceeds the available gap.
+        TOKENS_PER_SEC = 50          # empirical, IndexTTS2 @ 22 050 Hz
+        TOKENS_PER_CHAR = 13.5       # empirical for Chinese output
+        HEADROOM = 1.05              # 5 % — enough for natural variation, too small for systematic slowdown
+
         target_sec = max(request.target_duration_sec, 0.1)
-        estimated_tokens = int(target_sec * 86 * 1.3)
-        max_mel_tokens = max(256, min(4096, estimated_tokens))
+        # max_allowed_sec = target + trailing gap; audio beyond this would overlap
+        # the next segment.  Falls back to target_sec if not provided.
+        max_allowed_sec = request.max_allowed_sec if request.max_allowed_sec > 0 else target_sec
+        text_chars = max(1, len([c for c in request.text if not c.isspace()]))
+
+        # Primary constraint: how many tokens the TEXT itself needs.
+        tokens_from_text = int(text_chars * TOKENS_PER_CHAR * HEADROOM)
+
+        # Hard ceiling: audio MUST NOT exceed (target + gap).
+        # No additional headroom here — the gap is already the buffer.
+        tokens_from_allowed = int(max_allowed_sec * TOKENS_PER_SEC)
+
+        max_mel_tokens = max(64, min(tokens_from_text, tokens_from_allowed, 4096))
 
         tmp_wav = output_path.with_suffix(".tmp.wav")
         tts.infer(
@@ -171,23 +204,15 @@ class TTSAdapter:
             num_beams=1,
         )
 
-        # Post-process: resample to project sample rate and apply atempo if the
-        # generated duration drifts more than 5 % from the target.
-        actual_sec = probe_duration(self.settings, tmp_wav)
-        atempo_filter: str | None = None
-        if actual_sec > 0 and target_sec > 0:
-            ratio = actual_sec / target_sec
-            ratio = max(0.5, min(2.0, ratio))
-            if abs(ratio - 1.0) > 0.05:
-                atempo_filter = f"atempo={ratio:.6f}"
-
-        af_args = [atempo_filter, f"aresample={self.settings.default_sample_rate}"]
-        af_chain = ",".join(f for f in af_args if f)
+        # Post-process: resample to project sample rate only.
+        # Duration stretching (atempo) is intentionally omitted — any overflow is
+        # handled in the pipeline by borrowing from the trailing silence gap, and
+        # re-translation is triggered when the overflow exceeds that gap.
         subprocess.run(
             [
                 self.settings.ffmpeg_bin, "-y",
                 "-i", str(tmp_wav),
-                "-af", af_chain,
+                "-af", f"aresample={self.settings.default_sample_rate}",
                 "-ac", str(self.settings.default_channels),
                 str(output_path),
             ],
@@ -196,13 +221,13 @@ class TTSAdapter:
         )
         tmp_wav.unlink(missing_ok=True)
 
-        duration_ms = int(probe_duration(self.settings, output_path) * 1000)
+        actual_sec = probe_duration(self.settings, output_path)
+        duration_ms = int(actual_sec * 1000)
         diag = [
             f"tts backend=indextts2(inline) max_mel_tokens={max_mel_tokens}"
             f" emo_text={self.settings.indextts2_use_emo_text}"
+            f" actual={actual_sec:.2f}s target={target_sec:.2f}s"
         ]
-        if atempo_filter:
-            diag.append(f"atempo={atempo_filter} (fallback, actual={actual_sec:.2f}s target={target_sec:.2f}s)")
         return TTSResponse(
             audio_relpath=request.output_relpath,
             actual_duration_ms=duration_ms,

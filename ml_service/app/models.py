@@ -53,6 +53,8 @@ class SmartSplitResponse(BaseModel):
 class TTSRequest(BaseModel):
     text: str
     target_duration_sec: float
+    # target + trailing silence gap; adapter uses this as the hard token ceiling.
+    max_allowed_sec: float = 0.0
     voice_config: dict[str, Any] = Field(default_factory=dict)
     output_relpath: str
 

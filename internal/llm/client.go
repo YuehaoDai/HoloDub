@@ -39,17 +39,20 @@ func New(cfg config.Config) *Client {
 
 // charsPerSec returns the natural spoken character rate for the given language code.
 func charsPerSec(lang string) float64 {
+	// Empirical speech rates from IndexTTS2 output measurement.
+	// Chinese: benchmark showed 9 chars / 2.41 s ≈ 3.7 chars/sec.
+	// Using slightly higher 4.0 to keep a small margin in the translation budget.
 	switch strings.ToLower(strings.TrimSpace(lang)) {
 	case "zh", "zh-cn", "zh-tw":
-		return 4.5
-	case "ja":
-		return 5.0
-	case "ko":
 		return 4.0
+	case "ja":
+		return 4.5
+	case "ko":
+		return 3.8
 	case "en":
-		return 14.0
-	default:
 		return 12.0
+	default:
+		return 10.0
 	}
 }
 

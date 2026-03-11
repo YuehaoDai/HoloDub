@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"math"
 	"os"
 	"path/filepath"
 	"time"
@@ -312,6 +311,11 @@ func (s *Service) runTTSDuration(ctx context.Context, task models.TaskPayload) e
 	}
 
 	for idx := range segments {
+		// Skip segments already synthesised from a previous (timed-out) attempt.
+		if segments[idx].Status == "synthesized" {
+			continue
+		}
+
 		voiceConfig := map[string]any{}
 		profile, err := s.store.ResolveVoiceProfileForSegment(ctx, job.ID, segments[idx])
 		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
@@ -327,6 +331,21 @@ func (s *Service) runTTSDuration(ctx context.Context, task models.TaskPayload) e
 		targetMs := segments[idx].DurationMs()
 		targetSec := float64(targetMs) / 1000.0
 
+		// Trailing silence gap between this segment's end and the next segment's
+		// start.  TTS audio that overflows into this gap is inaudible as a problem
+		// — the next segment simply starts a bit later.  Only overflow that exceeds
+		// the gap (which would overlap the next segment's audio) needs re-translation.
+		var gapAfterMs int64 = 30_000 // generous default for the last segment
+		if idx+1 < len(segments) {
+			if gap := segments[idx+1].StartMs - segments[idx].EndMs; gap >= 0 {
+				gapAfterMs = gap
+			} else {
+				gapAfterMs = 0
+			}
+		}
+		// Hard ceiling the TTS adapter may use: target + gap (no additional slack).
+		maxAllowedSec := targetSec + float64(gapAfterMs)/1000.0
+
 		text := segments[idx].TargetText
 		if text == "" {
 			text = segments[idx].SourceText
@@ -340,6 +359,7 @@ func (s *Service) runTTSDuration(ctx context.Context, task models.TaskPayload) e
 			response, err = s.ml.RunTTS(ctx, ml.TTSRequest{
 				Text:              text,
 				TargetDurationSec: targetSec,
+				MaxAllowedSec:     maxAllowedSec,
 				VoiceConfig:       voiceConfig,
 				OutputRelPath:     outputRelPath,
 			})
@@ -347,22 +367,35 @@ func (s *Service) runTTSDuration(ctx context.Context, task models.TaskPayload) e
 				return fmt.Errorf("tts segment %d (attempt %d): %w", segments[idx].ID, attempt, err)
 			}
 
-			// Check whether re-translation is warranted.
 			if !s.cfg.RetranslationEnabled || attempt == maxAttempts {
 				break
 			}
-			drift := math.Abs(float64(response.ActualDurationMs-targetMs)) / float64(targetMs) //nolint:govet
-			if drift <= s.cfg.RetranslationDriftThreshold {
-				break // Within tolerance — accept result.
+
+			// How much does the audio spill past the segment boundary?
+			overflow := response.ActualDurationMs - targetMs
+			if overflow <= 0 {
+				break // Audio fits within the segment — ideal.
+			}
+			if overflow <= gapAfterMs {
+				// Overflow absorbed by trailing gap — no quality impact.
+				slog.Debug("tts overflow absorbed by trailing gap",
+					"job_id", job.ID,
+					"segment_id", segments[idx].ID,
+					"overflow_ms", overflow,
+					"gap_ms", gapAfterMs,
+				)
+				break
 			}
 
+			// Overflow exceeds available gap — re-translate with stricter budget.
 			actualMs := response.ActualDurationMs
-			slog.Info("tts duration drift exceeds threshold, re-translating",
+			slog.Info("tts overflow exceeds trailing gap, re-translating",
 				"job_id", job.ID,
 				"segment_id", segments[idx].ID,
 				"target_ms", targetMs,
 				"actual_ms", actualMs,
-				"drift_pct", fmt.Sprintf("%.1f%%", drift*100),
+				"overflow_ms", overflow,
+				"gap_ms", gapAfterMs,
 				"attempt", attempt+1,
 				"max_attempts", maxAttempts,
 			)
@@ -375,8 +408,7 @@ func (s *Service) runTTSDuration(ctx context.Context, task models.TaskPayload) e
 				attempt+1, maxAttempts,
 			)
 			if retErr != nil {
-				// Non-fatal: log and accept the TTS result with atempo fallback.
-				slog.Warn("re-translation failed, keeping current result",
+				slog.Warn("re-translation failed, accepting current result",
 					"job_id", job.ID,
 					"segment_id", segments[idx].ID,
 					"error", retErr,
@@ -386,7 +418,6 @@ func (s *Service) runTTSDuration(ctx context.Context, task models.TaskPayload) e
 
 			text = newText
 			segments[idx].TargetText = newText
-			// Persist the improved translation so the segment history is accurate.
 			if saveErr := s.store.UpdateSegmentTranslations(ctx, []models.Segment{segments[idx]}); saveErr != nil {
 				slog.Warn("failed to persist re-translated text",
 					"job_id", job.ID,
@@ -399,8 +430,19 @@ func (s *Service) runTTSDuration(ctx context.Context, task models.TaskPayload) e
 		segments[idx].TTSAudioRelPath = response.AudioRelPath
 		segments[idx].TTSDurationMs = response.ActualDurationMs
 		segments[idx].Status = "synthesized"
+
+		// Persist immediately so progress survives a stage timeout.
+		// On the next retry, already-synthesised segments are skipped above.
+		if saveErr := s.store.UpdateSegmentSynthResults(ctx, []models.Segment{segments[idx]}); saveErr != nil {
+			slog.Warn("failed to persist TTS result immediately; will retry at end",
+				"job_id", job.ID,
+				"segment_id", segments[idx].ID,
+				"error", saveErr,
+			)
+		}
 	}
 
+	// Final batch save — idempotent for already-persisted segments.
 	return s.store.UpdateSegmentSynthResults(ctx, segments)
 }
 

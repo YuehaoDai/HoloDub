@@ -59,6 +59,10 @@ type SmartSplitResponse struct {
 type TTSRequest struct {
 	Text              string         `json:"text"`
 	TargetDurationSec float64        `json:"target_duration_sec"`
+	// MaxAllowedSec is target + trailing gap; the adapter uses it as the hard
+	// token ceiling so audio never exceeds (target+gap) and re-translation is
+	// only triggered for genuine overflow beyond the available silence.
+	MaxAllowedSec     float64        `json:"max_allowed_sec,omitempty"`
 	VoiceConfig       map[string]any `json:"voice_config"`
 	OutputRelPath     string         `json:"output_relpath"`
 }
