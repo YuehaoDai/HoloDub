@@ -134,7 +134,11 @@ class TTSAdapter:
         # Lazy-load the model as a singleton on this adapter instance so it is only
         # initialised once per worker process (model weights stay in GPU VRAM).
         if not hasattr(self, "_indextts2_model"):
-            init_kwargs: dict = {}
+            init_kwargs: dict = {
+                # FP16 halves VRAM usage and speeds up all GPU operations 2-4x
+                # on modern hardware (Blackwell sm_120 / Ada / Ampere).
+                "use_fp16": True,
+            }
             if self.settings.indextts2_model_dir:
                 init_kwargs["model_dir"] = self.settings.indextts2_model_dir
             if self.settings.indextts2_attn_backend:
