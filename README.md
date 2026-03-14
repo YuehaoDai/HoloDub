@@ -22,6 +22,10 @@
     </a>
   </p>
 
+  <p>
+    <a href="README_zh-CN.md">📖 中文文档</a>
+  </p>
+
 </div>
 
 > Dub the whole performance, not just the words.
@@ -215,7 +219,7 @@ but if you want to hack on it, here’s the rough picture.
 - [x] **Full 79-minute video validated**: 626 segments, English → Chinese, complete pipeline end-to-end
 - [ ] Real vocal / BGM separation (Demucs, requires `ML_PYTHON_EXTRAS=real`)
 - [ ] Speaker diarization (Pyannote, requires HuggingFace token)
-- [ ] BigVGAN CUDA kernel on Blackwell / sm_120 (nvcc absent from runtime image; torch fallback is fast enough — see Known Issues)
+- [x] **BigVGAN CUDA kernel on Blackwell / sm_120**: switched to `nvidia/cuda:12.8.0-devel` image + patched unused `#include <cuda_profiler_api.h>` + pre-compiled `.so` baked into the image layer; RTX 5080 now uses the native CUDA kernel
 - [ ] IndexTTS2 eager model pre-loading at startup (cold-start ~6 min on RTX 5080; see Known Issues)
 - [ ] Use a Chinese reference audio clip for better prosody alignment (current default uses English lecture audio)
 
@@ -459,22 +463,23 @@ Video files are in `demo/` and render inline on GitHub.
 
 These are open problems found during real hardware testing. Contributions welcome!
 
-### 1. BigVGAN CUDA kernel fails on Blackwell / RTX 50-series (sm_120)
+### 1. ~~BigVGAN CUDA kernel fails on Blackwell / RTX 50-series (sm_120)~~ — RESOLVED ✅
 
-**Symptom**: On RTX 5080 (compute capability sm_120), the BigVGAN anti-aliasing CUDA kernel fails to compile because `nvcc` is absent from the `nvidia/cuda:12.8.0-runtime` base image (runtime ≠ devel).
+**Original symptom**: `nvcc` was absent from the `nvidia/cuda:12.8.0-runtime` base image, so the BigVGAN anti-aliasing CUDA extension could not be JIT-compiled at runtime.
 
-```
-/bin/sh: 1: /usr/local/cuda/bin/nvcc: not found
-ninja: build stopped: subcommand failed.
-WARNING - Failed to load custom CUDA kernel for BigVGAN. Falling back to torch.
-```
+**Fix applied** (`docker/ml.Dockerfile`):
 
-**Impact**: BigVGAN runs in torch mode. Measured overhead: **0.10 s** per segment (< 3 % of total inference time) — acceptable for now.
+1. **Switch base image** from `nvidia/cuda:12.8.0-runtime-ubuntu22.04` to **`nvidia/cuda:12.8.0-devel-ubuntu22.04`** — the devel variant bundles the full CUDA compiler toolchain (`nvcc`, all headers including `cuda_runtime.h`, `cusparse.h`, etc.). Image size increases ~1 GB but the build is reliable.
 
-**Potential fixes (PRs welcome)**:
-- Switch base image to `nvidia/cuda:12.8.0-devel-ubuntu22.04` (adds nvcc, adds ~1 GB to image)
-- Pre-compile the extension and cache the `.so` in the Docker layer
-- Patch BigVGAN's arch list to explicitly include `compute_120,sm_120`
+2. **Patch unused header** — BigVGAN's `.cu` source includes `<cuda_profiler_api.h>` which is absent from even the devel headers for CUDA 12.8. The header is never actually called, so it is removed via `sed` in the Dockerfile:
+   ```dockerfile
+   RUN find /usr/local/lib/python3.11/dist-packages/indextts -name "*.cu" \
+        -exec sed -i 's|#include <cuda_profiler_api.h>|// removed (unused)|g' {} \;
+   ```
+
+3. **Pre-compile and cache** — `docker/precompile_bigvgan.py` is executed during `docker build`, compiling the extension for architectures `7.5;8.0;8.6;8.9+PTX;12.0` and storing the resulting `.so` in the image layer. Every container start loads the cached kernel instantly.
+
+**Result on RTX 5080**: BigVGAN now uses the native CUDA kernel. Combined with `use_fp16=True` on IndexTTS2, TTS throughput improved **~2.5× vs FP32 + torch fallback** (3.08 s/segment vs ~7.7 s/segment on the 626-segment 79-minute benchmark).
 
 ### 2. IndexTTS2 cold-start ~6 minutes on first TTS request
 

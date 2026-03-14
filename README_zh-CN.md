@@ -22,6 +22,10 @@
     </a>
   </p>
 
+  <p>
+    <a href="README.md">📖 English README</a>
+  </p>
+
 </div>
 
 > Dub the whole performance, not just the words.  
@@ -202,7 +206,7 @@ HoloDub 的目标不是“翻完字幕 + 随便套一条 AI 配音”，
 - [x] **79 分钟完整视频验证**：626 段，英语 → 中文，完整流水线端到端跑通
 - [ ] 真实人声 / 伴奏分离（Demucs，需 `ML_PYTHON_EXTRAS=real`）
 - [ ] 说话人分离（Pyannote，需 HuggingFace token）
-- [ ] BigVGAN CUDA kernel 在 Blackwell / sm_120 上编译失败（runtime 镜像无 nvcc；torch 回退速度仍可接受——见已知问题）
+- [x] **BigVGAN CUDA kernel 在 Blackwell / sm_120 上编译失败**：改用 devel 镜像 + 去掉未使用的 `#include <cuda_profiler_api.h>` + 构建时预编译 `.so` 烤进镜像层；RTX 5080 现已使用原生 CUDA kernel
 - [ ] IndexTTS2 启动时预加载模型（当前首次 TTS 请求冷启动 ~6 分钟——见已知问题）
 - [ ] 使用中文参考音频改善韵律（当前默认使用英文片段，导致轻微语速不一致）
 
@@ -449,22 +453,23 @@ INDEXTTS2_COMMAND=python run_tts.py --text "{text}" --duration "{duration}" --ou
 
 以下是真实硬件测试中发现的开放问题，欢迎贡献 PR！
 
-### 1. BigVGAN CUDA kernel 在 Blackwell / RTX 50 系列（sm_120）上编译失败
+### 1. ~~BigVGAN CUDA kernel 在 Blackwell / RTX 50 系列（sm_120）上编译失败~~ — 已修复 ✅
 
-**现象**：RTX 5080（计算能力 sm_120）上，BigVGAN 反混叠 CUDA kernel 无法编译——因为 `nvidia/cuda:12.8.0-runtime` 基础镜像不含 `nvcc`（runtime ≠ devel）。
+**原始现象**：`nvidia/cuda:12.8.0-runtime` 基础镜像不含 `nvcc`，BigVGAN 反混叠 CUDA 扩展在运行时无法 JIT 编译。
 
-```
-/bin/sh: 1: /usr/local/cuda/bin/nvcc: not found
-ninja: build stopped: subcommand failed.
-WARNING - Failed to load custom CUDA kernel for BigVGAN. Falling back to torch.
-```
+**修复方案**（`docker/ml.Dockerfile`）：
 
-**影响**：BigVGAN 以 torch 模式运行。实测开销：每段 **0.10 秒**（< 推理总耗时的 3%），可接受。
+1. **切换基础镜像**：从 `nvidia/cuda:12.8.0-runtime-ubuntu22.04` 改为 **`nvidia/cuda:12.8.0-devel-ubuntu22.04`**，devel 版本包含完整 CUDA 编译工具链（`nvcc`、`cuda_runtime.h`、`cusparse.h` 等所有头文件）。镜像增大约 1 GB，但编译可靠。
 
-**可能的修复方案（欢迎 PR）**：
-- 基础镜像改为 `nvidia/cuda:12.8.0-devel-ubuntu22.04`（含 nvcc，镜像增大 ~1 GB）
-- 预编译 `.so` 文件并缓存到 Docker 层中
-- 在 BigVGAN 的 arch 列表中显式添加 `compute_120,sm_120`
+2. **去掉未使用的头文件引用**：BigVGAN 的 `.cu` 源码包含 `#include <cuda_profiler_api.h>`，该头文件即使在 devel 镜像中也不存在，且从未被实际调用。在 Dockerfile 中用 `sed` 将其注释掉：
+   ```dockerfile
+   RUN find /usr/local/lib/python3.11/dist-packages/indextts -name "*.cu" \
+        -exec sed -i 's|#include <cuda_profiler_api.h>|// removed (unused)|g' {} \;
+   ```
+
+3. **构建时预编译并缓存**：`docker/precompile_bigvgan.py` 在 `docker build` 阶段执行，为 `7.5;8.0;8.6;8.9+PTX;12.0` 各架构编译扩展，生成的 `.so` 文件烤进镜像层。每次容器启动时直接加载缓存的 kernel，无需运行时编译。
+
+**RTX 5080 实测结果**：BigVGAN 现在使用原生 CUDA kernel。结合 `use_fp16=True`，TTS 吞吐量相比 FP32 + torch 回退提升约 **2.5 倍**（626 段 / 79 分钟视频实测：3.08 秒/段 vs 约 7.7 秒/段）。
 
 ### 2. IndexTTS2 首次请求冷启动约 6 分钟
 
