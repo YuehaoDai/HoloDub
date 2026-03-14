@@ -38,10 +38,15 @@ dist/
 build/
 *.egg-info/
 
-# Runtime data
+# Runtime data and job outputs
 data/jobs/
 data/tmp/
 data/cache/
+
+# Test / scratch videos in data/ (large, runtime-generated, not versioned)
+data/test_*.mp4
+data/test_*.mkv
+data/input-smoke*.mp4
 
 # HuggingFace model cache (large files, populated at runtime)
 hf-cache/
@@ -61,6 +66,17 @@ token.txt
 # Local tooling / scratch files
 .DS_Store
 query
+
+# Local developer notes — not committed
+docs/system-overview.md
+docs/*.local.md
+
+# Scratch files
+query
+token.txt
+
+# Temp test outputs in root
+test_output_*.mp4
 
 # Editor/IDE
 # .idea/
