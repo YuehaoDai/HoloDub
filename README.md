@@ -32,17 +32,11 @@
 
 ## 🎬 Demo — English → Chinese (IndexTTS2, RTX 5080)
 
-60-second excerpt from MIT 6.824 Distributed Systems lecture. Dubbed with zero-shot voice cloning, no training required.
+Full 79-minute MIT 6.824 Distributed Systems lecture (626 segments). Dubbed with zero-shot voice cloning, no training required.
 
-**Input** (English original):
+**Watch on Bilibili**: [HoloDub 配音演示 — MIT 6.824 分布式系统课程（英→中）](https://www.bilibili.com/video/BV1vrwszEELd/)
 
-https://github.com/YuehaoDai/HoloDub/raw/refs/heads/dev-win/demo/input_en.mp4
-
-**Output** (Chinese dubbed, IndexTTS2 inline, avg. timing error < 30 ms):
-
-https://github.com/YuehaoDai/HoloDub/raw/refs/heads/dev-win/demo/output_zh_indextts2.mp4
-
-Pipeline: `Faster-Whisper large-v3` (ASR) → `Qwen-turbo` (translation) → `IndexTTS2` (zero-shot TTS) · Total time: ~7 min on RTX 5080
+Pipeline: `Faster-Whisper large-v3` (ASR) → `Qwen-turbo` (translation) → `IndexTTS2 FP16` (zero-shot TTS) · Total time: ~52 min on RTX 5080 (79-min video)
 
 ---
 
@@ -426,7 +420,7 @@ INDEXTTS2_COMMAND=python run_tts.py --text "{text}" --duration "{duration}" --ou
 
 ## 🎬 Demo run — validated results
 
-Video files are in `demo/` and render inline on GitHub.
+Full demo available on Bilibili: [BV1vrwszEELd](https://www.bilibili.com/video/BV1vrwszEELd/)
 
 ### 60-second clip (9 segments)
 

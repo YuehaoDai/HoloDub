@@ -51,14 +51,11 @@ data/input-smoke*.mp4
 # HuggingFace model cache (large files, populated at runtime)
 hf-cache/
 
-# Large video files should not be committed — except curated demo clips
+# Video files are not committed to the repository
 *.mp4
 *.mkv
 *.webm
 *.avi
-!demo/*.mp4
-!demo/*.mkv
-!demo/*.webm
 
 # Secrets and local tokens
 token.txt

@@ -33,17 +33,11 @@
 
 ## 🎬 运行案例 — 英语 → 中文（IndexTTS2，RTX 5080）
 
-MIT 6.824 分布式系统课程节选，60 秒。零样本声纹克隆配音，无需任何训练。
+MIT 6.824 分布式系统完整课程（79 分钟，626 段）。零样本声纹克隆配音，无需任何训练。
 
-**输入**（英文原版）：
+**B 站观看**：[HoloDub 配音演示 — MIT 6.824 分布式系统课程（英→中）](https://www.bilibili.com/video/BV1vrwszEELd/)
 
-https://github.com/YuehaoDai/HoloDub/raw/refs/heads/dev-win/demo/input_en.mp4
-
-**输出**（中文配音，IndexTTS2 内联，平均时长误差 < 30 ms）：
-
-https://github.com/YuehaoDai/HoloDub/raw/refs/heads/dev-win/demo/output_zh_indextts2.mp4
-
-流水线：`Faster-Whisper large-v3`（ASR）→ `Qwen-turbo`（翻译）→ `IndexTTS2`（零样本 TTS）· RTX 5080 总耗时约 7 分钟
+流水线：`Faster-Whisper large-v3`（ASR）→ `Qwen-turbo`（翻译）→ `IndexTTS2 FP16`（零样本 TTS）· RTX 5080 总耗时约 52 分钟（79 分钟视频）
 
 ---
 
@@ -416,7 +410,7 @@ INDEXTTS2_COMMAND=python run_tts.py --text "{text}" --duration "{duration}" --ou
 
 ## 🎬 运行案例
 
-视频文件在 `demo/` 目录，GitHub 页面可直接播放。
+完整配音演示可在 B 站观看：[BV1vrwszEELd](https://www.bilibili.com/video/BV1vrwszEELd/)
 
 ### 60 秒短片（9 段）
 
