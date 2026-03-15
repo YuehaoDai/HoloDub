@@ -192,16 +192,18 @@ HoloDub 的目标不是“翻完字幕 + 随便套一条 AI 配音”，
 - [x] **IndexTTS2 真实推理验证**：英语 → 中文，RTF 1.47x（RTX 5080）
 - [x] **asyncio 阻塞 bug 修复**：所有 ML 路由改用 `run_in_executor`，GPU 推理期间 healthz 保持响应
 - [x] **时长感知翻译**：第一遍翻译携带基于片段时长计算的字数约束；TTS 音频溢出超出尾随静音 gap 时触发 Kimi-k2.5 再翻译
+- [x] **漂移率驱动再翻译（≤6%）**：当 `|实际 − 目标| / 目标 > 6%` 时触发再翻译；最多 10 次，每次将上一轮文本、时长、漂移注入 prompt；达标或达上限后停止
 - [x] **彻底去除 atempo**：时长对齐改为 gap 借用 + 再翻译循环，不再产生速度失真
 - [x] **ASR 切分优化**：仅句尾标点触发切分，最少 5 词，800ms 静音阈值，短段后处理合并；默认最小 4s / 最大 20s
 - [x] **amix 音量 bug 修复**：所有 amix 加 `normalize=0`；此前多段视频音量被除以段数（81 段时衰减 38 dB）
-- [x] **ffmpeg 分批 merge**：每批最多 50 段，避免 `filter_complex` 在大视频上的 O(N²) 卡死
+- [x] **ffmpeg 分批 merge**：每批最多 30 段，避免 `filter_complex` 在大视频上的 O(N²) 卡死；merge 阶段 lease 冲突时任务重新入队，不再丢失
 - [x] **TTS 结果即时入库**：每段合成后立即写 DB，超时重试只处理未完成的段
+- [x] **TTS 并发**：Worker 端 `TTS_CONCURRENCY=2` 同时发送请求；ml-service `GPU_CONCURRENCY=2` 支持 2 路并行 GPU 推理，提升吞吐
 - [x] **79 分钟完整视频验证**：626 段，英语 → 中文，完整流水线端到端跑通
 - [ ] 真实人声 / 伴奏分离（Demucs，需 `ML_PYTHON_EXTRAS=real`）
 - [ ] 说话人分离（Pyannote，需 HuggingFace token）
 - [x] **BigVGAN CUDA kernel 在 Blackwell / sm_120 上编译失败**：改用 devel 镜像 + 去掉未使用的 `#include <cuda_profiler_api.h>` + 构建时预编译 `.so` 烤进镜像层；RTX 5080 现已使用原生 CUDA kernel
-- [ ] IndexTTS2 启动时预加载模型（当前首次 TTS 请求冷启动 ~6 分钟——见已知问题）
+- [x] **IndexTTS2 启动时预加载模型**：当 `INDEXTTS2_INLINE=true` 时，ml-service 启动即后台加载，首次 TTS 不再卡 6 分钟
 - [ ] 使用中文参考音频改善韵律（当前默认使用英文片段，导致轻微语速不一致）
 
 欢迎一起参与开发、提 Issue / PR。
@@ -436,10 +438,12 @@ INDEXTTS2_COMMAND=python run_tts.py --text "{text}" --duration "{duration}" --ou
 | ASR（Faster-Whisper large-v3） | ~8 分钟 |
 | 翻译（Qwen-turbo，626 段） | ~12 分钟 |
 | TTS（IndexTTS2，热态） | ~36 分钟 |
-| 合并（分批 ffmpeg，13 批 × 50 段） | ~5 分钟 |
+| 合并（分批 ffmpeg，21 批 × 30 段） | ~5 分钟 |
 | **总计** | **~60 分钟** |
 
 **时长精度**：626 段平均漂移 < 1%；3 段因溢出超出 gap 触发 Kimi-k2.5 再翻译。
+
+**10 分钟短片（test_10min.mp4）**：约 81 段；漂移率驱动再翻译（目标 ≤6%，最多 10 次）使多数段落在 5% 以内；高漂移筛选可快速定位需人工精调的段落。
 
 ---
 
@@ -465,16 +469,15 @@ INDEXTTS2_COMMAND=python run_tts.py --text "{text}" --duration "{duration}" --ou
 
 **RTX 5080 实测结果**：BigVGAN 现在使用原生 CUDA kernel。结合 `use_fp16=True`，TTS 吞吐量相比 FP32 + torch 回退提升约 **2.5 倍**（626 段 / 79 分钟视频实测：3.08 秒/段 vs 约 7.7 秒/段）。
 
-### 2. IndexTTS2 首次请求冷启动约 6 分钟
+### 2. IndexTTS2 冷启动（已缓解）
 
-**现象**：模型在首次 `/tts/run` 调用时懒加载。在 RTX 5080 上，加载全部组件（GPT 3.3 GB + S2Mel 1.1 GB + BigVGAN + wav2vec2bert + CAMP++ + NeMo 文本处理器）需要约 **6 分钟**。
+**现象**：加载全部组件（GPT 3.3 GB + S2Mel 1.1 GB + BigVGAN + wav2vec2bert + CAMP++ + NeMo 文本处理器）在 RTX 5080 上约 **6 分钟**。
 
-**影响**：首个 Job 的 TTS 阶段会"卡住"约 6 分钟（GPU 利用率偏低）。**不要取消任务**——它会完成的。
-
-**可能的修复方案（欢迎 PR）**：
-- 当 `INDEXTTS2_INLINE=true` 时，在 `ml-service` 启动时预加载模型
-- 增加报告模型加载进度的 startup 健康检查接口
-- 在 Job 状态展示中显示"模型预热中"的提示
+**已实现缓解**：
+- 当 `INDEXTTS2_INLINE=true` 且 `ML_TTS_BACKEND=indextts2` 时，ml-service 启动即**后台预加载**，首次 TTS 请求不再阻塞 6 分钟
+- `/healthz` 返回 `tts_warmup_status`：`idle` | `loading` | `ready` | `error`
+- Go API 提供 `GET /ml-health` 代理 ml-service 状态
+- Web UI 在 `tts_warmup_status === "loading"` 时显示「TTS 模型预热中…」提示条
 
 ### 3. HuggingFace XetHub 大文件下载在 Docker 内停滞
 
@@ -517,8 +520,10 @@ with open("gpt.pth", "wb") as f:
 | `INDEXTTS2_USE_EMO_TEXT` | `false` | `true`（需 Qwen3 情感模型）|
 | `INDEXTTS2_DEFAULT_VOICE_RELPATH` | 空 | `voices/ref.wav`（**建议用中文音频**，效果更好）|
 | `RETRANSLATION_ENABLED` | `true` | `true` / `false` |
-| `RETRANSLATION_MODEL` | `kimi-k2.5` | 同一 `OPENAI_BASE_URL` 下的任意模型 |
-| `RETRANSLATION_MAX_ATTEMPTS` | `2` | 增大可提高时长合规率 |
+| `RETRANSLATION_DRIFT_THRESHOLD` | `0.06` | 最大允许漂移（6%）；超出则触发再翻译 |
+| `RETRANSLATION_MAX_ATTEMPTS` | `10` | 每段最多再翻译次数 |
+| `TTS_CONCURRENCY` | `2` | Worker 端 TTS 并发请求数 |
+| `GPU_CONCURRENCY` | `2` | ml-service 端 GPU 推理并发数（需约 16GB 显存）|
 | `STAGE_TIMEOUT_SECONDS` | `14400` | 超长视频可适当调大 |
 
 ---
@@ -529,6 +534,65 @@ with open("gpt.pth", "wb") as f:
 - **数据面**：FastAPI, PyTorch, Demucs/UVR5, Faster-Whisper, Pyannote, IndexTTS2  
 - **编排**：Docker Compose  
 - **翻译**：Qwen / DeepSeek / 其他可插拔 LLM 提供方  
+- **Web UI**（一期）：Vue 3 + Vite + Tailwind CSS — 深色侧边栏，段落漂移审查，内联 TTS 编辑与重合成  
+
+---
+
+## 🖥 Web UI — 段落精调审查
+
+操作台（`/ui/`）已重构为 Vue 3 SPA，采用 **Open WebUI 风格**的深色侧边栏布局。
+
+![段落精调界面](assets/精调界面截图.png)
+
+*段落表格：漂移率徽章、内联编辑、高漂移筛选 — 逐段审查与精调译文。*
+
+### 一期功能（当前分支：`feature/ui-segment-review`）
+
+| 功能 | 说明 |
+|------|------|
+| **Job 侧边栏** | 实时任务列表 + 状态徽章，每 10 秒自动刷新 |
+| **段落表格** | 全部段落：原文、译文、漂移率徽章 |
+| **漂移率徽章** | 绿色 < 5 % · 黄色 5–15 % · 红色 > 15 % |
+| **音频试听** | 每个已合成段落内联 `<audio>` 播放器（懒加载 blob） |
+| **内联编辑** | 点击编辑 → 修改译文 → 仅保存 或 保存 + 重新合成 |
+| **筛选 / 排序** | 按 全部 / 高漂移 / 未合成 筛选 · 按序号或漂移率排序 |
+| **重新合并** | 编辑后触发 merge 阶段重试，重新生成 `final.mp4` |
+
+### 本地构建 UI
+
+```bash
+cd ui
+npm install
+npm run build
+# 输出到 internal/ui/static/（由 go:embed 打包进二进制）
+```
+
+开发热更新模式：
+```bash
+cd ui
+npm install
+npm run dev
+# Vite 开发服务器：http://localhost:5173/
+```
+
+### 二期规划（待办）
+
+- **原始音频对比**：原声切片 vs TTS 音频并排播放（从 `vocals.wav` 按时间戳切片）
+- **批量重合成**：多选段落 + 批量 Rerun 按钮
+- **键盘快捷键**：`J`/`K` 上下段，`Space` 播放，`E` 编辑
+- **波形可视化**：集成 WaveSurfer.js 进行精确音频检视
+- **段落质量标注**：标记 good / bad / skip，持久化到 segment meta
+- **说话人绑定 UI**：直接在段落表格中分配音色档案
+
+---
+
+## 🛠 技术栈
+
+- **控制面**：Go、Gin、GORM、Redis、PostgreSQL  
+- **ML 服务**：FastAPI、PyTorch、Demucs/UVR5、Faster-Whisper、Pyannote、IndexTTS2  
+- **编排**：Docker Compose  
+- **翻译**：Qwen / DeepSeek / 其他可插拔 LLM 提供方  
+- **Web UI**：Vue 3、Vite、Tailwind CSS  
 
 ---
 

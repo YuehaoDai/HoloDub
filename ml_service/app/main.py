@@ -1,3 +1,5 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 
 from app.config import get_settings
@@ -8,9 +10,20 @@ from app.routes.tts import router as tts_router
 from app.runtime import ServiceContainer
 
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    services = app.state.services
+    if (
+        services.settings.ml_tts_backend == "indextts2"
+        and services.settings.indextts2_inline
+    ):
+        services.tts.warm_up_indextts2()
+    yield
+
+
 def create_app() -> FastAPI:
     settings = get_settings()
-    app = FastAPI(title="HoloDub ML Service", version="0.1.0")
+    app = FastAPI(title="HoloDub ML Service", version="0.1.0", lifespan=lifespan)
     app.state.services = ServiceContainer(settings)
 
     app.include_router(health_router)

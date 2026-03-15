@@ -90,15 +90,22 @@ func (c *Client) TranslateTextWithDuration(ctx context.Context, sourceLanguage, 
 	}
 }
 
+// RetranslationAttempt records one attempt: text tried and the TTS duration it produced.
+type RetranslationAttempt struct {
+	Text      string  // translation text used
+	ActualSec float64 // TTS output duration in seconds
+}
+
 // RetranslateWithConstraint re-translates using the configured retranslation model
-// (e.g. kimi-k2.5) with a strict character limit derived from targetSec.
-// actualSec is the duration the previous TTS attempt produced.
-// attempt and maxAttempts are shown to the model so it understands urgency.
+// with drift-rate feedback. history contains all previous attempts (text, actualSec).
+// driftThresholdPct is the max allowed drift (e.g. 0.06 = 6%).
 func (c *Client) RetranslateWithConstraint(
 	ctx context.Context,
 	sourceLanguage, targetLanguage, srcText, currentTrans string,
 	targetSec, actualSec float64,
 	attempt, maxAttempts int,
+	driftThresholdPct float64,
+	history []RetranslationAttempt,
 ) (string, error) {
 	if c.baseURL == "" || c.apiKey == "" {
 		return "", errors.New("OPENAI_BASE_URL and OPENAI_API_KEY are required for retranslation")
@@ -116,22 +123,46 @@ func (c *Client) RetranslateWithConstraint(
 		direction = "under"
 	}
 
+	// Build history block for prompt injection
+	historyBlock := ""
+	if len(history) > 0 {
+		historyBlock = "\n\n--- Previous attempt(s) for reference ---\n"
+		for i, h := range history {
+			drift := math.Abs(h.ActualSec-targetSec) / targetSec * 100
+			dir := "over"
+			if h.ActualSec < targetSec {
+				dir = "under"
+			}
+			historyBlock += fmt.Sprintf("Attempt %d: %.1fs target vs %.1fs actual (%.1f%% %s). Text: %s\n",
+				i+1, targetSec, h.ActualSec, drift, dir, h.Text)
+		}
+		historyBlock += "--- End of history ---\n"
+	}
+
 	systemPrompt := fmt.Sprintf(
 		"You are a professional dubbing translator optimizing for audio-visual sync.\n\n"+
-			"Segment duration: %.1f seconds.\n"+
+			"[Duration constraint]\n"+
+			"Segment target duration: %.1f seconds.\n"+
+			"Drift limit: %.0f%% — your translation must produce TTS audio within %.0f%% of target.\n"+
 			"Target language: %s.\n"+
 			"Hard character limit: %d characters (speech rate ~%.1f chars/sec).\n\n"+
+			"[Current attempt feedback]\n"+
 			"Previous translation (%d chars) produced audio of %.1fs, "+
-			"which is %.0f%% %s the %.1fs target.\n"+
-			"This is attempt %d of %d.\n\n"+
-			"Provide a revised translation that:\n"+
+			"which is %.0f%% %s the %.1fs target — exceeds %.0f%% limit.\n"+
+			"This is attempt %d of %d.\n"+
+			"%s"+
+			"\nProvide a revised translation that:\n"+
 			"1. Does NOT exceed %d characters — strictly enforced.\n"+
 			"2. Maintains the core meaning of the original.\n"+
-			"3. Sounds natural when spoken aloud.\n\n"+
+			"3. Sounds natural when spoken aloud.\n"+
+			"4. Will produce audio closer to %.1fs target (reduce drift).\n\n"+
 			"Respond with the revised translation only.",
-		targetSec, targetLanguage, limit, rate,
-		currentLen, actualSec, pctDiff, direction, targetSec,
-		attempt, maxAttempts, limit,
+		targetSec, driftThresholdPct*100, driftThresholdPct*100,
+		targetLanguage, limit, rate,
+		currentLen, actualSec, pctDiff, direction, targetSec, driftThresholdPct*100,
+		attempt, maxAttempts,
+		historyBlock,
+		limit, targetSec,
 	)
 
 	requestPayload := chatCompletionRequest{

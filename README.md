@@ -205,11 +205,13 @@ but if you want to hack on it, here’s the rough picture.
 - [x] **IndexTTS2 real inference validated**: English → Chinese, RTF 1.47x (RTX 5080)
 - [x] **asyncio blocking fixed**: all ML routes use `run_in_executor`; healthz stays live during GPU inference
 - [x] **Duration-aware translation**: first-pass translation prompt carries character budget derived from segment duration; Kimi-k2.5 re-translation triggered when TTS audio overflows trailing silence gap
+- [x] **Drift-based retranslation (≤6%)**: re-translate when `|actual − target| / target > 6%`; up to 10 attempts with feedback (previous text, duration, drift) injected into prompt; stops when within threshold or max attempts reached
 - [x] **atempo removed**: duration alignment now uses gap-borrowing (overflow into trailing silence) + re-translation loop; no speed artifacts
 - [x] **ASR segmentation improved**: sentence-boundary-only splits, 5-word minimum, 800 ms silence threshold, short-segment post-merge; default min 4 s / max 20 s
 - [x] **amix volume bug fixed**: `normalize=0` on all amix filters; previously audio was divided by segment count (–38 dB for 81-segment videos)
-- [x] **Batched ffmpeg merge**: segments processed in groups of 50 to avoid `filter_complex` hang (O(N²) parser) on long videos
+- [x] **Batched ffmpeg merge**: segments processed in groups of 30 to avoid `filter_complex` hang (O(N²) parser) on long videos; merge stage lease re-queue on conflict (no task loss)
 - [x] **Per-segment TTS persistence**: each segment's result is written to DB immediately; timeout/retry only re-processes unfinished segments
+- [x] **Parallel TTS**: worker sends up to `TTS_CONCURRENCY` (default 2) segments concurrently; ml-service `GPU_CONCURRENCY=2` allows 2 parallel GPU inferences for higher throughput
 - [x] **Full 79-minute video validated**: 626 segments, English → Chinese, complete pipeline end-to-end
 - [ ] Real vocal / BGM separation (Demucs, requires `ML_PYTHON_EXTRAS=real`)
 - [ ] Speaker diarization (Pyannote, requires HuggingFace token)
@@ -446,10 +448,12 @@ Full demo available on Bilibili: [BV1vrwszEELd](https://www.bilibili.com/video/B
 | ASR (Faster-Whisper large-v3) | ~8 min |
 | Translation (Qwen-turbo, 626 segments) | ~12 min |
 | TTS (IndexTTS2, warm after cold-start) | ~36 min |
-| Merge (batched ffmpeg, 13 chunks × 50 segs) | ~5 min |
+| Merge (batched ffmpeg, 21 chunks × 30 segs) | ~5 min |
 | **Total** | **~60 min** |
 
 **Timing accuracy**: avg drift < 1 % across all 626 segments; Kimi-k2.5 re-translation triggered on 3 segments where overflow exceeded trailing gap.
+
+**10-minute clip (test_10min.mp4)**: ~81 segments; drift-based retranslation (≤6% target, up to 10 attempts) keeps most segments within 5%; high-drift filter surfaces remaining outliers for manual review.
 
 ---
 
@@ -475,16 +479,15 @@ These are open problems found during real hardware testing. Contributions welcom
 
 **Result on RTX 5080**: BigVGAN now uses the native CUDA kernel. Combined with `use_fp16=True` on IndexTTS2, TTS throughput improved **~2.5× vs FP32 + torch fallback** (3.08 s/segment vs ~7.7 s/segment on the 626-segment 79-minute benchmark).
 
-### 2. IndexTTS2 cold-start ~6 minutes on first TTS request
+### 2. IndexTTS2 cold-start (mitigated)
 
-**Symptom**: The model is lazily loaded on the first `/tts/run` call. On RTX 5080, loading all components (GPT 3.3 GB, S2Mel 1.1 GB, BigVGAN, wav2vec2bert, CAMP++, NeMo text processor) takes **~6 minutes**.
+**Symptom**: Loading all components (GPT 3.3 GB, S2Mel 1.1 GB, BigVGAN, wav2vec2bert, CAMP++, NeMo text processor) takes **~6 minutes** on RTX 5080.
 
-**Impact**: The first job's TTS stage appears stuck for ~6 minutes with low GPU utilization. **Do not cancel the job** — it will complete.
-
-**Potential fixes (PRs welcome)**:
-- Eager-load IndexTTS2 at `ml-service` startup when `INDEXTTS2_INLINE=true`
-- Add a startup health-check endpoint that reports model loading progress
-- Show a "warming up" status in the job stage display
+**Mitigation (implemented)**:
+- IndexTTS2 is now **eager-loaded** at `ml-service` startup when `INDEXTTS2_INLINE=true` and `ML_TTS_BACKEND=indextts2`, so the first TTS request no longer blocks for 6 minutes.
+- `/healthz` returns `tts_warmup_status`: `idle` | `loading` | `ready` | `error`.
+- Go API exposes `GET /ml-health` (proxies to ml-service) for the UI.
+- The Web UI shows a "TTS 模型预热中…" banner while `tts_warmup_status === "loading"`.
 
 ### 3. HuggingFace XetHub large-file download stalls in Docker
 
@@ -528,7 +531,10 @@ with open("gpt.pth", "wb") as f:
 | `INDEXTTS2_DEFAULT_VOICE_RELPATH` | _(empty)_ | `voices/ref.wav` — **use a Chinese clip** for best results |
 | `RETRANSLATION_ENABLED` | `true` | `true` / `false` |
 | `RETRANSLATION_MODEL` | `kimi-k2.5` | any model on same `OPENAI_BASE_URL` |
-| `RETRANSLATION_MAX_ATTEMPTS` | `2` | increase for stricter duration compliance |
+| `RETRANSLATION_DRIFT_THRESHOLD` | `0.06` | max allowed drift (6%); triggers re-translation if exceeded |
+| `RETRANSLATION_MAX_ATTEMPTS` | `10` | max re-translation attempts per segment |
+| `TTS_CONCURRENCY` | `2` | parallel TTS requests from worker |
+| `GPU_CONCURRENCY` | `2` | parallel GPU inferences in ml-service (requires ~16 GB VRAM) |
 | `STAGE_TIMEOUT_SECONDS` | `14400` | raise for very long videos |
 
 ---
@@ -539,6 +545,66 @@ with open("gpt.pth", "wb") as f:
 - **ML service**: FastAPI, PyTorch, Demucs/UVR5, Faster-Whisper, Pyannote, IndexTTS2  
 - **Orchestration**: Docker Compose  
 - **Translation**: Qwen / DeepSeek / pluggable LLM providers  
+- **Web UI** (Phase 1): Vue 3 + Vite + Tailwind CSS — dark sidebar, segment drift review, inline TTS edit & re-synthesize  
+
+---
+
+## 🖥 Web UI — Segment Review & Fine-tuning
+
+The operator UI (`/ui/`) has been rebuilt as a Vue 3 SPA with an **Open WebUI-style dark sidebar** layout.
+
+![Segment fine-tuning interface](assets/精调界面截图.png)
+
+*Segment table with drift badges, inline edit, and high-drift filter — review and refine translations per segment.*
+
+### Phase 1 features (current branch: `feature/ui-segment-review`)
+
+| Feature | Description |
+|---------|-------------|
+| **Job sidebar** | Real-time job list with status badges, auto-refreshes every 10s |
+| **Segment table** | All segments with source text, translated text, and drift % badge |
+| **Drift badges** | Green < 5 % · Yellow 5–15 % · Red > 15 % |
+| **Audio playback** | Inline `<audio>` player per synthesized segment (lazy-loads blob) |
+| **Inline edit** | Click Edit → modify translated text → Save or Save + Re-synthesize |
+| **Filter / sort** | Filter by All / High-drift / Unsynthesized · Sort by ordinal or drift % |
+| **Re-merge** | Trigger merge stage retry after editing to regenerate `final.mp4` |
+
+### To build the UI locally
+
+```bash
+cd ui
+npm install
+npm run build
+# Outputs to internal/ui/static/ (picked up by go:embed)
+```
+
+For development with hot-reload:
+```bash
+cd ui
+npm install
+npm run dev
+# Vite dev server at http://localhost:5173/
+# API calls proxy to the Go server (configure VITE_API_BASE if needed)
+```
+
+### Planned Phase 2 (backlog)
+
+- **Original audio comparison**: Side-by-side playback of original vocal clip vs. TTS output (`GET /jobs/:id/audio/:ordinal` cut from `vocals.wav`)
+- **Batch re-synthesize**: Multi-select segments with checkboxes + batch Rerun button
+- **Keyboard shortcuts**: `J`/`K` to navigate segments, `Space` to play, `E` to edit
+- **Waveform visualization**: WaveSurfer.js integration for precise audio inspection
+- **Segment quality tagging**: Mark segments as good / bad / skip, persisted to segment meta
+- **Speaker binding UI**: Assign voice profiles to speakers directly from the segment table
+
+---
+
+## 🛠 Tech stack
+
+- **Control plane**: Go, Gin, GORM, Redis, PostgreSQL  
+- **ML service**: FastAPI, PyTorch, Demucs/UVR5, Faster-Whisper, Pyannote, IndexTTS2  
+- **Orchestration**: Docker Compose  
+- **Translation**: Qwen / DeepSeek / pluggable LLM providers  
+- **Web UI**: Vue 3, Vite, Tailwind CSS  
 
 ---
 

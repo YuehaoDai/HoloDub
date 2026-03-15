@@ -84,12 +84,15 @@ func apiKeyAuthMiddleware(token string) gin.HandlerFunc {
 
 	return func(c *gin.Context) {
 		switch c.FullPath() {
-		case "/", "/ui", "/ui/*filepath", "/healthz", "/metrics":
+		case "/", "/ui", "/ui/*filepath", "/healthz", "/ml-health", "/metrics":
 			c.Next()
 			return
 		}
 
 		provided := c.GetHeader(apiKeyHeader)
+		if provided == "" {
+			provided = c.Query("api_key")
+		}
 		if subtle.ConstantTimeCompare([]byte(provided), []byte(token)) != 1 {
 			respondError(c, http.StatusUnauthorized, "unauthorized", "missing or invalid API key")
 			c.Abort()
@@ -105,6 +108,11 @@ func rateLimitMiddleware(rps float64, burst int) gin.HandlerFunc {
 	}
 	store := newRateLimiterStore()
 	return func(c *gin.Context) {
+		switch c.FullPath() {
+		case "/", "/ui", "/ui/*filepath", "/healthz", "/ml-health", "/metrics":
+			c.Next()
+			return
+		}
 		key := c.ClientIP()
 		limiter := store.get(key, rps, burst)
 		if !limiter.Allow() {

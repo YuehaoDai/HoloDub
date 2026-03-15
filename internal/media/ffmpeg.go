@@ -20,7 +20,8 @@ type AudioOverlay struct {
 // maxOverlaysPerPass caps the number of TTS segments in a single ffmpeg
 // filter_complex call.  Beyond ~50 inputs, ffmpeg's graph parser becomes
 // extremely slow (O(N²)) and can hang for hours on large videos.
-const maxOverlaysPerPass = 50
+// Use 30 to stay well below the threshold; 50 was observed to hang on 626-segment jobs.
+const maxOverlaysPerPass = 30
 
 // RenderDubTrack builds the final mixed audio track.  For large videos
 // (many segments) it processes overlays in batches of maxOverlaysPerPass,

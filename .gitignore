@@ -42,6 +42,11 @@ build/
 data/jobs/
 data/tmp/
 data/cache/
+data/voices/
+data/debug-*.log
+
+# Cursor IDE
+.cursor/
 
 # Test / scratch videos in data/ (large, runtime-generated, not versioned)
 data/test_*.mp4
@@ -74,6 +79,10 @@ token.txt
 
 # Temp test outputs in root
 test_output_*.mp4
+
+# Node.js / frontend build artifacts
+ui/node_modules/
+ui/.vite/
 
 # Editor/IDE
 # .idea/

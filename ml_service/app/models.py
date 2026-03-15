@@ -9,6 +9,10 @@ class HealthResponse(BaseModel):
     loaded_models: list[str] = Field(default_factory=list)
     model_manifest: dict[str, Any] = Field(default_factory=dict)
     warnings: list[str] = Field(default_factory=list)
+    tts_warmup_status: str = Field(
+        default="idle",
+        description="IndexTTS2 inline: idle|loading|ready|error",
+    )
 
 
 class SeparateRequest(BaseModel):

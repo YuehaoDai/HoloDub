@@ -55,6 +55,9 @@ type Config struct {
 
 	FFmpegBin  string
 	FFprobeBin string
+
+	// TTSConcurrency: max parallel TTS requests per job (1=sequential, 2+=parallel).
+	TTSConcurrency int
 }
 
 func Load() (Config, error) {
@@ -145,17 +148,25 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("parse RETRANSLATION_ENABLED: %w", err)
 	}
 
-	cfg.RetranslationDriftThreshold, err = getEnvFloat("RETRANSLATION_DRIFT_THRESHOLD", 0.20)
+	cfg.RetranslationDriftThreshold, err = getEnvFloat("RETRANSLATION_DRIFT_THRESHOLD", 0.06)
 	if err != nil {
 		return Config{}, fmt.Errorf("parse RETRANSLATION_DRIFT_THRESHOLD: %w", err)
 	}
 
-	cfg.RetranslationMaxAttempts, err = getEnvInt("RETRANSLATION_MAX_ATTEMPTS", 2)
+	cfg.RetranslationMaxAttempts, err = getEnvInt("RETRANSLATION_MAX_ATTEMPTS", 10)
 	if err != nil {
 		return Config{}, fmt.Errorf("parse RETRANSLATION_MAX_ATTEMPTS: %w", err)
 	}
 
 	cfg.RetranslationModel = getEnv("RETRANSLATION_MODEL", "kimi-k2.5")
+
+	cfg.TTSConcurrency, err = getEnvInt("TTS_CONCURRENCY", 2)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse TTS_CONCURRENCY: %w", err)
+	}
+	if cfg.TTSConcurrency < 1 {
+		cfg.TTSConcurrency = 1
+	}
 
 	cfg.RequestRateLimitRPS, err = getEnvFloat("REQUEST_RATE_LIMIT_RPS", 2.0)
 	if err != nil {

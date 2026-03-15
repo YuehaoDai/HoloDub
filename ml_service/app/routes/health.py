@@ -12,6 +12,11 @@ async def healthz(request: Request) -> HealthResponse:
     manifest = services.model_manifest.read()
     if not manifest:
         warnings.append("model manifest not found")
+    tts_warmup = (
+        services.tts.get_indextts2_warmup_status()
+        if services.tts.backend_name() == "indextts2"
+        else "idle"
+    )
     return HealthResponse(
         status="ok",
         adapters={
@@ -23,4 +28,5 @@ async def healthz(request: Request) -> HealthResponse:
         loaded_models=services.registry.status(),
         model_manifest=manifest,
         warnings=warnings,
+        tts_warmup_status=tts_warmup,
     )

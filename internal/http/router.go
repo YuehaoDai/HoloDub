@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	stdhttp "net/http"
 	"os"
@@ -102,6 +103,7 @@ func NewRouter(cfg config.Config, st *store.Store, pipelineSvc *pipeline.Service
 	router.GET("/ui/*filepath", server.serveUI)
 
 	router.GET("/healthz", server.handleHealth)
+	router.GET("/ml-health", server.handleMLHealth)
 	if cfg.EnableMetrics {
 		router.GET("/metrics", gin.WrapH(observability.MetricsHandler()))
 	}
@@ -117,6 +119,8 @@ func NewRouter(cfg config.Config, st *store.Store, pipelineSvc *pipeline.Service
 	router.GET("/jobs/:id/bindings", server.listBindings)
 	router.GET("/jobs/:id/artifacts", server.listArtifacts)
 	router.POST("/jobs/:id/segments/:segmentId/rerun", server.rerunSegment)
+	router.GET("/jobs/:id/tts/:ordinal", server.serveSegmentAudio)
+	router.PATCH("/jobs/:id/segments/:segmentId", server.patchSegment)
 
 	router.GET("/voice-profiles", server.listVoiceProfiles)
 	router.POST("/voice-profiles", server.createVoiceProfile)
@@ -130,7 +134,15 @@ func NewRouter(cfg config.Config, st *store.Store, pipelineSvc *pipeline.Service
 func (s *Server) serveUI(c *gin.Context) {
 	path := strings.TrimPrefix(c.Param("filepath"), "/")
 	if path == "" {
-		path = "index.html"
+		// Serve index.html directly to avoid redirect loop caused by
+		// http.FileServer redirecting /index.html → / → /ui/ → loop
+		data, err := fs.ReadFile(ui.FS(), "index.html")
+		if err != nil {
+			c.Status(stdhttp.StatusNotFound)
+			return
+		}
+		c.Data(stdhttp.StatusOK, "text/html; charset=utf-8", data)
+		return
 	}
 	c.FileFromFS(path, stdhttp.FS(ui.FS()))
 }
@@ -143,6 +155,18 @@ func (s *Server) handleHealth(c *gin.Context) {
 		"default_tenant_key": s.cfg.DefaultTenantKey,
 		"timestamp":          time.Now().UTC(),
 	})
+}
+
+func (s *Server) handleMLHealth(c *gin.Context) {
+	resp, err := s.pipeline.MLHealth(c.Request.Context())
+	if err != nil {
+		c.JSON(stdhttp.StatusServiceUnavailable, gin.H{
+			"error":   "ml_service_unavailable",
+			"message": err.Error(),
+		})
+		return
+	}
+	c.JSON(stdhttp.StatusOK, resp)
 }
 
 func (s *Server) listJobs(c *gin.Context) {
@@ -523,6 +547,73 @@ func (s *Server) getJobForTenant(c *gin.Context) (*models.Job, bool) {
 		return nil, false
 	}
 	return job, true
+}
+
+func (s *Server) serveSegmentAudio(c *gin.Context) {
+	_, ok := s.getJobForTenant(c)
+	if !ok {
+		return
+	}
+	ordinal := c.Param("ordinal")
+	ordinalInt, err := strconv.Atoi(ordinal)
+	if err != nil {
+		respondError(c, stdhttp.StatusBadRequest, "invalid_ordinal", "invalid ordinal")
+		return
+	}
+	audioPath := filepath.Join(s.cfg.DataRoot, "jobs", c.Param("id"),
+		"tts", fmt.Sprintf("segment-%04d.wav", ordinalInt))
+	if _, err := os.Stat(audioPath); err != nil {
+		respondError(c, stdhttp.StatusNotFound, "audio_not_found", "audio file not found")
+		return
+	}
+	c.Header("Content-Type", "audio/wav")
+	c.Header("Cache-Control", "no-store, no-cache, must-revalidate")
+	c.File(audioPath)
+}
+
+type patchSegmentRequest struct {
+	TargetText string `json:"target_text" binding:"required"`
+	Rerun      bool   `json:"rerun"`
+}
+
+func (s *Server) patchSegment(c *gin.Context) {
+	job, ok := s.getJobForTenant(c)
+	if !ok {
+		return
+	}
+	segmentID, ok := parseUintParam(c, "segmentId")
+	if !ok {
+		return
+	}
+
+	var request patchSegmentRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		respondError(c, stdhttp.StatusBadRequest, "invalid_patch_request", err.Error())
+		return
+	}
+
+	segment := models.Segment{
+		ID:         segmentID,
+		TargetText: request.TargetText,
+		Status:     "translated",
+	}
+	if err := s.store.UpdateSegmentTranslations(c.Request.Context(), []models.Segment{segment}); err != nil {
+		respondError(c, stdhttp.StatusInternalServerError, "patch_segment_failed", err.Error())
+		return
+	}
+
+	if request.Rerun {
+		if err := s.store.ResetSegmentsForRerun(c.Request.Context(), []uint{segmentID}); err != nil {
+			respondError(c, stdhttp.StatusInternalServerError, "reset_segment_failed", err.Error())
+			return
+		}
+		if err := s.pipeline.RetryJob(c.Request.Context(), job.ID, models.StageTTSDuration, []uint{segmentID}, "segment_patch"); err != nil {
+			respondError(c, stdhttp.StatusInternalServerError, "rerun_segment_failed", err.Error())
+			return
+		}
+	}
+
+	c.JSON(stdhttp.StatusOK, gin.H{"updated": true, "segment_id": segmentID, "rerun": request.Rerun})
 }
 
 func parseUintParam(c *gin.Context, name string) (uint, bool) {

@@ -20,9 +20,44 @@ from app.storage import ensure_parent, resolve_data_path
 class TTSAdapter:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
+        self._indextts2_warmup_status: str = "idle"  # idle | loading | ready | error
 
     def backend_name(self) -> str:
         return self.settings.ml_tts_backend
+
+    def get_indextts2_warmup_status(self) -> str:
+        """Return 'idle'|'loading'|'ready'|'error' for IndexTTS2 inline mode."""
+        return getattr(self, "_indextts2_warmup_status", "idle")
+
+    def warm_up_indextts2(self) -> None:
+        """Pre-load IndexTTS2 in a background thread. Call at startup when indextts2_inline=True."""
+        if self.settings.ml_tts_backend != "indextts2" or not self.settings.indextts2_inline:
+            return
+        if hasattr(self, "_indextts2_model"):
+            return
+        import threading
+
+        def _load() -> None:
+            try:
+                from indextts import IndexTTS2  # type: ignore[import]
+            except ImportError:
+                self._indextts2_warmup_status = "error"
+                return
+            self._indextts2_warmup_status = "loading"
+            try:
+                init_kwargs: dict = {"use_fp16": True}
+                if self.settings.indextts2_model_dir:
+                    init_kwargs["model_dir"] = self.settings.indextts2_model_dir
+                if self.settings.indextts2_attn_backend:
+                    init_kwargs["attn_backend"] = self.settings.indextts2_attn_backend
+                self._indextts2_model = IndexTTS2(**init_kwargs)  # type: ignore[assignment]
+                self._indextts2_warmup_status = "ready"
+            except Exception:
+                self._indextts2_warmup_status = "error"
+                raise
+
+        t = threading.Thread(target=_load, daemon=True)
+        t.start()
 
     def synthesize(self, request: TTSRequest) -> TTSResponse:
         # If the text is empty or contains only whitespace/punctuation, generate
@@ -134,16 +169,20 @@ class TTSAdapter:
         # Lazy-load the model as a singleton on this adapter instance so it is only
         # initialised once per worker process (model weights stay in GPU VRAM).
         if not hasattr(self, "_indextts2_model"):
-            init_kwargs: dict = {
-                # FP16 halves VRAM usage and speeds up all GPU operations 2-4x
-                # on modern hardware (Blackwell sm_120 / Ada / Ampere).
-                "use_fp16": True,
-            }
-            if self.settings.indextts2_model_dir:
-                init_kwargs["model_dir"] = self.settings.indextts2_model_dir
-            if self.settings.indextts2_attn_backend:
-                init_kwargs["attn_backend"] = self.settings.indextts2_attn_backend
-            self._indextts2_model = IndexTTS2(**init_kwargs)  # type: ignore[assignment]
+            self._indextts2_warmup_status = "loading"
+            try:
+                init_kwargs: dict = {
+                    "use_fp16": True,
+                }
+                if self.settings.indextts2_model_dir:
+                    init_kwargs["model_dir"] = self.settings.indextts2_model_dir
+                if self.settings.indextts2_attn_backend:
+                    init_kwargs["attn_backend"] = self.settings.indextts2_attn_backend
+                self._indextts2_model = IndexTTS2(**init_kwargs)  # type: ignore[assignment]
+                self._indextts2_warmup_status = "ready"
+            except Exception:
+                self._indextts2_warmup_status = "error"
+                raise
 
         tts = self._indextts2_model
 
