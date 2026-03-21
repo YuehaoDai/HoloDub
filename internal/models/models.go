@@ -108,6 +108,7 @@ type SpeakerVoiceBinding struct {
 	VoiceProfileID uint         `json:"voice_profile_id" gorm:"index"`
 	CreatedAt      time.Time    `json:"created_at"`
 	UpdatedAt      time.Time    `json:"updated_at"`
+	Speaker        Speaker      `json:"speaker,omitempty"`
 	VoiceProfile   VoiceProfile `json:"voice_profile,omitempty"`
 }
 
@@ -164,12 +165,16 @@ type TenantQuota struct {
 }
 
 type TaskPayload struct {
-	JobID      uint     `json:"job_id"`
-	Stage      JobStage `json:"stage"`
-	Attempt    int      `json:"attempt"`
-	SegmentIDs []uint   `json:"segment_ids,omitempty"`
-	RequestedBy string  `json:"requested_by,omitempty"`
-	Reason     string   `json:"reason,omitempty"`
+	JobID           uint     `json:"job_id"`
+	Stage           JobStage `json:"stage"`
+	Attempt         int      `json:"attempt"`
+	SegmentIDs      []uint   `json:"segment_ids,omitempty"`
+	RequestedBy     string   `json:"requested_by,omitempty"`
+	Reason          string   `json:"reason,omitempty"`
+	// SkipAutoAdvance prevents HandleTask from automatically enqueueing the next
+	// pipeline stage when this task succeeds.  Set to true for manual retries so
+	// the user controls when to proceed to merge.
+	SkipAutoAdvance bool `json:"skip_auto_advance,omitempty"`
 }
 
 type SegmentDraft struct {

@@ -204,33 +204,38 @@ class TTSAdapter:
                 "or set INDEXTTS2_DEFAULT_VOICE_RELPATH."
             )
 
-        # Empirical token rate from IndexTTS2 benchmark:
-        #   121 AR tokens → 2.41 s audio  →  ~50 tokens / sec
-        # Chinese speech rate from IndexTTS2 output: ~3.7 chars / sec
-        #   → ~13.5 AR tokens / char  (50 / 3.7)
+        # Scheme 1 — text-based token budget:
+        #   Estimate how many tokens the text needs using tokens_per_char.
+        #   This is the primary constraint; the model will naturally stop when
+        #   the text is consumed, well before this budget is exhausted.
         #
-        # max_mel_tokens is the budget cap.  When the model has generous budget it
-        # samples slower prosody to fill the extra tokens, producing the "stretched"
-        # sound.  We therefore set the budget tightly from the TEXT LENGTH alone,
-        # with only 5 % headroom for natural phoneme duration variation.  Any
-        # overflow beyond the target slot is handled by the pipeline: the audio
-        # borrows from the trailing silence gap, and re-translation is triggered
-        # when the overflow exceeds the available gap.
-        TOKENS_PER_SEC = 50          # empirical, IndexTTS2 @ 22 050 Hz
-        TOKENS_PER_CHAR = 13.5       # empirical for Chinese output
-        HEADROOM = 1.05              # 5 % — enough for natural variation, too small for systematic slowdown
+        # Scheme 2 — adaptive tokens_per_char (applied on retry):
+        #   Blend observed rate from the previous attempt with the prior so the
+        #   budget converges toward the actual rate for this specific segment.
+        #
+        # Hard ceiling — max_allowed_sec:
+        #   Audio must never exceed (target + gap) to avoid spilling into the
+        #   next segment.  This is enforced separately in the merge stage by
+        #   clipping each overlay to its allowed slot.
+
+        TOKENS_PER_SEC: float = 50.0
+        PRIOR_TOKENS_PER_CHAR: float = 13.5
+        HEADROOM: float = 1.05
 
         target_sec = max(request.target_duration_sec, 0.1)
-        # max_allowed_sec = target + trailing gap; audio beyond this would overlap
-        # the next segment.  Falls back to target_sec if not provided.
         max_allowed_sec = request.max_allowed_sec if request.max_allowed_sec > 0 else target_sec
         text_chars = max(1, len([c for c in request.text if not c.isspace()]))
 
-        # Primary constraint: how many tokens the TEXT itself needs.
-        tokens_from_text = int(text_chars * TOKENS_PER_CHAR * HEADROOM)
+        # Scheme 2: blend observed tokens_per_char with prior if feedback exists.
+        tokens_per_char = PRIOR_TOKENS_PER_CHAR
+        if request.prev_actual_sec > 0 and request.prev_text_chars > 0:
+            observed = (request.prev_actual_sec * TOKENS_PER_SEC) / request.prev_text_chars
+            tokens_per_char = 0.6 * observed + 0.4 * PRIOR_TOKENS_PER_CHAR
+
+        # Scheme 1: text-based budget — primary constraint.
+        tokens_from_text = int(text_chars * tokens_per_char * HEADROOM)
 
         # Hard ceiling: audio MUST NOT exceed (target + gap).
-        # No additional headroom here — the gap is already the buffer.
         tokens_from_allowed = int(max_allowed_sec * TOKENS_PER_SEC)
 
         max_mel_tokens = max(64, min(tokens_from_text, tokens_from_allowed, 4096))
@@ -268,6 +273,8 @@ class TTSAdapter:
         duration_ms = int(actual_sec * 1000)
         diag = [
             f"tts backend=indextts2(inline) max_mel_tokens={max_mel_tokens}"
+            f" tokens_per_char={tokens_per_char:.2f}"
+            f" (prev_actual={request.prev_actual_sec:.2f}s prev_chars={request.prev_text_chars})"
             f" emo_text={self.settings.indextts2_use_emo_text}"
             f" actual={actual_sec:.2f}s target={target_sec:.2f}s"
         ]

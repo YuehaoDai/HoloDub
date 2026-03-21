@@ -4,7 +4,7 @@
     <div v-else-if="error" class="text-sm text-red-400">{{ error }}</div>
     <template v-else-if="job">
       <!-- Header -->
-      <div class="flex items-start justify-between mb-6">
+      <div class="flex items-start justify-between mb-4">
         <div>
           <h2 class="text-lg font-semibold text-white">{{ job.name || `Job #${job.id}` }}</h2>
           <p class="text-xs text-[#9db0c9] mt-1">
@@ -21,6 +21,26 @@
         </div>
       </div>
 
+      <!-- 进度与日志（运行中时突出显示） -->
+      <div
+        v-if="['pending','queued','running'].includes(job.status)"
+        class="mb-4 p-3 rounded-lg bg-[#1e2535] border border-[#273246]"
+      >
+        <div class="flex items-center justify-between mb-2">
+          <span class="text-xs font-medium text-[#9db0c9]">任务进度</span>
+          <button
+            class="text-xs text-blue-400 hover:text-blue-300"
+            @click="activeTab = 'stage-runs'"
+          >
+            查看阶段记录 →
+          </button>
+        </div>
+        <div class="text-xs text-[#f2f5f7]">
+          当前阶段：<span class="font-mono">{{ job.current_stage }}</span>
+          <span v-if="job.error_message" class="ml-2 text-red-400">· {{ job.error_message }}</span>
+        </div>
+      </div>
+
       <!-- 操作按钮 -->
       <div class="flex gap-2 mb-6 flex-wrap">
         <button
@@ -30,11 +50,11 @@
           @click="startJob"
         >开始</button>
         <button
-          v-if="['pending','running'].includes(job.status)"
+          v-if="['pending','queued','running'].includes(job.status)"
           class="hd-btn hd-btn-danger"
           :disabled="actionLoading"
           @click="cancelJob"
-        >取消</button>
+        >取消任务</button>
         <button
           class="hd-btn hd-btn-secondary"
           :disabled="actionLoading"
@@ -72,7 +92,11 @@
         <SegmentTable
           :segments="filteredSegments"
           :job-id="job.id"
-          @updated="refresh"
+          :bindings="bindings"
+          :voice-profiles="voiceProfiles"
+          @updated="lightRefresh"
+          @segment-updated="onSegmentUpdated"
+          @binding-updated="onBindingUpdated"
         />
       </div>
 
@@ -118,9 +142,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from "vue";
+import { ref, computed, watch, onMounted, onUnmounted } from "vue";
 import { useRoute } from "vue-router";
-import { api, type Job, type Segment, type StageRun, type Artifact } from "../api";
+import { api, type Job, type Segment, type StageRun, type Artifact, type Binding, type VoiceProfile } from "../api";
 import SegmentTable from "./SegmentTable.vue";
 import SegmentFilter from "./SegmentFilter.vue";
 
@@ -131,10 +155,13 @@ const job = ref<Job | null>(null);
 const segments = ref<Segment[]>([]);
 const stageRuns = ref<StageRun[]>([]);
 const artifacts = ref<Artifact[]>([]);
+const bindings = ref<Binding[]>([]);
+const voiceProfiles = ref<VoiceProfile[]>([]);
 const loading = ref(false);
 const error = ref("");
 const actionLoading = ref(false);
 const activeTab = ref("segments");
+const isRefreshing = ref(false);
 
 const tabs = [
   { key: "segments", label: "段落" },
@@ -167,24 +194,56 @@ const filteredSegments = computed(() => {
   return list;
 });
 
-async function refresh() {
-  loading.value = true;
+// Full refresh: fetches all data including static resources.
+// Used on mount and after structural changes (retry, cancel, etc.).
+async function refresh(silent = false) {
+  if (isRefreshing.value) return;
+  isRefreshing.value = true;
+  if (!silent) loading.value = true;
   error.value = "";
   try {
-    const [j, segs, runs, arts] = await Promise.all([
+    const [j, segs, runs, arts, bnd, vp] = await Promise.all([
       api.getJob(jobId.value),
       api.listSegments(jobId.value),
       api.listStageRuns(jobId.value),
       api.listArtifacts(jobId.value),
+      api.listBindings(jobId.value),
+      api.listVoiceProfiles(),
     ]);
     job.value = j;
     segments.value = segs.segments || [];
     stageRuns.value = runs.stage_runs || [];
     artifacts.value = arts.artifacts || [];
+    bindings.value = bnd.bindings || [];
+    voiceProfiles.value = vp.voice_profiles || [];
   } catch (e: unknown) {
     error.value = e instanceof Error ? e.message : String(e);
   } finally {
-    loading.value = false;
+    if (!silent) loading.value = false;
+    isRefreshing.value = false;
+  }
+}
+
+// Light refresh: only job status + segments + stage runs.
+// Used for polling and after segment-level operations (quality, rerun).
+// Skips artifacts/bindings/voiceProfiles which are expensive or rarely change.
+let isLightRefreshing = false;
+async function lightRefresh() {
+  if (isLightRefreshing || isRefreshing.value) return;
+  isLightRefreshing = true;
+  try {
+    const [j, segs, runs] = await Promise.all([
+      api.getJob(jobId.value),
+      api.listSegments(jobId.value),
+      api.listStageRuns(jobId.value),
+    ]);
+    job.value = j;
+    segments.value = segs.segments || [];
+    stageRuns.value = runs.stage_runs || [];
+  } catch {
+    // Polling failures are silent — don't clobber existing error state.
+  } finally {
+    isLightRefreshing = false;
   }
 }
 
@@ -239,9 +298,55 @@ function formatBytes(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
+// Handles a single-segment local update (e.g. quality flag) without re-fetching everything.
+function onSegmentUpdated(updated: Segment) {
+  const idx = segments.value.findIndex((s) => s.id === updated.id);
+  if (idx >= 0) {
+    segments.value = [
+      ...segments.value.slice(0, idx),
+      updated,
+      ...segments.value.slice(idx + 1),
+    ];
+  }
+}
+
+// Handles a voice binding change locally without re-fetching all bindings.
+function onBindingUpdated(speakerLabel: string, voiceProfileId: number) {
+  const idx = bindings.value.findIndex((b) => b.speaker?.label === speakerLabel);
+  if (idx >= 0) {
+    const updated = { ...bindings.value[idx], voice_profile_id: voiceProfileId };
+    bindings.value = [
+      ...bindings.value.slice(0, idx),
+      updated,
+      ...bindings.value.slice(idx + 1),
+    ];
+  }
+  // After a binding change the affected segments get re-queued — do a light refresh
+  // after a short delay to pick up the new status without hammering the server.
+  setTimeout(() => lightRefresh(), 1500);
+}
+
 watch(jobId, () => { refresh(); }, { immediate: false });
 
-// 当筛选为「未合成」但所有段落已合成时，自动切回「全部」，避免列表突然变空
+// Poll only job status + segments during active runs.
+// Use lightRefresh to avoid hammering all 6 endpoints every 5s.
+let pollTimer: ReturnType<typeof setInterval> | null = null;
+watch(
+  () => job.value?.status,
+  (status) => {
+    if (pollTimer) clearInterval(pollTimer);
+    pollTimer = null;
+    if (status && ["pending", "queued", "running"].includes(status)) {
+      pollTimer = setInterval(() => lightRefresh(), 5000);
+    }
+  },
+  { immediate: true }
+);
+onUnmounted(() => {
+  if (pollTimer) clearInterval(pollTimer);
+});
+
+// When filter is "unsynthesized" but all segments are now synthesized, reset filter.
 watch(
   () => segments.value,
   (segs) => {

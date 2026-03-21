@@ -1,22 +1,75 @@
 <template>
-  <div class="overflow-x-auto rounded-lg border border-[#1e2535]">
-    <table class="w-full text-xs border-collapse">
-      <thead>
-        <tr class="bg-[#171b26] text-[#9db0c9]">
-          <th class="px-3 py-2 text-left font-medium w-10">#</th>
+  <div
+    ref="tableContainerRef"
+    tabindex="0"
+    class="outline-none"
+    @keydown="onKeydown"
+  >
+    <!-- 批量操作栏 -->
+    <div
+      v-if="selectedIds.size > 0"
+      class="flex items-center gap-3 mb-3 px-3 py-2 rounded-lg bg-[#1e2535] border border-[#273246] text-xs"
+    >
+      <span class="text-[#9db0c9]">已选 {{ selectedIds.size }} 段</span>
+      <button
+        class="px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-500 text-white font-medium disabled:opacity-50"
+        :disabled="batchRerunning"
+        @click="batchRerun"
+      >
+        {{ batchRerunning ? "提交中…" : "批量重合成" }}
+      </button>
+      <button
+        class="px-2 py-1 rounded text-[#9db0c9] hover:bg-[#273246] hover:text-white"
+        @click="clearSelection"
+      >
+        取消选择
+      </button>
+    </div>
+    <div class="overflow-x-auto rounded-lg border border-[#1e2535]">
+      <table class="w-full text-xs border-collapse">
+        <thead>
+          <tr class="bg-[#171b26] text-[#9db0c9]">
+            <th class="px-2 py-2 text-center w-8">
+              <input
+                type="checkbox"
+                :checked="allSelected"
+                :indeterminate="someSelected"
+                class="rounded border-[#37465f] bg-[#1e2535]"
+                @change="toggleSelectAll"
+              />
+            </th>
+            <th class="px-3 py-2 text-left font-medium w-10">#</th>
           <th class="px-3 py-2 text-left font-medium">原文</th>
           <th class="px-3 py-2 text-left font-medium">译文</th>
+          <th class="px-3 py-2 text-center font-medium w-24">声音</th>
           <th class="px-3 py-2 text-center font-medium w-20">漂移率</th>
-          <th class="px-3 py-2 text-center font-medium w-28">试听</th>
+          <th class="px-3 py-2 text-center font-medium w-20">偏差时长</th>
+          <th class="px-3 py-2 text-center font-medium w-40">原声 / TTS</th>
           <th class="px-3 py-2 text-center font-medium w-16">操作</th>
         </tr>
       </thead>
       <tbody>
-        <template v-for="seg in segments" :key="seg.id">
+        <template v-for="(seg, index) in segments" :key="seg.id">
           <tr
             class="border-t border-[#1e2535] hover:bg-[#1a2030] transition-colors"
-            :class="{ 'bg-[#1e2535]/30': editingId === seg.id }"
+            :class="{
+              'bg-[#1e2535]/30': editingId === seg.id,
+              'bg-[#1e2535]/20': selectedIds.has(seg.id),
+              'ring-1 ring-blue-500/50': focusedIndex === index
+            }"
+            :ref="(el) => setRowRef(seg.ordinal, el)"
+            @click="focusRow(seg)"
           >
+            <td class="px-2 py-2 text-center">
+              <input
+                v-if="seg.status === 'synthesized'"
+                type="checkbox"
+                :checked="selectedIds.has(seg.id)"
+                class="rounded border-[#37465f] bg-[#1e2535]"
+                @change="toggleSelect(seg)"
+              />
+              <span v-else class="text-[#37465f]">—</span>
+            </td>
             <td class="px-3 py-2 text-[#9db0c9] font-mono">{{ seg.ordinal }}</td>
             <td class="px-3 py-2 text-[#9db0c9] max-w-xs">
               <div class="truncate" :title="seg.src_text">{{ seg.src_text }}</div>
@@ -24,30 +77,73 @@
             <td class="px-3 py-2 text-[#f2f5f7] max-w-xs">
               <div class="truncate" :title="seg.tgt_text">{{ seg.tgt_text || '—' }}</div>
             </td>
+            <td class="px-3 py-2">
+              <select
+                v-if="voiceProfiles?.length"
+                :value="bindingProfileId(seg.speaker_label)"
+                class="w-full text-[10px] px-1 py-0.5 rounded bg-[#1e2535] border border-[#273246] text-[#f2f5f7] disabled:opacity-50"
+                :disabled="bindingSaving[seg.speaker_label]"
+                @change="onVoiceChange(seg.speaker_label, Number(($event.target as HTMLSelectElement).value))"
+              >
+                <option value="">—</option>
+                <option v-for="vp in voiceProfiles" :key="vp.id" :value="vp.id">{{ vp.name }}</option>
+              </select>
+              <span v-else class="text-[10px] text-[#37465f]">{{ seg.speaker_label || '—' }}</span>
+            </td>
             <td class="px-3 py-2 text-center">
               <span class="inline-block px-1.5 py-0.5 rounded-full text-[10px] font-medium" :class="driftClass(seg)">
                 {{ driftLabel(seg) }}
               </span>
             </td>
+            <td class="px-3 py-2 text-center">
+              <span class="inline-block px-1.5 py-0.5 rounded-full text-[10px] font-medium font-mono" :class="driftSecClass(seg)">
+                {{ driftSecLabel(seg) }}
+              </span>
+            </td>
             <td class="px-3 py-2">
-              <div v-if="seg.tts_duration_ms && seg.status === 'synthesized'">
-                <audio
-                  v-if="audioUrls[seg.id]"
-                  :src="audioUrls[seg.id]"
-                  controls
-                  preload="none"
-                  class="h-7 w-full"
-                ></audio>
-                <button
-                  v-else
-                  class="w-full text-center py-1 rounded bg-[#1e2535] hover:bg-[#273246] text-[#9db0c9] hover:text-white transition-colors"
-                  :disabled="loadingAudio[seg.id]"
-                  @click="loadAudio(seg)"
-                >
-                  {{ loadingAudio[seg.id] ? '…' : '▶ 加载' }}
-                </button>
+              <div class="flex flex-col gap-1">
+                <!-- 原声 -->
+                <div class="flex items-center gap-1">
+                  <span class="text-[10px] text-[#37465f] w-6 shrink-0">原声</span>
+                  <audio
+                    v-if="originalAudioUrls[seg.id]"
+                    :src="originalAudioUrls[seg.id]"
+                    controls
+                    preload="none"
+                    class="h-6 flex-1 min-w-0"
+                  ></audio>
+                  <button
+                    v-else
+                    class="flex-1 text-center py-0.5 rounded bg-[#1e2535] hover:bg-[#273246] text-[10px] text-[#9db0c9] hover:text-white transition-colors"
+                    :disabled="loadingOriginalAudio[seg.id]"
+                    @click="loadOriginalAudio(seg)"
+                  >
+                    {{ loadingOriginalAudio[seg.id] ? '…' : '▶' }}
+                  </button>
+                </div>
+                <!-- TTS -->
+                <div class="flex items-center gap-1">
+                  <span class="text-[10px] text-[#37465f] w-6 shrink-0">TTS</span>
+                  <template v-if="seg.tts_duration_ms && seg.status === 'synthesized'">
+                    <audio
+                      v-if="audioUrls[seg.id]"
+                      :src="audioUrls[seg.id]"
+                      controls
+                      preload="none"
+                      class="h-6 flex-1 min-w-0"
+                    ></audio>
+                    <button
+                      v-else
+                      class="flex-1 text-center py-0.5 rounded bg-[#1e2535] hover:bg-[#273246] text-[10px] text-[#9db0c9] hover:text-white transition-colors"
+                      :disabled="loadingAudio[seg.id]"
+                      @click="loadAudio(seg)"
+                    >
+                      {{ loadingAudio[seg.id] ? '…' : '▶' }}
+                    </button>
+                  </template>
+                  <span v-else class="text-[#37465f] text-[10px]">—</span>
+                </div>
               </div>
-              <span v-else class="text-[#37465f]">—</span>
             </td>
             <td class="px-3 py-2 text-center">
               <div class="flex items-center justify-center gap-1">
@@ -66,13 +162,52 @@
                 >
                   {{ rerunning[seg.id] ? '…' : '↻' }}
                 </button>
+                <button
+                  class="px-2 py-1 rounded bg-[#1e2535] hover:bg-[#273246] text-[#9db0c9] hover:text-white transition-colors"
+                  :class="{ 'bg-[#273246]': waveformSegId === seg.id }"
+                  title="波形"
+                  @click="toggleWaveform(seg)"
+                >
+                  波形
+                </button>
+              </div>
+            </td>
+          </tr>
+
+          <!-- 波形展开行 -->
+          <tr v-if="waveformSegId === seg.id" class="border-t border-[#273246] bg-[#111722]">
+            <td colspan="9" class="px-4 py-3">
+              <div class="flex gap-6">
+                <div class="flex-1 min-w-0">
+                  <WaveformViewer
+                    v-if="originalAudioUrls[seg.id]"
+                    :audio-url="originalAudioUrls[seg.id]"
+                    label="原声"
+                  />
+                  <div v-else class="py-4 text-center text-[#37465f] text-xs">
+                    <span v-if="loadingOriginalAudio[seg.id]">加载原声中…</span>
+                    <span v-else>原声未加载</span>
+                  </div>
+                </div>
+                <div class="flex-1 min-w-0">
+                  <WaveformViewer
+                    v-if="seg.status === 'synthesized' && audioUrls[seg.id]"
+                    :audio-url="audioUrls[seg.id]"
+                    label="TTS"
+                  />
+                  <div v-else class="py-4 text-center text-[#37465f] text-xs">
+                    <span v-if="seg.status !== 'synthesized'">—</span>
+                    <span v-else-if="loadingAudio[seg.id]">加载 TTS 中…</span>
+                    <span v-else>TTS 未加载</span>
+                  </div>
+                </div>
               </div>
             </td>
           </tr>
 
           <!-- 内联编辑行 -->
           <tr v-if="editingId === seg.id" class="border-t border-[#273246] bg-[#111722]">
-            <td colspan="6" class="px-4 py-3">
+            <td colspan="9" class="px-4 py-3">
               <div class="space-y-2">
                 <label class="block text-[10px] text-[#9db0c9]">译文（可编辑）</label>
                 <textarea
@@ -112,31 +247,173 @@
         </template>
 
         <tr v-if="!segments.length">
-          <td colspan="6" class="px-4 py-8 text-center text-[#37465f]">暂无段落数据</td>
+          <td colspan="9" class="px-4 py-8 text-center text-[#37465f]">暂无段落数据</td>
         </tr>
       </tbody>
     </table>
   </div>
+  </div>
 </template>
 
 <script setup lang="ts">
-import { ref } from "vue";
+import { ref, computed, watch, onBeforeUnmount } from "vue";
 import { api, type Segment, getApiKey } from "../api";
+import WaveformViewer from "./WaveformViewer.vue";
 
 const props = defineProps<{
   segments: Segment[];
   jobId: number;
+  bindings?: { speaker?: { label: string }; voice_profile_id: number }[];
+  voiceProfiles?: { id: number; name: string }[];
 }>();
 
-const emit = defineEmits<{ updated: [] }>();
+const emit = defineEmits<{
+  updated: [];
+  "segment-updated": [segment: Segment];
+  "binding-updated": [speakerLabel: string, voiceProfileId: number];
+}>();
 
 const editingId = ref<number | null>(null);
+const waveformSegId = ref<number | null>(null);
 const editText = ref("");
 const saving = ref<Record<number, boolean>>({});
 const rerunning = ref<Record<number, boolean>>({});
+const batchRerunning = ref(false);
 const saveError = ref("");
 const audioUrls = ref<Record<number, string>>({});
 const loadingAudio = ref<Record<number, boolean>>({});
+const originalAudioUrls = ref<Record<number, string>>({});
+const loadingOriginalAudio = ref<Record<number, boolean>>({});
+const selectedIds = ref<Set<number>>(new Set());
+const focusedIndex = ref<number>(0);
+const rowRefs = ref<Record<number, HTMLElement | null>>({});
+const tableContainerRef = ref<HTMLElement | null>(null);
+
+const synthesizableSegments = computed(() =>
+  props.segments.filter((s) => s.status === "synthesized")
+);
+const allSelected = computed(() => {
+  const syn = synthesizableSegments.value;
+  if (!syn.length) return false;
+  return syn.every((s) => selectedIds.value.has(s.id));
+});
+const someSelected = computed(() => selectedIds.value.size > 0 && !allSelected.value);
+
+const qualitySaving = ref<Record<number, boolean>>({});
+
+function bindingProfileId(speakerLabel: string): number | string {
+  if (!props.bindings?.length || !speakerLabel) return "";
+  const b = props.bindings.find((x) => x.speaker?.label === speakerLabel);
+  return b?.voice_profile_id ?? "";
+}
+
+const bindingSaving = ref<Record<string, boolean>>({});
+async function onVoiceChange(speakerLabel: string, voiceProfileId: number) {
+  if (!voiceProfileId || !speakerLabel) return;
+  bindingSaving.value[speakerLabel] = true;
+  try {
+    await api.upsertBindings(props.jobId, [{ speaker_label: speakerLabel, voice_profile_id: voiceProfileId }], true);
+    emit("binding-updated", speakerLabel, voiceProfileId);
+  } catch (e: unknown) {
+    alert(e instanceof Error ? e.message : String(e));
+  } finally {
+    bindingSaving.value[speakerLabel] = false;
+  }
+}
+
+function setRowRef(ordinal: number, el: unknown) {
+  rowRefs.value[ordinal] = el as HTMLElement | null;
+}
+
+function toggleSelect(seg: Segment) {
+  const next = new Set(selectedIds.value);
+  if (next.has(seg.id)) next.delete(seg.id);
+  else next.add(seg.id);
+  selectedIds.value = next;
+}
+
+function toggleSelectAll() {
+  const syn = synthesizableSegments.value;
+  if (allSelected.value) selectedIds.value = new Set();
+  else selectedIds.value = new Set(syn.map((s) => s.id));
+}
+
+function clearSelection() {
+  selectedIds.value = new Set();
+}
+
+async function batchRerun() {
+  const ids = Array.from(selectedIds.value);
+  if (!ids.length) return;
+  batchRerunning.value = true;
+  try {
+    await api.retryJob(props.jobId, "tts_duration", ids);
+    ids.forEach((id) => {
+      if (audioUrls.value[id]) {
+        URL.revokeObjectURL(audioUrls.value[id]);
+        delete audioUrls.value[id];
+      }
+    });
+    selectedIds.value = new Set();
+    emit("updated");
+  } catch (e: unknown) {
+    alert(e instanceof Error ? e.message : String(e));
+  } finally {
+    batchRerunning.value = false;
+  }
+}
+
+function onKeydown(e: KeyboardEvent) {
+  if (props.segments.length === 0) return;
+  const target = e.target as HTMLElement;
+  if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) return;
+  const len = props.segments.length;
+  const idx = Math.max(0, Math.min(focusedIndex.value, len - 1));
+  const seg = props.segments[idx];
+  if (e.key === "j" || e.key === "J") {
+    e.preventDefault();
+    focusedIndex.value = Math.min(idx + 1, len - 1);
+    scrollToFocused();
+  } else if (e.key === "k" || e.key === "K") {
+    e.preventDefault();
+    focusedIndex.value = Math.max(0, idx - 1);
+    scrollToFocused();
+  } else if (e.key === " ") {
+    e.preventDefault();
+    if (seg?.status === "synthesized") {
+      if (audioUrls.value[seg.id]) {
+        const el = document.querySelector(`audio[src="${audioUrls.value[seg.id]}"]`) as HTMLAudioElement;
+        if (el) {
+          if (el.paused) el.play();
+          else el.pause();
+        }
+      } else loadAudio(seg);
+    }
+  } else if (e.key === "e" || e.key === "E") {
+    e.preventDefault();
+    if (seg) toggleEdit(seg);
+  }
+}
+
+function scrollToFocused() {
+  const seg = props.segments[focusedIndex.value];
+  if (!seg) return;
+  const el = rowRefs.value[seg.ordinal];
+  el?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+function focusRow(seg: Segment) {
+  const i = props.segments.findIndex((s) => s.id === seg.id);
+  if (i >= 0) focusedIndex.value = i;
+  tableContainerRef.value?.focus();
+}
+
+watch(
+  () => props.segments.length,
+  () => {
+    focusedIndex.value = Math.min(focusedIndex.value, Math.max(0, props.segments.length - 1));
+  }
+);
 
 function driftPct(seg: Segment): number {
   if (!seg.tts_duration_ms || !seg.original_duration_ms) return -1;
@@ -159,6 +436,29 @@ function driftLabel(seg: Segment): string {
   return `${pct.toFixed(1)}%`;
 }
 
+// Signed drift in seconds: positive = TTS too long, negative = TTS too short.
+function driftSec(seg: Segment): number | null {
+  if (seg.status !== "synthesized" || !seg.tts_duration_ms || !seg.original_duration_ms) return null;
+  return (seg.tts_duration_ms - seg.original_duration_ms) / 1000;
+}
+
+function driftSecLabel(seg: Segment): string {
+  const d = driftSec(seg);
+  if (d === null) return "—";
+  const sign = d >= 0 ? "+" : "";
+  return `${sign}${d.toFixed(2)}s`;
+}
+
+function driftSecClass(seg: Segment): string {
+  if (seg.status !== "synthesized") return "bg-slate-800 text-slate-400";
+  const d = driftSec(seg);
+  if (d === null) return "bg-slate-800 text-slate-400";
+  const abs = Math.abs(d);
+  if (abs < 0.5) return "bg-green-900 text-green-300";
+  if (abs < 1.5) return "bg-yellow-900 text-yellow-300";
+  return "bg-red-900 text-red-300";
+}
+
 function fmtMs(ms: number): string {
   const s = ms / 1000;
   const m = Math.floor(s / 60);
@@ -166,11 +466,27 @@ function fmtMs(ms: number): string {
   return m > 0 ? `${m}:${rem.padStart(4, "0")}` : `${rem}s`;
 }
 
+function toggleWaveform(seg: Segment) {
+  if (waveformSegId.value === seg.id) {
+    waveformSegId.value = null;
+    return;
+  }
+  editingId.value = null;
+  waveformSegId.value = seg.id;
+  if (!originalAudioUrls.value[seg.id] && !loadingOriginalAudio.value[seg.id]) {
+    loadOriginalAudio(seg);
+  }
+  if (seg.status === "synthesized" && !audioUrls.value[seg.id] && !loadingAudio.value[seg.id]) {
+    loadAudio(seg);
+  }
+}
+
 function toggleEdit(seg: Segment) {
   if (editingId.value === seg.id) {
     cancelEdit();
     return;
   }
+  waveformSegId.value = null;
   editingId.value = seg.id;
   editText.value = seg.tgt_text || "";
   saveError.value = "";
@@ -229,9 +545,37 @@ async function loadAudio(seg: Segment) {
     const blob = await resp.blob();
     audioUrls.value[seg.id] = URL.createObjectURL(blob);
   } catch (e: unknown) {
-    alert(`音频加载失败: ${e instanceof Error ? e.message : String(e)}`);
+    alert(`TTS 加载失败: ${e instanceof Error ? e.message : String(e)}`);
   } finally {
     loadingAudio.value[seg.id] = false;
   }
 }
+
+async function loadOriginalAudio(seg: Segment) {
+  loadingOriginalAudio.value[seg.id] = true;
+  try {
+    const headers: Record<string, string> = {};
+    const key = getApiKey();
+    if (key) headers["X-API-Key"] = key;
+
+    const resp = await fetch(`/jobs/${props.jobId}/audio/${seg.ordinal}`, { headers });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const blob = await resp.blob();
+    originalAudioUrls.value[seg.id] = URL.createObjectURL(blob);
+  } catch (e: unknown) {
+    alert(`原声加载失败: ${e instanceof Error ? e.message : String(e)}`);
+  } finally {
+    loadingOriginalAudio.value[seg.id] = false;
+  }
+}
+
+onBeforeUnmount(() => {
+  for (const url of Object.values(audioUrls.value)) {
+    if (url) URL.revokeObjectURL(url);
+  }
+  for (const url of Object.values(originalAudioUrls.value)) {
+    if (url) URL.revokeObjectURL(url);
+  }
+});
+
 </script>

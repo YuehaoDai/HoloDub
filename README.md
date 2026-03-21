@@ -578,6 +578,12 @@ npm run build
 # Outputs to internal/ui/static/ (picked up by go:embed)
 ```
 
+**After UI-only changes** (avoids rebuilding ml-service and re-downloading CUDA/PyTorch):
+```bash
+cd ui && npm run build && cd ..
+docker compose build api && docker compose up -d
+```
+
 For development with hot-reload:
 ```bash
 cd ui
@@ -587,14 +593,14 @@ npm run dev
 # API calls proxy to the Go server (configure VITE_API_BASE if needed)
 ```
 
-### Planned Phase 2 (backlog)
+### Phase 2
 
-- **Original audio comparison**: Side-by-side playback of original vocal clip vs. TTS output (`GET /jobs/:id/audio/:ordinal` cut from `vocals.wav`)
-- **Batch re-synthesize**: Multi-select segments with checkboxes + batch Rerun button
-- **Keyboard shortcuts**: `J`/`K` to navigate segments, `Space` to play, `E` to edit
-- **Waveform visualization**: WaveSurfer.js integration for precise audio inspection
-- **Segment quality tagging**: Mark segments as good / bad / skip, persisted to segment meta
-- **Speaker binding UI**: Assign voice profiles to speakers directly from the segment table
+- [x] **Original audio comparison**: Side-by-side playback of original vocal clip vs. TTS output (`GET /jobs/:id/audio/:ordinal` cut from `vocals.wav`)
+- [x] **Batch re-synthesize**: Multi-select segments with checkboxes + batch Rerun button
+- [x] **Keyboard shortcuts**: `J`/`K` to navigate segments, `Space` to play, `E` to edit
+- [x] **Waveform visualization**: WaveSurfer.js integration for precise audio inspection (expandable waveform row)
+- [x] **Segment quality tagging**: Mark segments as good / bad / skip, persisted to segment meta
+- [x] **Speaker binding UI**: Assign voice profiles to speakers directly from the segment table
 
 ---
 

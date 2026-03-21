@@ -11,7 +11,8 @@
   },
   "dependencies": {
     "vue": "^3.4.0",
-    "vue-router": "^4.3.0"
+    "vue-router": "^4.3.0",
+    "wavesurfer.js": "^7.12.0"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^5.0.0",

@@ -41,6 +41,9 @@ class ASRAdapter:
         segments = segment_words(words, min_segment_sec, max_segment_sec)
         return segments, diagnostics
 
+    def align_sentences(self, audio_path: Path, text: str, language: str = "zh") -> None:
+        raise NotImplementedError("align_sentences removed in rollback")
+
     def _run_mock(self, audio_path: Path) -> tuple[list[WordToken], list[str]]:
         candidates = [
             audio_path.with_suffix(audio_path.suffix + ".words.json"),
@@ -193,10 +196,20 @@ def segment_words(words: list[WordToken], min_segment_sec: float, max_segment_se
             )
             current = []
 
-    # Post-pass: merge any segment that is too short (< min_word_count words) into
-    # its neighbour.  We prefer merging with the previous segment; if it is the
-    # first one, merge with the next.
-    return _merge_short_segments(segments, min_word_count)
+    # Post-pass 1: merge any segment that is too short (< min_word_count words).
+    segments = _merge_short_segments(segments, min_word_count)
+
+    # Post-pass 2: merge consecutive segments whose gap is dangerously tight.
+    # When two segments are separated by less than CLOSE_GAP_THRESHOLD_MS the TTS
+    # audio for the first segment has almost no room to breathe.  Merging them
+    # into one segment gives the LLM more characters to play with and lets the
+    # TTS model set its own natural pace without risk of spillover.
+    # Threshold chosen from job-105 data: median gap is 800 ms, p25 is 220 ms;
+    # 1500 ms gives a comfortable buffer — segments with <1.5 s between them are
+    # very likely to cause spillover even with modest drift.
+    segments = _merge_close_gap_segments(segments, close_gap_ms=1500)
+
+    return segments
 
 
 def _merge_short_segments(segments: list[Segment], min_word_count: int) -> list[Segment]:
@@ -206,6 +219,15 @@ def _merge_short_segments(segments: list[Segment], min_word_count: int) -> list[
 
     def word_count(seg: Segment) -> int:
         return len(seg.text.split())
+
+    def _merge(a: Segment, b: Segment) -> Segment:
+        return Segment(
+            start_ms=a.start_ms,
+            end_ms=b.end_ms,
+            text=a.text + " " + b.text,
+            speaker_label=a.speaker_label,
+            split_reason=a.split_reason,
+        )
 
     merged = True
     while merged:
@@ -217,23 +239,9 @@ def _merge_short_segments(segments: list[Segment], min_word_count: int) -> list[
             if word_count(seg) < min_word_count and len(segments) > 1:
                 # Merge: prefer merging with the previous segment if it exists.
                 if result:
-                    prev = result[-1]
-                    result[-1] = Segment(
-                        start_ms=prev.start_ms,
-                        end_ms=seg.end_ms,
-                        text=prev.text + " " + seg.text,
-                        speaker_label=prev.speaker_label,
-                        split_reason=prev.split_reason,
-                    )
+                    result[-1] = _merge(result[-1], seg)
                 elif i + 1 < len(segments):
-                    nxt = segments[i + 1]
-                    segments[i + 1] = Segment(
-                        start_ms=seg.start_ms,
-                        end_ms=nxt.end_ms,
-                        text=seg.text + " " + nxt.text,
-                        speaker_label=seg.speaker_label,
-                        split_reason=nxt.split_reason,
-                    )
+                    segments[i + 1] = _merge(seg, segments[i + 1])
                     i += 1
                     continue
                 else:
@@ -245,6 +253,44 @@ def _merge_short_segments(segments: list[Segment], min_word_count: int) -> list[
         segments = result
 
     return segments
+
+
+def _merge_close_gap_segments(segments: list[Segment], close_gap_ms: int) -> list[Segment]:
+    """Merge consecutive segments whose inter-segment gap is shorter than close_gap_ms.
+
+    A tight gap means the TTS audio for the first segment has very little room
+    before the next sentence starts.  Even modest over-runs will cause spillover
+    clipping.  Merging the two sentences into one gives the TTS model a longer,
+    more natural utterance and removes the problematic boundary altogether.
+
+    We iterate forward and keep merging as long as the gap to the *next* segment
+    is below the threshold.  The combined segment inherits the start of the first
+    and the end of the last.
+    """
+    if len(segments) <= 1:
+        return segments
+
+    result: list[Segment] = []
+    i = 0
+    while i < len(segments):
+        seg = segments[i]
+        # Greedily merge forward while the gap to the next segment is too tight.
+        while i + 1 < len(segments):
+            nxt = segments[i + 1]
+            gap_ms = nxt.start_ms - seg.end_ms
+            if gap_ms >= close_gap_ms:
+                break
+            seg = Segment(
+                start_ms=seg.start_ms,
+                end_ms=nxt.end_ms,
+                text=seg.text + " " + nxt.text,
+                speaker_label=seg.speaker_label,
+                split_reason=seg.split_reason,
+            )
+            i += 1
+        result.append(seg)
+        i += 1
+    return result
 
 
 def render_text(words: list[WordToken]) -> str:

@@ -105,8 +105,7 @@ async function pollMLHealth() {
     const h = await api.mlHealth();
     ttsWarmupStatus.value = h.tts_warmup_status ?? "idle";
     if (h.tts_warmup_status === "ready" || h.tts_warmup_status === "error") {
-      if (mlHealthTimer) clearInterval(mlHealthTimer);
-      mlHealthTimer = null;
+      if (mlHealthTimer) { clearInterval(mlHealthTimer); mlHealthTimer = null; }
     }
   } catch {
     ttsWarmupStatus.value = "idle";
@@ -151,8 +150,11 @@ async function createJob() {
 
 onMounted(() => {
   if (apiKey.value) setApiKey(apiKey.value);
+  // Only start health polling if the model isn't already in a terminal state.
+  // Use 8s interval — fast enough to notice loading state, slow enough not to
+  // contribute meaningfully to rate limit consumption.
   pollMLHealth();
-  mlHealthTimer = setInterval(pollMLHealth, 5000);
+  mlHealthTimer = setInterval(pollMLHealth, 8000);
 });
 
 onUnmounted(() => {

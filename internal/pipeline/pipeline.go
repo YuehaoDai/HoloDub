@@ -88,12 +88,13 @@ func (s *Service) RetryJob(ctx context.Context, jobID uint, stage models.JobStag
 		return err
 	}
 	return s.queue.Enqueue(ctx, models.TaskPayload{
-		JobID:       jobID,
-		Stage:       stage,
-		Attempt:     0,
-		SegmentIDs:  store.UniqueUint(segmentIDs),
-		RequestedBy: requestedBy,
-		Reason:      "manual_retry",
+		JobID:           jobID,
+		Stage:           stage,
+		Attempt:         0,
+		SegmentIDs:      store.UniqueUint(segmentIDs),
+		RequestedBy:     requestedBy,
+		Reason:          "manual_retry",
+		SkipAutoAdvance: true,
 	})
 }
 
@@ -198,7 +199,7 @@ func (s *Service) HandleTask(ctx context.Context, task models.TaskPayload) error
 	})
 
 	nextStage, hasNext := task.Stage.Next()
-	if !hasNext {
+	if !hasNext || task.SkipAutoAdvance {
 		job.OutputRelPath = s.outputRelPathForJob(ctx, task.JobID)
 		if err := s.store.UpdateJobState(ctx, task.JobID, models.JobStatusCompleted, task.Stage, "", false); err != nil {
 			return err
@@ -260,6 +261,11 @@ func (s *Service) runASRSmart(ctx context.Context, task models.TaskPayload) erro
 	if audioRelPath == "" {
 		audioRelPath = job.InputRelPath
 	}
+	slog.Info("asr_smart starting",
+		"job_id", task.JobID,
+		"audio_relpath", audioRelPath,
+		"source_language", job.SourceLanguage,
+	)
 
 	response, err := s.ml.SmartSplit(ctx, ml.SmartSplitRequest{
 		AudioRelPath:   audioRelPath,
@@ -268,11 +274,14 @@ func (s *Service) runASRSmart(ctx context.Context, task models.TaskPayload) erro
 		MaxSegmentSec:  jobConfigFloat(job.Config, "max_segment_sec", 20.0),
 	})
 	if err != nil {
+		slog.Error("asr_smart ml.SmartSplit failed", "job_id", task.JobID, "error", err)
 		return err
 	}
 	if len(response.Segments) == 0 {
+		slog.Warn("asr_smart returned 0 segments", "job_id", task.JobID)
 		return errors.New("smart split returned no segments")
 	}
+	slog.Info("asr_smart completed", "job_id", task.JobID, "segment_count", len(response.Segments))
 
 	drafts := make([]models.SegmentDraft, 0, len(response.Segments))
 	for _, segment := range response.Segments {
@@ -329,6 +338,8 @@ func (s *Service) runTTSDuration(ctx context.Context, task models.TaskPayload) e
 	var wg sync.WaitGroup
 	var firstErr error
 	var errMu sync.Mutex
+	var processedIdx []int
+	var processedMu sync.Mutex
 
 	for idx := range segments {
 		if segments[idx].Status == "synthesized" {
@@ -346,6 +357,10 @@ func (s *Service) runTTSDuration(ctx context.Context, task models.TaskPayload) e
 					firstErr = err
 				}
 				errMu.Unlock()
+			} else {
+				processedMu.Lock()
+				processedIdx = append(processedIdx, idx)
+				processedMu.Unlock()
 			}
 		}()
 	}
@@ -354,7 +369,14 @@ func (s *Service) runTTSDuration(ctx context.Context, task models.TaskPayload) e
 	if firstErr != nil {
 		return firstErr
 	}
-	return s.store.UpdateSegmentSynthResults(ctx, segments)
+	if len(processedIdx) == 0 {
+		return nil
+	}
+	processed := make([]models.Segment, 0, len(processedIdx))
+	for _, idx := range processedIdx {
+		processed = append(processed, segments[idx])
+	}
+	return s.store.UpdateSegmentSynthResults(ctx, processed)
 }
 
 func (s *Service) processOneTTSSegment(ctx context.Context, job *models.Job, segments []models.Segment, idx int) error {
@@ -374,6 +396,9 @@ func (s *Service) processOneTTSSegment(ctx context.Context, job *models.Job, seg
 	targetMs := seg.DurationMs()
 	targetSec := float64(targetMs) / 1000.0
 
+	// Gap between this segment's end and the next segment's start.
+	// Used for overflow policy: TTS audio that overruns the target slot can
+	// "borrow" from the trailing silence up to (gap - breathMarginMs).
 	var gapAfterMs int64 = 30_000
 	if idx+1 < len(segments) {
 		if gap := segments[idx+1].StartMs - seg.EndMs; gap >= 0 {
@@ -382,6 +407,17 @@ func (s *Service) processOneTTSSegment(ctx context.Context, job *models.Job, seg
 			gapAfterMs = 0
 		}
 	}
+
+	// breathMarginMs: minimum silence to preserve between sentences even when
+	// borrowing from the gap.  300 ms is the shortest perceptible breath pause.
+	const breathMarginMs int64 = 300
+	// shortGapThresholdMs: when the gap is at or below this value the TTS slot
+	// is already dangerously tight — skip straight to forced re-translation on
+	// any overflow instead of trying to borrow.
+	const shortGapThresholdMs int64 = 1000
+	// maxAllowedSec caps the token budget inside the TTS model.  It is the full
+	// slot: target + entire gap.  Physical playback clipping is handled later in
+	// the merge stage via ffmpeg atrim.
 	maxAllowedSec := targetSec + float64(gapAfterMs)/1000.0
 
 	text := seg.TargetText
@@ -392,9 +428,23 @@ func (s *Service) processOneTTSSegment(ctx context.Context, job *models.Job, seg
 	outputRelPath := fmt.Sprintf("jobs/%d/tts/segment-%04d.wav", job.ID, seg.Ordinal)
 	maxAttempts := s.cfg.RetranslationMaxAttempts
 	driftThreshold := s.cfg.RetranslationDriftThreshold
+	// Effective threshold: stricter of the relative % or the absolute-seconds cap,
+	// but never below the minimum relative floor (prevents impossibly strict targets
+	// for very long segments, e.g. 0.8s / 105.9s = 0.76% is unreachable).
+	if s.cfg.RetranslationAbsMaxDriftSec > 0 && targetSec > 0 {
+		absThreshold := s.cfg.RetranslationAbsMaxDriftSec / targetSec
+		if absThreshold < driftThreshold {
+			driftThreshold = absThreshold
+		}
+	}
+	if s.cfg.RetranslationMinDriftThreshold > 0 && driftThreshold < s.cfg.RetranslationMinDriftThreshold {
+		driftThreshold = s.cfg.RetranslationMinDriftThreshold
+	}
 
 	var response *ml.TTSResponse
 	var retryHistory []llm.RetranslationAttempt
+	var prevActualSec float64
+	var prevTextChars int
 	for attempt := 0; attempt <= maxAttempts; attempt++ {
 		response, err = s.ml.RunTTS(ctx, ml.TTSRequest{
 			Text:              text,
@@ -402,31 +452,92 @@ func (s *Service) processOneTTSSegment(ctx context.Context, job *models.Job, seg
 			MaxAllowedSec:     maxAllowedSec,
 			VoiceConfig:       voiceConfig,
 			OutputRelPath:     outputRelPath,
+			PrevActualSec:     prevActualSec,
+			PrevTextChars:     prevTextChars,
 		})
 		if err != nil {
 			return fmt.Errorf("tts segment %d (attempt %d): %w", seg.ID, attempt, err)
 		}
 
-		actualSec := float64(response.ActualDurationMs) / 1000.0
+		actualMs := response.ActualDurationMs
+		actualSec := float64(actualMs) / 1000.0
+		overflowMs := actualMs - targetMs
+
+		// --- Overflow policy ---
+		// Case 1: no overflow, or overflow within drift threshold — accept.
+		if overflowMs <= 0 {
+			drift := math.Abs(actualSec-targetSec) / targetSec
+			if drift <= driftThreshold || !s.cfg.RetranslationEnabled || attempt == maxAttempts {
+				break
+			}
+			// Under-run: use normal re-translation path below.
+		} else {
+			// Case 2: overflow exists — decide whether to borrow gap or re-translate.
+			borrowableMs := gapAfterMs - breathMarginMs
+			overDrift := float64(actualMs-targetMs) / float64(targetMs)
+			// Apply the absolute-seconds cap to the borrow threshold so that long segments
+			// (e.g. 78s) are held to the same ±0.8s absolute ceiling as the retranslation
+			// threshold.  Do NOT add the min-floor here — the borrow path should remain
+			// strict for long segments.
+			maxBorrowDriftPct := s.cfg.RetranslationMaxBorrowDriftPct
+			if s.cfg.RetranslationAbsMaxDriftSec > 0 && targetMs > 0 {
+				absCap := s.cfg.RetranslationAbsMaxDriftSec / (float64(targetMs) / 1000.0)
+				if absCap < maxBorrowDriftPct {
+					maxBorrowDriftPct = absCap
+				}
+			}
+			withinBorrowDrift := overDrift <= maxBorrowDriftPct
+			if overflowMs <= borrowableMs && gapAfterMs > shortGapThresholdMs && (withinBorrowDrift || !s.cfg.RetranslationEnabled || attempt == maxAttempts) {
+				// Overflow fits within the available gap AND drift is within the borrow
+				// tolerance (or we've exhausted retries).  Accept; merge stage will clip.
+				slog.Info("tts overflow: borrowing from gap",
+					"job_id", job.ID,
+					"segment_id", seg.ID,
+					"target_ms", targetMs,
+					"actual_ms", actualMs,
+					"overflow_ms", overflowMs,
+					"gap_after_ms", gapAfterMs,
+					"borrowed_ms", overflowMs,
+				)
+				break
+			}
+			// Overflow exceeds borrowable gap or gap is too short — must re-translate.
+			if !s.cfg.RetranslationEnabled || attempt == maxAttempts {
+				slog.Warn("tts overflow: gap exhausted, accepting with clip",
+					"job_id", job.ID,
+					"segment_id", seg.ID,
+					"overflow_ms", overflowMs,
+					"gap_after_ms", gapAfterMs,
+				)
+				break
+			}
+			slog.Info("tts overflow: gap too small, forcing re-translation",
+				"job_id", job.ID,
+				"segment_id", seg.ID,
+				"target_ms", targetMs,
+				"actual_ms", actualMs,
+				"overflow_ms", overflowMs,
+				"gap_after_ms", gapAfterMs,
+				"attempt", attempt+1,
+				"max_attempts", maxAttempts,
+			)
+		}
+
+		// --- Re-translation ---
 		drift := math.Abs(actualSec-targetSec) / targetSec
-
-		if !s.cfg.RetranslationEnabled || attempt == maxAttempts {
-			break
+		if overflowMs <= 0 {
+			// Under-run path: only log when not already at max attempts.
+			slog.Info("tts drift exceeds threshold, re-translating",
+				"job_id", job.ID,
+				"segment_id", seg.ID,
+				"target_sec", targetSec,
+				"actual_sec", actualSec,
+				"drift_pct", drift*100,
+				"threshold_pct", driftThreshold*100,
+				"attempt", attempt+1,
+				"max_attempts", maxAttempts,
+			)
 		}
-		if drift <= driftThreshold {
-			break
-		}
-
-		slog.Info("tts drift exceeds threshold, re-translating",
-			"job_id", job.ID,
-			"segment_id", seg.ID,
-			"target_sec", targetSec,
-			"actual_sec", actualSec,
-			"drift_pct", drift*100,
-			"threshold_pct", driftThreshold*100,
-			"attempt", attempt+1,
-			"max_attempts", maxAttempts,
-		)
 
 		newText, retErr := s.llm.RetranslateWithConstraint(
 			ctx,
@@ -446,7 +557,33 @@ func (s *Service) processOneTTSSegment(ctx context.Context, job *models.Job, seg
 			break
 		}
 
+		slog.Info("retranslation result",
+			"job_id", job.ID,
+			"segment_id", seg.ID,
+			"attempt", attempt+1,
+			"prev_chars", len([]rune(text)),
+			"new_chars", len([]rune(newText)),
+			"prev_actual_sec", actualSec,
+		)
 		retryHistory = append(retryHistory, llm.RetranslationAttempt{Text: text, ActualSec: actualSec})
+		// Only feed adaptive token-budget feedback when the previous attempt
+		// was an over-run.  For under-runs the observed tokens/char is
+		// artificially low (TTS stopped early or text was already sparse), and
+		// blending it into the prior would make the next budget even tighter —
+		// exactly the wrong direction.  Reset to zero so the adapter uses its
+		// default prior instead.
+		if actualSec >= targetSec {
+			prevActualSec = actualSec
+			prevTextChars = 0
+			for _, r := range text {
+				if r != ' ' && r != '\t' && r != '\n' && r != '\r' {
+					prevTextChars++
+				}
+			}
+		} else {
+			prevActualSec = 0
+			prevTextChars = 0
+		}
 		text = newText
 		seg.TargetText = newText
 		if saveErr := s.store.UpdateSegmentTranslations(ctx, []models.Segment{*seg}); saveErr != nil {
@@ -487,14 +624,26 @@ func (s *Service) runMerge(ctx context.Context, task models.TaskPayload) error {
 
 	var totalDurationMs int64
 	overlays := make([]media.AudioOverlay, 0, len(segments))
-	for _, segment := range segments {
+	for i, segment := range segments {
 		if segment.EndMs > totalDurationMs {
 			totalDurationMs = segment.EndMs
 		}
+		// MaxDurationMs = available slot from this segment's start to the next
+		// segment's start, minus a 300ms breath margin.
+		// ffmpeg atrim clips to this value so borrowed-gap audio plays fully but
+		// never bleeds into the following sentence.
+		const breathMarginMs int64 = 300
+		var maxDurationMs int64
+		if i+1 < len(segments) {
+			if slotMs := segments[i+1].StartMs - segment.StartMs - breathMarginMs; slotMs > 0 {
+				maxDurationMs = slotMs
+			}
+		}
 		overlays = append(overlays, media.AudioOverlay{
-			RelPath:    segment.TTSAudioRelPath,
-			DelayMs:    segment.StartMs,
-			DurationMs: segment.TTSDurationMs,
+			RelPath:       segment.TTSAudioRelPath,
+			DelayMs:       segment.StartMs,
+			DurationMs:    segment.TTSDurationMs,
+			MaxDurationMs: maxDurationMs,
 		})
 	}
 	if job.BgmRelPath != "" {

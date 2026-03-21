@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"holodub/internal/config"
+	"holodub/internal/media"
 	"holodub/internal/models"
 	"holodub/internal/observability"
 	"holodub/internal/pipeline"
@@ -120,7 +121,9 @@ func NewRouter(cfg config.Config, st *store.Store, pipelineSvc *pipeline.Service
 	router.GET("/jobs/:id/artifacts", server.listArtifacts)
 	router.POST("/jobs/:id/segments/:segmentId/rerun", server.rerunSegment)
 	router.GET("/jobs/:id/tts/:ordinal", server.serveSegmentAudio)
+	router.GET("/jobs/:id/audio/:ordinal", server.serveOriginalAudio)
 	router.PATCH("/jobs/:id/segments/:segmentId", server.patchSegment)
+	router.PATCH("/jobs/:id/segments/:segmentId/quality", server.patchSegmentQuality)
 
 	router.GET("/voice-profiles", server.listVoiceProfiles)
 	router.POST("/voice-profiles", server.createVoiceProfile)
@@ -135,15 +138,33 @@ func (s *Server) serveUI(c *gin.Context) {
 	path := strings.TrimPrefix(c.Param("filepath"), "/")
 	if path == "" {
 		// Serve index.html directly to avoid redirect loop caused by
-		// http.FileServer redirecting /index.html → / → /ui/ → loop
+		// http.FileServer redirecting /index.html → / → /ui/ → loop.
+		// Never cache index.html so browsers always fetch the latest entry point.
 		data, err := fs.ReadFile(ui.FS(), "index.html")
 		if err != nil {
 			c.Status(stdhttp.StatusNotFound)
 			return
 		}
+		c.Header("Cache-Control", "no-store, no-cache, must-revalidate")
 		c.Data(stdhttp.StatusOK, "text/html; charset=utf-8", data)
 		return
 	}
+
+	// Check whether the requested path exists as a real asset (JS/CSS/etc.).
+	// If not, serve index.html so Vue Router can handle client-side navigation
+	// (e.g. direct access to /ui/jobs/123 after a browser refresh).
+	if _, err := fs.Stat(ui.FS(), path); err != nil {
+		data, readErr := fs.ReadFile(ui.FS(), "index.html")
+		if readErr != nil {
+			c.Status(stdhttp.StatusNotFound)
+			return
+		}
+		c.Header("Cache-Control", "no-store, no-cache, must-revalidate")
+		c.Data(stdhttp.StatusOK, "text/html; charset=utf-8", data)
+		return
+	}
+	// Hashed assets (JS/CSS) are safe to cache aggressively.
+	c.Header("Cache-Control", "public, max-age=31536000, immutable")
 	c.FileFromFS(path, stdhttp.FS(ui.FS()))
 }
 
@@ -571,6 +592,53 @@ func (s *Server) serveSegmentAudio(c *gin.Context) {
 	c.File(audioPath)
 }
 
+func (s *Server) serveOriginalAudio(c *gin.Context) {
+	job, ok := s.getJobForTenant(c)
+	if !ok {
+		return
+	}
+	ordinal := c.Param("ordinal")
+	ordinalInt, err := strconv.Atoi(ordinal)
+	if err != nil {
+		respondError(c, stdhttp.StatusBadRequest, "invalid_ordinal", "invalid ordinal")
+		return
+	}
+	segments, err := s.store.ListSegments(c.Request.Context(), job.ID, nil)
+	if err != nil {
+		respondError(c, stdhttp.StatusInternalServerError, "list_segments_failed", err.Error())
+		return
+	}
+	var seg *models.Segment
+	for i := range segments {
+		if segments[i].Ordinal == ordinalInt {
+			seg = &segments[i]
+			break
+		}
+	}
+	if seg == nil {
+		respondError(c, stdhttp.StatusNotFound, "segment_not_found", "segment not found")
+		return
+	}
+	vocalsRelPath := job.VocalsRelPath
+	if vocalsRelPath == "" {
+		vocalsRelPath = filepath.Join("jobs", strconv.Itoa(int(job.ID)), "separate", "vocals.wav")
+	}
+	vocalsPath := storage.ResolveDataPath(s.cfg.DataRoot, filepath.ToSlash(vocalsRelPath))
+	if _, err := os.Stat(vocalsPath); err != nil {
+		respondError(c, stdhttp.StatusNotFound, "vocals_not_found", "vocals file not found")
+		return
+	}
+	tmpPath := filepath.Join(os.TempDir(), fmt.Sprintf("holodub-orig-%d-%d.wav", job.ID, ordinalInt))
+	defer os.Remove(tmpPath)
+	if err := media.TrimAudioSegment(s.cfg.FFmpegBin, vocalsPath, tmpPath, int64(seg.StartMs), int64(seg.EndMs)); err != nil {
+		respondError(c, stdhttp.StatusInternalServerError, "trim_failed", err.Error())
+		return
+	}
+	c.Header("Content-Type", "audio/wav")
+	c.Header("Cache-Control", "no-store, no-cache, must-revalidate")
+	c.File(tmpPath)
+}
+
 type patchSegmentRequest struct {
 	TargetText string `json:"target_text" binding:"required"`
 	Rerun      bool   `json:"rerun"`
@@ -597,23 +665,49 @@ func (s *Server) patchSegment(c *gin.Context) {
 		TargetText: request.TargetText,
 		Status:     "translated",
 	}
-	if err := s.store.UpdateSegmentTranslations(c.Request.Context(), []models.Segment{segment}); err != nil {
-		respondError(c, stdhttp.StatusInternalServerError, "patch_segment_failed", err.Error())
-		return
-	}
 
 	if request.Rerun {
-		if err := s.store.ResetSegmentsForRerun(c.Request.Context(), []uint{segmentID}); err != nil {
-			respondError(c, stdhttp.StatusInternalServerError, "reset_segment_failed", err.Error())
+		if err := s.store.UpdateSegmentTranslationAndReset(c.Request.Context(), segmentID, request.TargetText); err != nil {
+			respondError(c, stdhttp.StatusInternalServerError, "patch_segment_failed", err.Error())
 			return
 		}
 		if err := s.pipeline.RetryJob(c.Request.Context(), job.ID, models.StageTTSDuration, []uint{segmentID}, "segment_patch"); err != nil {
 			respondError(c, stdhttp.StatusInternalServerError, "rerun_segment_failed", err.Error())
 			return
 		}
+	} else {
+		if err := s.store.UpdateSegmentTranslations(c.Request.Context(), []models.Segment{segment}); err != nil {
+			respondError(c, stdhttp.StatusInternalServerError, "patch_segment_failed", err.Error())
+			return
+		}
 	}
 
 	c.JSON(stdhttp.StatusOK, gin.H{"updated": true, "segment_id": segmentID, "rerun": request.Rerun})
+}
+
+type patchSegmentQualityRequest struct {
+	Quality string `json:"quality" binding:"required,oneof=good bad skip"`
+}
+
+func (s *Server) patchSegmentQuality(c *gin.Context) {
+	_, ok := s.getJobForTenant(c)
+	if !ok {
+		return
+	}
+	segmentID, ok := parseUintParam(c, "segmentId")
+	if !ok {
+		return
+	}
+	var request patchSegmentQualityRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		respondError(c, stdhttp.StatusBadRequest, "invalid_quality_request", err.Error())
+		return
+	}
+	if err := s.store.UpdateSegmentMeta(c.Request.Context(), segmentID, map[string]any{"quality": request.Quality}); err != nil {
+		respondError(c, stdhttp.StatusInternalServerError, "patch_quality_failed", err.Error())
+		return
+	}
+	c.JSON(stdhttp.StatusOK, gin.H{"updated": true, "segment_id": segmentID, "quality": request.Quality})
 }
 
 func parseUintParam(c *gin.Context, name string) (uint, bool) {

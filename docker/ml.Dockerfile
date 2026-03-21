@@ -30,8 +30,7 @@ ARG PYTHON_EXTRAS=
 # the correct GPU wheels are pulled (avoids falling back to CPU-only torch).
 RUN python -m pip install --no-cache-dir ninja
 
-RUN python -m pip install --no-cache-dir --upgrade pip \
-    && if [ -n "$PYTHON_EXTRAS" ]; then \
+RUN if [ -n "$PYTHON_EXTRAS" ]; then \
         pip install --no-cache-dir torch torchaudio --index-url https://download.pytorch.org/whl/cu128 \
         && python -m pip install --no-cache-dir "/app/ml_service[$PYTHON_EXTRAS]"; \
        else \

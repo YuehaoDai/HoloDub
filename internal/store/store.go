@@ -211,18 +211,18 @@ func (s *Store) ReplaceSegments(ctx context.Context, jobID uint, drafts []models
 			}
 			speaker := speakersByLabel[label]
 			speakerID := speaker.ID
-			segment := models.Segment{
-				JobID:              jobID,
-				SpeakerID:          &speakerID,
-				SpeakerLabel:       label,
-				Ordinal:            idx,
-				StartMs:            draft.StartMs,
-				EndMs:              draft.EndMs,
-				OriginalDurationMs: draft.EndMs - draft.StartMs,
-				SourceText:         draft.Text,
-				SplitReason:        draft.SplitReason,
-				Status:             "pending",
-			}
+		segment := models.Segment{
+			JobID:              jobID,
+			SpeakerID:          &speakerID,
+			SpeakerLabel:       label,
+			Ordinal:            idx,
+			StartMs:            draft.StartMs,
+			EndMs:              draft.EndMs,
+			OriginalDurationMs: draft.EndMs - draft.StartMs,
+			SourceText:         draft.Text,
+			SplitReason:        draft.SplitReason,
+			Status:             "pending",
+		}
 			segments = append(segments, segment)
 		}
 
@@ -269,6 +269,37 @@ func (s *Store) FinishStageRun(ctx context.Context, runID uint, status, errMsg s
 		updates["meta"] = meta
 	}
 	return s.db.WithContext(ctx).Model(&models.JobStageRun{}).Where("id = ?", runID).Updates(updates).Error
+}
+
+func (s *Store) GetSegment(ctx context.Context, id uint) (*models.Segment, error) {
+	var seg models.Segment
+	err := s.db.WithContext(ctx).Where("id = ?", id).First(&seg).Error
+	if err != nil {
+		return nil, err
+	}
+	return &seg, nil
+}
+
+func (s *Store) UpdateSegmentMeta(ctx context.Context, segmentID uint, metaUpdates map[string]any) error {
+	seg, err := s.GetSegment(ctx, segmentID)
+	if err != nil {
+		return err
+	}
+	merged := make(map[string]any)
+	if seg.Meta != nil {
+		for k, v := range seg.Meta {
+			merged[k] = v
+		}
+	}
+	for k, v := range metaUpdates {
+		if v == nil {
+			delete(merged, k)
+		} else {
+			merged[k] = v
+		}
+	}
+	return s.db.WithContext(ctx).Model(&models.Segment{}).Where("id = ?", segmentID).
+		Updates(map[string]any{"meta": merged, "updated_at": time.Now().UTC()}).Error
 }
 
 func (s *Store) UpdateSegmentTranslations(ctx context.Context, segments []models.Segment) error {
@@ -387,6 +418,7 @@ func (s *Store) UpsertBindings(ctx context.Context, jobID uint, inputs []Binding
 func (s *Store) ListBindings(ctx context.Context, jobID uint) ([]models.SpeakerVoiceBinding, error) {
 	var bindings []models.SpeakerVoiceBinding
 	err := s.db.WithContext(ctx).
+		Preload("Speaker").
 		Preload("VoiceProfile").
 		Where("job_id = ?", jobID).
 		Order("speaker_id asc").
@@ -395,11 +427,18 @@ func (s *Store) ListBindings(ctx context.Context, jobID uint) ([]models.SpeakerV
 }
 
 func (s *Store) ResolveVoiceProfileForSegment(ctx context.Context, jobID uint, segment models.Segment) (*models.VoiceProfile, error) {
+	if segment.SpeakerID == nil {
+		var profile models.VoiceProfile
+		if err := s.db.WithContext(ctx).Order("id asc").First(&profile).Error; err != nil {
+			return nil, err
+		}
+		return &profile, nil
+	}
 	var binding models.SpeakerVoiceBinding
 	err := s.db.WithContext(ctx).
 		Preload("VoiceProfile").
 		Where("job_id = ?", jobID).
-		Where("speaker_id = ?", segment.SpeakerID).
+		Where("speaker_id = ?", *segment.SpeakerID).
 		First(&binding).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		var profile models.VoiceProfile
@@ -453,6 +492,29 @@ func (s *Store) ResetSegmentsForRerun(ctx context.Context, segmentIDs []uint) er
 			"status":             "pending",
 			"updated_at":         time.Now().UTC(),
 		}).Error
+}
+
+// UpdateSegmentTranslationAndReset atomically updates a segment's target text
+// and resets its TTS fields to pending within a single transaction.
+func (s *Store) UpdateSegmentTranslationAndReset(ctx context.Context, segmentID uint, targetText string) error {
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		now := time.Now().UTC()
+		if err := tx.Model(&models.Segment{}).Where("id = ?", segmentID).
+			Updates(map[string]any{
+				"target_text": targetText,
+				"status":      "translated",
+				"updated_at":  now,
+			}).Error; err != nil {
+			return err
+		}
+		return tx.Model(&models.Segment{}).Where("id = ?", segmentID).
+			Updates(map[string]any{
+				"tts_audio_rel_path": "",
+				"tts_duration_ms":    0,
+				"status":             "pending",
+				"updated_at":         now,
+			}).Error
+	})
 }
 
 func (s *Store) RequestJobCancel(ctx context.Context, jobID uint) error {

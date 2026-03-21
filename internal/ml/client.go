@@ -65,6 +65,12 @@ type TTSRequest struct {
 	MaxAllowedSec     float64        `json:"max_allowed_sec,omitempty"`
 	VoiceConfig       map[string]any `json:"voice_config"`
 	OutputRelPath     string         `json:"output_relpath"`
+	// Adaptive token budget feedback (scheme 2).
+	// PrevActualSec and PrevTextChars carry the observed duration and char count
+	// from the previous TTS attempt so the adapter can correct tokens_per_char.
+	// Both are zero on the first attempt.
+	PrevActualSec float64 `json:"prev_actual_sec,omitempty"`
+	PrevTextChars int     `json:"prev_text_chars,omitempty"`
 }
 
 type TTSResponse struct {

@@ -49,8 +49,11 @@ type Config struct {
 
 	// Re-translation: triggered when TTS output drifts too far from target duration.
 	RetranslationEnabled        bool
-	RetranslationDriftThreshold float64 // e.g. 0.20 = 20%
+	RetranslationDriftThreshold float64 // relative threshold, e.g. 0.06 = 6%
+	RetranslationAbsMaxDriftSec float64 // absolute cap in seconds, e.g. 0.8; effective threshold = min(rel, abs/targetSec)
+	RetranslationMinDriftThreshold float64 // minimum relative threshold floor, e.g. 0.03 = 3%; prevents impossibly strict targets for very long segments
 	RetranslationMaxAttempts    int
+	RetranslationMaxBorrowDriftPct float64 // max over-run drift allowed to borrow from gap without re-translating, e.g. 0.12 = 12%
 	RetranslationModel          string // e.g. "kimi-k2.5"; reuses OPENAI_BASE_URL/API_KEY
 
 	FFmpegBin  string
@@ -153,9 +156,24 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("parse RETRANSLATION_DRIFT_THRESHOLD: %w", err)
 	}
 
+	cfg.RetranslationAbsMaxDriftSec, err = getEnvFloat("RETRANSLATION_ABS_MAX_DRIFT_SEC", 0.8)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse RETRANSLATION_ABS_MAX_DRIFT_SEC: %w", err)
+	}
+
+	cfg.RetranslationMinDriftThreshold, err = getEnvFloat("RETRANSLATION_MIN_DRIFT_THRESHOLD", 0.03)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse RETRANSLATION_MIN_DRIFT_THRESHOLD: %w", err)
+	}
+
 	cfg.RetranslationMaxAttempts, err = getEnvInt("RETRANSLATION_MAX_ATTEMPTS", 10)
 	if err != nil {
 		return Config{}, fmt.Errorf("parse RETRANSLATION_MAX_ATTEMPTS: %w", err)
+	}
+
+	cfg.RetranslationMaxBorrowDriftPct, err = getEnvFloat("RETRANSLATION_MAX_BORROW_DRIFT_PCT", 0.12)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse RETRANSLATION_MAX_BORROW_DRIFT_PCT: %w", err)
 	}
 
 	cfg.RetranslationModel = getEnv("RETRANSLATION_MODEL", "kimi-k2.5")
@@ -168,12 +186,12 @@ func Load() (Config, error) {
 		cfg.TTSConcurrency = 1
 	}
 
-	cfg.RequestRateLimitRPS, err = getEnvFloat("REQUEST_RATE_LIMIT_RPS", 2.0)
+	cfg.RequestRateLimitRPS, err = getEnvFloat("REQUEST_RATE_LIMIT_RPS", 20.0)
 	if err != nil {
 		return Config{}, fmt.Errorf("parse REQUEST_RATE_LIMIT_RPS: %w", err)
 	}
 
-	cfg.RequestRateLimitBurst, err = getEnvInt("REQUEST_RATE_LIMIT_BURST", 10)
+	cfg.RequestRateLimitBurst, err = getEnvInt("REQUEST_RATE_LIMIT_BURST", 50)
 	if err != nil {
 		return Config{}, fmt.Errorf("parse REQUEST_RATE_LIMIT_BURST: %w", err)
 	}

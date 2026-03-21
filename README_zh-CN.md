@@ -567,6 +567,12 @@ npm run build
 # 输出到 internal/ui/static/（由 go:embed 打包进二进制）
 ```
 
+**仅更新前端后启动**（不重建 ml-service，避免重复拉取 CUDA/PyTorch）：
+```bash
+cd ui && npm run build && cd ..
+docker compose build api && docker compose up -d
+```
+
 开发热更新模式：
 ```bash
 cd ui
@@ -575,14 +581,14 @@ npm run dev
 # Vite 开发服务器：http://localhost:5173/
 ```
 
-### 二期规划（待办）
+### 二期规划
 
-- **原始音频对比**：原声切片 vs TTS 音频并排播放（从 `vocals.wav` 按时间戳切片）
-- **批量重合成**：多选段落 + 批量 Rerun 按钮
-- **键盘快捷键**：`J`/`K` 上下段，`Space` 播放，`E` 编辑
-- **波形可视化**：集成 WaveSurfer.js 进行精确音频检视
-- **段落质量标注**：标记 good / bad / skip，持久化到 segment meta
-- **说话人绑定 UI**：直接在段落表格中分配音色档案
+- [x] **原始音频对比**：原声切片 vs TTS 音频并排播放（`GET /jobs/:id/audio/:ordinal` 从 `vocals.wav` 切片）
+- [x] **批量重合成**：多选段落 + 批量 Rerun 按钮
+- [x] **键盘快捷键**：`J`/`K` 上下段，`Space` 播放，`E` 编辑
+- [x] **波形可视化**：集成 WaveSurfer.js 进行精确音频检视（可展开波形行）
+- [x] **段落质量标注**：标记 good / bad / skip，持久化到 segment meta
+- [x] **说话人绑定 UI**：直接在段落表格中分配音色档案
 
 ---
 

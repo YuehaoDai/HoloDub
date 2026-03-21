@@ -123,20 +123,157 @@ func (c *Client) RetranslateWithConstraint(
 		direction = "under"
 	}
 
-	// Build history block for prompt injection
+	// Adjust limit based on observed TTS rate, averaged over ALL history attempts.
+	// Using only the current attempt's rate is unstable: a single under-run attempt can
+	// show an inflated rate (e.g. 5.27 chars/sec vs the true ~5.0), pushing the ceiling
+	// too high (412 chars vs the actual sweet-spot ~395), causing the LLM to overshoot.
+	// Weighted average over all data points gives a more stable estimate.
+	if currentLen > 0 && actualSec > 0 {
+		totalChars := float64(currentLen)
+		totalSec := actualSec
+		for _, h := range history {
+			hc := float64(len([]rune(h.Text)))
+			if hc > 0 && h.ActualSec > 0 {
+				totalChars += hc
+				totalSec += h.ActualSec
+			}
+		}
+		observedRate := totalChars / totalSec
+		observedCeiling := int(math.Ceil(targetSec * observedRate))
+		if observedCeiling > limit {
+			limit = observedCeiling
+		}
+	}
+
+	// Build history block for prompt injection.
+	// Include every attempt with per-attempt and incremental deltas so the LLM
+	// can learn the chars→duration mapping and extrapolate the right target length.
 	historyBlock := ""
 	if len(history) > 0 {
-		historyBlock = "\n\n--- Previous attempt(s) for reference ---\n"
+		historyBlock = "\n\n[Retry history — learn from the pattern]\n"
 		for i, h := range history {
 			drift := math.Abs(h.ActualSec-targetSec) / targetSec * 100
 			dir := "over"
 			if h.ActualSec < targetSec {
 				dir = "under"
 			}
-			historyBlock += fmt.Sprintf("Attempt %d: %.1fs target vs %.1fs actual (%.1f%% %s). Text: %s\n",
-				i+1, targetSec, h.ActualSec, drift, dir, h.Text)
+			chars := len([]rune(h.Text))
+
+			deltaChars := ""
+			deltaSec := ""
+			if i > 0 {
+				prevChars := len([]rune(history[i-1].Text))
+				dc := chars - prevChars
+				ds := h.ActualSec - history[i-1].ActualSec
+				sign := "+"
+				if dc < 0 {
+					sign = ""
+				}
+				dsSign := "+"
+				if ds < 0 {
+					dsSign = ""
+				}
+				deltaChars = fmt.Sprintf(" (Δchars%s%d", sign, dc)
+				deltaSec = fmt.Sprintf(", Δsec%s%.2f)", dsSign, ds)
+			}
+			historyBlock += fmt.Sprintf("  Attempt %d: %d chars%s%s → %.2fs actual (%.1f%% %s target)\n    Text: %s\n",
+				i+1, chars, deltaChars, deltaSec, h.ActualSec, drift, dir, h.Text)
 		}
-		historyBlock += "--- End of history ---\n"
+
+		// Trend analysis: estimate chars-per-second from all data points and
+		// recommend a concrete target character count for this attempt.
+		if len(history) >= 2 {
+			// Use first and last attempt to estimate the chars→duration slope.
+			firstChars := float64(len([]rune(history[0].Text)))
+			lastChars := float64(len([]rune(history[len(history)-1].Text)))
+			firstSec := history[0].ActualSec
+			lastSec := history[len(history)-1].ActualSec
+			secPerChar := 0.0
+			if lastChars != firstChars {
+				secPerChar = (lastSec - firstSec) / (lastChars - firstChars)
+			}
+
+			if secPerChar > 0 && lastSec > targetSec {
+				// Over-run: need to reduce chars.
+				needed := lastSec - targetSec
+				reduceBy := int(math.Ceil(needed / secPerChar))
+				recommended := int(lastChars) - reduceBy
+				if recommended > 0 {
+					historyBlock += fmt.Sprintf(
+						"\n  Trend analysis: each char ≈ %.3fs of audio. "+
+							"To hit %.1fs target, aim for ~%d chars (reduce by ~%d from last attempt).\n",
+						secPerChar, targetSec, recommended, reduceBy)
+				}
+			} else if lastSec < targetSec {
+				// Under-run: need to add chars.
+				gap := targetSec - lastSec
+				if secPerChar > 0 {
+					// Positive slope: adding chars helps.
+					addBy := int(math.Ceil(gap / secPerChar))
+					recommended := int(lastChars) + addBy
+					if recommended <= limit {
+						historyBlock += fmt.Sprintf(
+							"\n  Trend analysis: each char ≈ %.3fs of audio. "+
+								"To hit %.1fs target, aim for ~%d chars (add ~%d chars from last attempt).\n",
+							secPerChar, targetSec, recommended, addBy)
+					} else {
+						historyBlock += fmt.Sprintf(
+							"\n  Trend analysis: char limit (%d) may prevent reaching %.1fs target. "+
+								"Use deliberate pacing, connective phrases, or elaboration to fill time.\n",
+							limit, targetSec)
+					}
+				} else if secPerChar <= 0 {
+					// Negative or zero slope: adding chars is not helping — TTS may be truncating.
+					// Advise using fewer, slower-paced sentences instead of packing more chars.
+					historyBlock += fmt.Sprintf(
+						"\n  Trend analysis: adding more characters is NOT increasing audio length "+
+							"(slope=%.3f). The TTS model may be truncating. "+
+							"Instead, use shorter sentences with pauses, slower phrasing, or "+
+							"split into more distinct clauses to allow natural breathing room. "+
+							"Target ~%d chars but with deliberate natural pauses in phrasing.\n",
+						secPerChar, int(lastChars))
+				}
+			}
+		}
+		historyBlock += "[End of history]\n"
+	}
+
+	// Build a direction-aware instruction for the closing requirement #1.
+	// Use proportional scaling from the current attempt.
+	// Do NOT use aggressive LENGTHEN/SHORTEN language — it causes LLM to oscillate between
+	// two extreme translations rather than converging to the target character count.
+	var charTargetInstruction string
+	if actualSec > targetSec {
+		// Over-run: scale down proportionally.
+		recommended := int(math.Round(float64(currentLen) * targetSec / actualSec))
+		if recommended < 1 {
+			recommended = 1
+		}
+		if recommended > limit {
+			recommended = limit
+		}
+		charDelta := currentLen - recommended
+		charTargetInstruction = fmt.Sprintf(
+			"Remove approximately %d characters from the current translation "+
+				"(reduce from %d to ~%d chars; hard ceiling: %d chars). "+
+				"Shorten HOW things are said, NOT what is said — use more concise phrasing, "+
+				"shorter synonyms, or drop filler words. Do NOT omit any key information from the source. "+
+				"Do NOT rewrite the whole sentence.",
+			charDelta, currentLen, recommended, limit)
+	} else {
+		// Under-run: scale up proportionally, capped at the (already-adjusted) limit.
+		recommended := int(math.Round(float64(currentLen) * targetSec / actualSec))
+		if recommended > limit {
+			recommended = limit
+		}
+		charDelta := recommended - currentLen
+		charTargetInstruction = fmt.Sprintf(
+			"Add approximately %d characters to the current translation "+
+				"(expand from %d to ~%d chars; hard ceiling: %d chars). "+
+				"Elaborate on HOW things are said — use fuller phrasing, explicit connectives, "+
+				"or restore nuance implied in the source. Do NOT invent new meaning. "+
+				"Do NOT revert to any previous longer version.",
+			charDelta, currentLen, recommended, limit)
 	}
 
 	systemPrompt := fmt.Sprintf(
@@ -152,17 +289,17 @@ func (c *Client) RetranslateWithConstraint(
 			"This is attempt %d of %d.\n"+
 			"%s"+
 			"\nProvide a revised translation that:\n"+
-			"1. Does NOT exceed %d characters — strictly enforced.\n"+
-			"2. Maintains the core meaning of the original.\n"+
-			"3. Sounds natural when spoken aloud.\n"+
-			"4. Will produce audio closer to %.1fs target (reduce drift).\n\n"+
+			"1. %s\n"+
+			"2. Faithfully conveys ALL key information from the source — do NOT omit, distort, or invent meaning.\n"+
+			"3. Sounds natural when spoken aloud in %s.\n"+
+			"4. Will produce audio as close to %.1fs as possible.\n\n"+
 			"Respond with the revised translation only.",
 		targetSec, driftThresholdPct*100, driftThresholdPct*100,
 		targetLanguage, limit, rate,
 		currentLen, actualSec, pctDiff, direction, targetSec, driftThresholdPct*100,
 		attempt, maxAttempts,
 		historyBlock,
-		limit, targetSec,
+		charTargetInstruction, targetLanguage, targetSec,
 	)
 
 	requestPayload := chatCompletionRequest{
@@ -170,7 +307,11 @@ func (c *Client) RetranslateWithConstraint(
 		Temperature: c.temperature,
 		Messages: []map[string]string{
 			{"role": "system", "content": systemPrompt},
-			{"role": "user", "content": fmt.Sprintf("Source (%s): %s\nCurrent translation: %s", sourceLanguage, srcText, currentTrans)},
+			{"role": "user", "content": fmt.Sprintf(
+				"Source (%s):\n%s\n\nCurrent translation (%s) — make minimal edits to THIS text, "+
+					"do NOT re-translate from scratch, do NOT revert to any previous version, "+
+					"and ensure the result faithfully conveys ALL key information from the source:\n%s",
+				sourceLanguage, srcText, targetLanguage, currentTrans)},
 		},
 	}
 	return c.doChat(ctx, requestPayload)

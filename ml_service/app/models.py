@@ -61,6 +61,12 @@ class TTSRequest(BaseModel):
     max_allowed_sec: float = 0.0
     voice_config: dict[str, Any] = Field(default_factory=dict)
     output_relpath: str
+    # Feedback from the previous TTS attempt for adaptive token budget (scheme 2).
+    # prev_actual_sec: actual audio duration produced last time.
+    # prev_text_chars:  non-whitespace char count of the text used last time.
+    # Both zero on the first attempt.
+    prev_actual_sec: float = 0.0
+    prev_text_chars: int = 0
 
 
 class TTSResponse(BaseModel):

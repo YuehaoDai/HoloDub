@@ -19,6 +19,11 @@
 
     <div class="h-4 w-px bg-[#273246] mx-1"></div>
 
+    <!-- 快捷键 -->
+    <span class="text-[10px] text-[#37465f]">J/K 导航 · Space 播放 · E 编辑</span>
+
+    <div class="h-4 w-px bg-[#273246] mx-1"></div>
+
     <!-- 排序 -->
     <div class="flex items-center gap-1 text-xs">
       <span class="text-[#9db0c9] mr-1">排序：</span>

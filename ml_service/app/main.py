@@ -1,8 +1,12 @@
+import asyncio
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
 from app.config import get_settings
+
+logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
 from app.routes.asr import router as asr_router
 from app.routes.health import router as health_router
 from app.routes.media import router as media_router
@@ -17,7 +21,8 @@ async def lifespan(app: FastAPI):
         services.settings.ml_tts_backend == "indextts2"
         and services.settings.indextts2_inline
     ):
-        services.tts.warm_up_indextts2()
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, services.tts.warm_up_indextts2)
     yield
 
 

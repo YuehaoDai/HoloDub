@@ -22,7 +22,7 @@
     <div class="px-3 pt-2">
       <button
         class="w-full text-xs text-[#9db0c9] hover:text-white py-1 transition-colors"
-        @click="load"
+        @click="load(false)"
       >
         ↻ 刷新列表
       </button>
@@ -56,8 +56,8 @@ function statusClass(status: string) {
   }
 }
 
-async function load() {
-  loading.value = true;
+async function load(silent = false) {
+  if (!silent) loading.value = true;
   error.value = "";
   try {
     const data = await api.listJobs();
@@ -65,13 +65,13 @@ async function load() {
   } catch (e: unknown) {
     error.value = e instanceof Error ? e.message : String(e);
   } finally {
-    loading.value = false;
+    if (!silent) loading.value = false;
   }
 }
 
 onMounted(() => {
   load();
-  timer = setInterval(load, 10000);
+  timer = setInterval(() => load(true), 30000);
 });
 
 onUnmounted(() => {

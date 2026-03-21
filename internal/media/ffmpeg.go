@@ -2,6 +2,7 @@ package media
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,9 +13,13 @@ import (
 )
 
 type AudioOverlay struct {
-	RelPath    string
-	DelayMs    int64
-	DurationMs int64
+	RelPath       string
+	DelayMs       int64
+	DurationMs    int64
+	// MaxDurationMs is the hard playback ceiling for this overlay — the gap
+	// to the next segment start.  Audio beyond this point would overlap the
+	// next sentence.  Zero means unconstrained (use DurationMs as ceiling).
+	MaxDurationMs int64
 }
 
 // maxOverlaysPerPass caps the number of TTS segments in a single ffmpeg
@@ -90,7 +95,7 @@ func renderDubTrackDirect(dataRoot, ffmpegBin, outputPath string, durationMs int
 		inputIndex := baseIndex + idx
 		args = append(args, "-i", storage.ResolveDataPath(dataRoot, overlay.RelPath))
 		label := fmt.Sprintf("seg%d", idx)
-		filterParts = append(filterParts, fmt.Sprintf("[%d:a]%sadelay=%d|%d,alimiter=limit=0.95[%s]", inputIndex, overlayFadeFilter(overlay.DurationMs), overlay.DelayMs, overlay.DelayMs, label))
+		filterParts = append(filterParts, fmt.Sprintf("[%d:a]%sadelay=%d|%d,alimiter=limit=0.95[%s]", inputIndex, clipAndFadeFilter(overlay.DurationMs, overlay.MaxDurationMs), overlay.DelayMs, overlay.DelayMs, label))
 		voiceLabels = append(voiceLabels, fmt.Sprintf("[%s]", label))
 	}
 
@@ -111,7 +116,7 @@ func renderDubTrackDirect(dataRoot, ffmpegBin, outputPath string, durationMs int
 		"-ac", "1",
 		outputPath,
 	)
-	return exec.Command(ffmpegBin, args...).Run()
+	return runCmd(ffmpegBin, args...)
 }
 
 // buildVoiceChunk renders a small batch of overlays into a full-duration
@@ -130,7 +135,7 @@ func buildVoiceChunk(dataRoot, ffmpegBin, chunkPath string, durationMs int64, ov
 		inputIndex := 1 + idx
 		args = append(args, "-i", storage.ResolveDataPath(dataRoot, overlay.RelPath))
 		label := fmt.Sprintf("s%d", idx)
-		filterParts = append(filterParts, fmt.Sprintf("[%d:a]%sadelay=%d|%d,alimiter=limit=0.95[%s]", inputIndex, overlayFadeFilter(overlay.DurationMs), overlay.DelayMs, overlay.DelayMs, label))
+		filterParts = append(filterParts, fmt.Sprintf("[%d:a]%sadelay=%d|%d,alimiter=limit=0.95[%s]", inputIndex, clipAndFadeFilter(overlay.DurationMs, overlay.MaxDurationMs), overlay.DelayMs, overlay.DelayMs, label))
 		voiceLabels = append(voiceLabels, fmt.Sprintf("[%s]", label))
 	}
 
@@ -145,7 +150,7 @@ func buildVoiceChunk(dataRoot, ffmpegBin, chunkPath string, durationMs int64, ov
 		"-ac", "1",
 		chunkPath,
 	)
-	return exec.Command(ffmpegBin, args...).Run()
+	return runCmd(ffmpegBin, args...)
 }
 
 // mergeVoiceChunks mixes all per-chunk voice tracks into a single voice track.
@@ -164,7 +169,7 @@ func mergeVoiceChunks(ffmpegBin, voicePath string, durationMs int64, chunkPaths 
 	filter := fmt.Sprintf("%samix=inputs=%d:duration=first:dropout_transition=0:normalize=0,alimiter=limit=0.95[mix]",
 		strings.Join(labels, ""), len(chunkPaths))
 	args = append(args, "-filter_complex", filter, "-map", "[mix]", "-ar", "24000", "-ac", "1", voicePath)
-	return exec.Command(ffmpegBin, args...).Run()
+	return runCmd(ffmpegBin, args...)
 }
 
 // applyBGM mixes a pre-built voice WAV with optional BGM using sidechain
@@ -188,7 +193,7 @@ func applyBGM(dataRoot, ffmpegBin, voicePath, bgmRelPath, outputPath string, dur
 		"-ac", "1",
 		outputPath,
 	}
-	return exec.Command(ffmpegBin, args...).Run()
+	return runCmd(ffmpegBin, args...)
 }
 
 // buildVoiceMix appends the amix/volume filter to filterParts and returns
@@ -204,12 +209,31 @@ func buildVoiceMix(filterParts []string, voiceLabels []string) (string, []string
 	return voiceOut, filterParts
 }
 
+// runCmd runs an external command and wraps any error with its combined stdout+stderr output.
+func runCmd(name string, args ...string) error {
+	out, err := exec.Command(name, args...).CombinedOutput()
+	if err != nil {
+		if len(out) > 0 {
+			return fmt.Errorf("%w\n%s", err, string(out))
+		}
+		return err
+	}
+	return nil
+}
+
 func copyFile(src, dst string) error {
-	data, err := os.ReadFile(src)
+	srcF, err := os.Open(src)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(dst, data, 0o644)
+	defer srcF.Close()
+	dstF, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer dstF.Close()
+	_, err = io.Copy(dstF, srcF)
+	return err
 }
 
 func cleanupFiles(paths []string) {
@@ -235,7 +259,7 @@ func MuxVideo(dataRoot, ffmpegBin, inputRelPath, audioRelPath, outputRelPath str
 		"-shortest",
 		outputPath,
 	}
-	return exec.Command(ffmpegBin, args...).Run()
+	return runCmd(ffmpegBin, args...)
 }
 
 func ProbeDurationMs(dataRoot, ffprobeBin, relPath string) (int64, error) {
@@ -269,6 +293,31 @@ func formatSeconds(durationMs int64) string {
 	return strconv.FormatFloat(float64(durationMs)/1000.0, 'f', 3, 64)
 }
 
+// TrimAudioSegment extracts a time range from an audio file.
+// startMs and endMs are in milliseconds; output is written to outPath.
+func TrimAudioSegment(ffmpegBin, inputPath, outPath string, startMs, endMs int64) error {
+	if err := storage.EnsureParentDir(outPath); err != nil {
+		return err
+	}
+	durationMs := endMs - startMs
+	if durationMs <= 0 {
+		return fmt.Errorf("invalid segment: start %d >= end %d", startMs, endMs)
+	}
+	startSec := float64(startMs) / 1000.0
+	durSec := float64(durationMs) / 1000.0
+	args := []string{
+		"-y",
+		"-ss", strconv.FormatFloat(startSec, 'f', 3, 64),
+		"-i", inputPath,
+		"-t", strconv.FormatFloat(durSec, 'f', 3, 64),
+		"-acodec", "pcm_s16le",
+		"-ar", "24000",
+		"-ac", "1",
+		outPath,
+	}
+	return runCmd(ffmpegBin, args...)
+}
+
 func overlayFadeFilter(durationMs int64) string {
 	if durationMs <= 80 {
 		return "aresample=24000,"
@@ -276,4 +325,24 @@ func overlayFadeFilter(durationMs int64) string {
 	fadeDurationSec := 0.03
 	fadeOutStartSec := (float64(durationMs) / 1000.0) - fadeDurationSec
 	return fmt.Sprintf("aresample=24000,afade=t=in:st=0:d=%.2f,afade=t=out:st=%.2f:d=%.2f,", fadeDurationSec, fadeOutStartSec, fadeDurationSec)
+}
+
+// clipAndFadeFilter returns a filter string that hard-clips the audio to
+// maxDurationMs and applies a short fade-in/out.  This prevents a TTS segment
+// that ran longer than its time slot from spilling audio into the next segment.
+func clipAndFadeFilter(actualDurationMs, maxDurationMs int64) string {
+	clip := actualDurationMs
+	if maxDurationMs > 0 && maxDurationMs < clip {
+		clip = maxDurationMs
+	}
+	if clip <= 80 {
+		return fmt.Sprintf("aresample=24000,atrim=duration=%.3f,", float64(clip)/1000.0)
+	}
+	fadeDurationSec := 0.03
+	fadeOutStartSec := float64(clip)/1000.0 - fadeDurationSec
+	if fadeOutStartSec < 0 {
+		fadeOutStartSec = 0
+	}
+	return fmt.Sprintf("aresample=24000,atrim=duration=%.3f,afade=t=in:st=0:d=%.2f,afade=t=out:st=%.2f:d=%.2f,",
+		float64(clip)/1000.0, fadeDurationSec, fadeOutStartSec, fadeDurationSec)
 }

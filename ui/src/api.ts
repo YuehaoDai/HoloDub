@@ -39,6 +39,7 @@ export interface Job {
   input_relpath: string;
   source_language: string;
   target_language: string;
+  error_message?: string;
   created_at: string;
   updated_at: string;
 }
@@ -56,6 +57,7 @@ export interface Segment {
   tts_duration_ms: number;
   status: string;
   speaker_label: string;
+  meta?: Record<string, unknown>;
 }
 
 export interface StageRun {
@@ -73,6 +75,22 @@ export interface Artifact {
   relpath: string;
   size_bytes: number;
   modified_at: string;
+}
+
+export interface VoiceProfile {
+  id: number;
+  name: string;
+  mode: string;
+  provider: string;
+  language: string;
+}
+
+export interface Binding {
+  id: number;
+  speaker_id: number;
+  voice_profile_id: number;
+  speaker?: { id: number; label: string };
+  voice_profile?: VoiceProfile;
 }
 
 export const api = {
@@ -114,11 +132,38 @@ export const api = {
   rerunSegment: (jobId: number, segmentId: number) =>
     apiFetch(`/jobs/${jobId}/segments/${segmentId}/rerun`, { method: "POST" }),
 
+  patchSegmentQuality: (jobId: number, segmentId: number, quality: "good" | "bad" | "skip") =>
+    apiFetch(`/jobs/${jobId}/segments/${segmentId}/quality`, {
+      method: "PATCH",
+      body: JSON.stringify({ quality }),
+    }),
+
   segmentAudioUrl: (jobId: number, ordinal: number): string => {
     const key = getApiKey();
     const base = `/jobs/${jobId}/tts/${ordinal}`;
     return key ? `${base}?api_key=${encodeURIComponent(key)}` : base;
   },
+
+  originalAudioUrl: (jobId: number, ordinal: number): string => {
+    const key = getApiKey();
+    const base = `/jobs/${jobId}/audio/${ordinal}`;
+    return key ? `${base}?api_key=${encodeURIComponent(key)}` : base;
+  },
+
+  listBindings: (jobId: number) =>
+    apiFetch<{ bindings: Binding[] }>(`/jobs/${jobId}/bindings`),
+
+  listVoiceProfiles: () =>
+    apiFetch<{ voice_profiles: VoiceProfile[] }>("/voice-profiles"),
+
+  upsertBindings: (jobId: number, bindings: { speaker_label: string; voice_profile_id: number }[], rerunAffected?: boolean) =>
+    apiFetch(`/jobs/${jobId}/bindings`, {
+      method: "PUT",
+      body: JSON.stringify({
+        bindings: bindings.map((b) => ({ speaker_label: b.speaker_label, voice_profile_id: b.voice_profile_id })),
+        rerun_affected: !!rerunAffected,
+      }),
+    }),
 
   mlHealth: () =>
     apiFetch<{ tts_warmup_status?: string; adapters?: Record<string, string> }>("/ml-health"),
