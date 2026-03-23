@@ -55,6 +55,16 @@ type Config struct {
 	RetranslationMaxAttempts    int
 	RetranslationMaxBorrowDriftPct float64 // max over-run drift allowed to borrow from gap without re-translating, e.g. 0.12 = 12%
 	RetranslationModel          string // e.g. "kimi-k2.5"; reuses OPENAI_BASE_URL/API_KEY
+	RetranslationTemperature    float64 // temperature for retranslation calls; 0 falls back to OpenAITemperature
+	// Thinking-mode fallback: activated when the LLM returns identical text for
+	// RetranslationStuckThreshold consecutive attempts.
+	RetranslationThinkingModel          string        // e.g. "kimi-k2-thinking"; MUST support stream=true
+	RetranslationThinkingTimeoutSeconds int           // timeout in seconds for thinking-mode calls (default 600)
+	RetranslationStuckThreshold         int           // consecutive same-char attempts before switching (default 2)
+
+	// ASR segmentation limits passed to the ML service smart_split call.
+	HardMaxSegmentSec float64 // absolute ceiling for any segment after post-merge; e.g. 45.0 s
+	CloseGapMs        int     // inter-segment gap threshold for close-gap merge pass; e.g. 800 ms
 
 	FFmpegBin  string
 	FFprobeBin string
@@ -177,6 +187,33 @@ func Load() (Config, error) {
 	}
 
 	cfg.RetranslationModel = getEnv("RETRANSLATION_MODEL", "kimi-k2.5")
+
+	cfg.RetranslationTemperature, err = getEnvFloat("RETRANSLATION_TEMPERATURE", 0)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse RETRANSLATION_TEMPERATURE: %w", err)
+	}
+
+	cfg.RetranslationThinkingModel = getEnv("RETRANSLATION_THINKING_MODEL", "kimi-k2-thinking")
+
+	cfg.RetranslationThinkingTimeoutSeconds, err = getEnvInt("RETRANSLATION_THINKING_TIMEOUT_SECONDS", 600)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse RETRANSLATION_THINKING_TIMEOUT_SECONDS: %w", err)
+	}
+
+	cfg.RetranslationStuckThreshold, err = getEnvInt("RETRANSLATION_STUCK_THRESHOLD", 2)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse RETRANSLATION_STUCK_THRESHOLD: %w", err)
+	}
+
+	cfg.HardMaxSegmentSec, err = getEnvFloat("HARD_MAX_SEGMENT_SEC", 45.0)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse HARD_MAX_SEGMENT_SEC: %w", err)
+	}
+
+	cfg.CloseGapMs, err = getEnvInt("CLOSE_GAP_MS", 800)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse CLOSE_GAP_MS: %w", err)
+	}
 
 	cfg.TTSConcurrency, err = getEnvInt("TTS_CONCURRENCY", 2)
 	if err != nil {

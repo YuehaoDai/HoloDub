@@ -268,10 +268,12 @@ func (s *Service) runASRSmart(ctx context.Context, task models.TaskPayload) erro
 	)
 
 	response, err := s.ml.SmartSplit(ctx, ml.SmartSplitRequest{
-		AudioRelPath:   audioRelPath,
-		SourceLanguage: job.SourceLanguage,
-		MinSegmentSec:  jobConfigFloat(job.Config, "min_segment_sec", 4.0),
-		MaxSegmentSec:  jobConfigFloat(job.Config, "max_segment_sec", 20.0),
+		AudioRelPath:      audioRelPath,
+		SourceLanguage:    job.SourceLanguage,
+		MinSegmentSec:     jobConfigFloat(job.Config, "min_segment_sec", 4.0),
+		MaxSegmentSec:     jobConfigFloat(job.Config, "max_segment_sec", 20.0),
+		HardMaxSegmentSec: jobConfigFloat(job.Config, "hard_max_segment_sec", s.cfg.HardMaxSegmentSec),
+		CloseGapMs:        jobConfigInt(job.Config, "close_gap_ms", s.cfg.CloseGapMs),
 	})
 	if err != nil {
 		slog.Error("asr_smart ml.SmartSplit failed", "job_id", task.JobID, "error", err)
@@ -445,6 +447,11 @@ func (s *Service) processOneTTSSegment(ctx context.Context, job *models.Job, seg
 	var retryHistory []llm.RetranslationAttempt
 	var prevActualSec float64
 	var prevTextChars int
+	consecutiveSameChars := 0
+	stuckThreshold := s.cfg.RetranslationStuckThreshold
+	if stuckThreshold <= 0 {
+		stuckThreshold = 2
+	}
 	for attempt := 0; attempt <= maxAttempts; attempt++ {
 		response, err = s.ml.RunTTS(ctx, ml.TTSRequest{
 			Text:              text,
@@ -547,6 +554,7 @@ func (s *Service) processOneTTSSegment(ctx context.Context, job *models.Job, seg
 			attempt+1, maxAttempts,
 			driftThreshold,
 			retryHistory,
+			consecutiveSameChars >= stuckThreshold,
 		)
 		if retErr != nil {
 			slog.Warn("re-translation failed, accepting current result",
@@ -564,8 +572,14 @@ func (s *Service) processOneTTSSegment(ctx context.Context, job *models.Job, seg
 			"prev_chars", len([]rune(text)),
 			"new_chars", len([]rune(newText)),
 			"prev_actual_sec", actualSec,
+			"use_thinking", consecutiveSameChars >= stuckThreshold,
 		)
 		retryHistory = append(retryHistory, llm.RetranslationAttempt{Text: text, ActualSec: actualSec})
+		if len([]rune(newText)) == len([]rune(text)) {
+			consecutiveSameChars++
+		} else {
+			consecutiveSameChars = 0
+		}
 		// Only feed adaptive token-budget feedback when the previous attempt
 		// was an over-run.  For under-runs the observed tokens/char is
 		// artificially low (TTS stopped early or text was already sparse), and

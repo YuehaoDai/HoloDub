@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -9,28 +10,45 @@ import (
 	"math"
 	"net/http"
 	"strings"
+	"time"
 
 	"holodub/internal/config"
 )
 
 type Client struct {
-	provider           string
-	baseURL            string
-	apiKey             string
-	model              string
-	temperature        float64
-	retranslationModel string
-	httpClient         *http.Client
+	provider                 string
+	baseURL                  string
+	apiKey                   string
+	model                    string
+	temperature              float64
+	retranslationModel       string
+	retranslationTemperature float64
+	thinkingModel            string
+	thinkingHTTPClient       *http.Client
+	httpClient               *http.Client
 }
 
 func New(cfg config.Config) *Client {
+	retranslationTemp := cfg.RetranslationTemperature
+	if retranslationTemp == 0 {
+		retranslationTemp = cfg.OpenAITemperature
+	}
+	thinkingTimeout := time.Duration(cfg.RetranslationThinkingTimeoutSeconds) * time.Second
+	if thinkingTimeout <= 0 {
+		thinkingTimeout = 600 * time.Second
+	}
 	return &Client{
-		provider:           strings.ToLower(cfg.TranslationProvider),
-		baseURL:            strings.TrimRight(cfg.OpenAIBaseURL, "/"),
-		apiKey:             cfg.OpenAIAPIKey,
-		model:              cfg.OpenAIModel,
-		temperature:        cfg.OpenAITemperature,
-		retranslationModel: cfg.RetranslationModel,
+		provider:                 strings.ToLower(cfg.TranslationProvider),
+		baseURL:                  strings.TrimRight(cfg.OpenAIBaseURL, "/"),
+		apiKey:                   cfg.OpenAIAPIKey,
+		model:                    cfg.OpenAIModel,
+		temperature:              cfg.OpenAITemperature,
+		retranslationModel:       cfg.RetranslationModel,
+		retranslationTemperature: retranslationTemp,
+		thinkingModel:            cfg.RetranslationThinkingModel,
+		thinkingHTTPClient: &http.Client{
+			Timeout: thinkingTimeout,
+		},
 		httpClient: &http.Client{
 			Timeout: cfg.OpenAITimeout,
 		},
@@ -99,6 +117,8 @@ type RetranslationAttempt struct {
 // RetranslateWithConstraint re-translates using the configured retranslation model
 // with drift-rate feedback. history contains all previous attempts (text, actualSec).
 // driftThresholdPct is the max allowed drift (e.g. 0.06 = 6%).
+// useThinking switches to the thinking model with SSE streaming when the normal
+// model has stalled (same output for multiple consecutive attempts).
 func (c *Client) RetranslateWithConstraint(
 	ctx context.Context,
 	sourceLanguage, targetLanguage, srcText, currentTrans string,
@@ -106,6 +126,7 @@ func (c *Client) RetranslateWithConstraint(
 	attempt, maxAttempts int,
 	driftThresholdPct float64,
 	history []RetranslationAttempt,
+	useThinking bool,
 ) (string, error) {
 	if c.baseURL == "" || c.apiKey == "" {
 		return "", errors.New("OPENAI_BASE_URL and OPENAI_API_KEY are required for retranslation")
@@ -113,6 +134,9 @@ func (c *Client) RetranslateWithConstraint(
 	model := c.retranslationModel
 	if model == "" {
 		model = c.model
+	}
+	if useThinking && c.thinkingModel != "" {
+		model = c.thinkingModel
 	}
 	limit := maxChars(targetLanguage, targetSec)
 	rate := charsPerSec(targetLanguage)
@@ -304,7 +328,7 @@ func (c *Client) RetranslateWithConstraint(
 
 	requestPayload := chatCompletionRequest{
 		Model:       model,
-		Temperature: c.temperature,
+		Temperature: c.retranslationTemperature,
 		Messages: []map[string]string{
 			{"role": "system", "content": systemPrompt},
 			{"role": "user", "content": fmt.Sprintf(
@@ -313,6 +337,9 @@ func (c *Client) RetranslateWithConstraint(
 					"and ensure the result faithfully conveys ALL key information from the source:\n%s",
 				sourceLanguage, srcText, targetLanguage, currentTrans)},
 		},
+	}
+	if useThinking {
+		return c.doChatStream(ctx, requestPayload)
 	}
 	return c.doChat(ctx, requestPayload)
 }
@@ -325,10 +352,11 @@ func mockTranslate(targetLanguage, text string) string {
 }
 
 type chatCompletionRequest struct {
-	Model       string                   `json:"model"`
-	Temperature float64                  `json:"temperature"`
-	Messages    []map[string]string      `json:"messages"`
-	ResponseFormat map[string]string     `json:"response_format,omitempty"`
+	Model          string              `json:"model"`
+	Temperature    float64             `json:"temperature"`
+	Messages       []map[string]string `json:"messages"`
+	ResponseFormat map[string]string   `json:"response_format,omitempty"`
+	Stream         bool                `json:"stream,omitempty"`
 }
 
 type chatCompletionResponse struct {
@@ -432,4 +460,74 @@ func (c *Client) doChat(ctx context.Context, payload chatCompletionRequest) (str
 		return "", errors.New("translation provider returned no choices")
 	}
 	return strings.TrimSpace(result.Choices[0].Message.Content), nil
+}
+
+// doChatStream sends a chat completion request with stream=true and assembles the
+// full response by consuming the Server-Sent Events stream.  It collects only
+// the "content" delta chunks and silently discards "reasoning_content" chunks
+// (Kimi thinking tokens).  This is required for DashScope thinking models
+// (e.g. kimi-k2-thinking) which reject non-streaming calls with enable_thinking.
+func (c *Client) doChatStream(ctx context.Context, payload chatCompletionRequest) (string, error) {
+	payload.Stream = true
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("marshal stream request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/chat/completions", bytes.NewReader(body))
+	if err != nil {
+		return "", fmt.Errorf("build stream request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
+
+	resp, err := c.thinkingHTTPClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("call thinking provider: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= http.StatusBadRequest {
+		return "", fmt.Errorf("thinking provider returned status %d", resp.StatusCode)
+	}
+
+	// Parse SSE: each line is either "data: {json}" or "data: [DONE]".
+	// Each JSON chunk has choices[0].delta which may contain "content" or
+	// "reasoning_content".  We collect only "content".
+	var sb strings.Builder
+	scanner := bufio.NewScanner(resp.Body)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		data := strings.TrimPrefix(line, "data: ")
+		if data == "[DONE]" {
+			break
+		}
+		var chunk struct {
+			Choices []struct {
+				Delta struct {
+					Content          string `json:"content"`
+					ReasoningContent string `json:"reasoning_content"`
+				} `json:"delta"`
+			} `json:"choices"`
+		}
+		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+			continue
+		}
+		if len(chunk.Choices) > 0 {
+			sb.WriteString(chunk.Choices[0].Delta.Content)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return "", fmt.Errorf("read stream: %w", err)
+	}
+	result := strings.TrimSpace(sb.String())
+	if result == "" {
+		return "", errors.New("thinking provider returned empty content")
+	}
+	return result, nil
 }

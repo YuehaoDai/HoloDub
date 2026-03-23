@@ -33,6 +33,8 @@ async def smart_split(request: Request, payload: SmartSplitRequest) -> SmartSpli
             source_language=payload.source_language,
             min_segment_sec=payload.min_segment_sec,
             max_segment_sec=payload.max_segment_sec,
+            hard_max_segment_sec=payload.hard_max_segment_sec,
+            close_gap_ms=payload.close_gap_ms,
             speech_spans=speech_spans,
         )
         return SmartSplitResponse(segments=segments, diagnostics=vad_diagnostics + asr_diagnostics)

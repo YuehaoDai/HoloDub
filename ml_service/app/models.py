@@ -47,6 +47,10 @@ class SmartSplitRequest(BaseModel):
     source_language: str = ""
     min_segment_sec: float = 2.0
     max_segment_sec: float = 15.0
+    # Hard ceiling enforced in post-merge passes; no merged segment may exceed this.
+    hard_max_segment_sec: float = 45.0
+    # Gaps smaller than this (ms) trigger a segment merge in the close-gap post-pass.
+    close_gap_ms: int = 800
 
 
 class SmartSplitResponse(BaseModel):

@@ -37,10 +37,12 @@ type SeparateResponse struct {
 }
 
 type SmartSplitRequest struct {
-	AudioRelPath   string  `json:"audio_relpath"`
-	SourceLanguage string  `json:"source_language,omitempty"`
-	MinSegmentSec  float64 `json:"min_segment_sec"`
-	MaxSegmentSec  float64 `json:"max_segment_sec"`
+	AudioRelPath       string  `json:"audio_relpath"`
+	SourceLanguage     string  `json:"source_language,omitempty"`
+	MinSegmentSec      float64 `json:"min_segment_sec"`
+	MaxSegmentSec      float64 `json:"max_segment_sec"`
+	HardMaxSegmentSec  float64 `json:"hard_max_segment_sec"`
+	CloseGapMs         int     `json:"close_gap_ms"`
 }
 
 type SmartSegment struct {
