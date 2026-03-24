@@ -105,7 +105,7 @@ export const api = {
     auto_start?: boolean;
   }) => apiFetch<Job>("/jobs", { method: "POST", body: JSON.stringify(data) }),
 
-  getJob: (id: number) => apiFetch<Job>(`/jobs/${id}`),
+  getJob: (id: number, signal?: AbortSignal) => apiFetch<Job>(`/jobs/${id}`, { signal }),
 
   startJob: (id: number) => apiFetch(`/jobs/${id}/start`, { method: "POST" }),
 
@@ -117,11 +117,11 @@ export const api = {
       body: JSON.stringify({ stage, segment_ids: segmentIds }),
     }),
 
-  listSegments: (id: number) => apiFetch<{ segments: Segment[] }>(`/jobs/${id}/segments`),
+  listSegments: (id: number, signal?: AbortSignal) => apiFetch<{ segments: Segment[] }>(`/jobs/${id}/segments`, { signal }),
 
-  listStageRuns: (id: number) => apiFetch<{ stage_runs: StageRun[] }>(`/jobs/${id}/stage-runs`),
+  listStageRuns: (id: number, signal?: AbortSignal) => apiFetch<{ stage_runs: StageRun[] }>(`/jobs/${id}/stage-runs`, { signal }),
 
-  listArtifacts: (id: number) => apiFetch<{ artifacts: Artifact[] }>(`/jobs/${id}/artifacts`),
+  listArtifacts: (id: number, signal?: AbortSignal) => apiFetch<{ artifacts: Artifact[] }>(`/jobs/${id}/artifacts`, { signal }),
 
   patchSegment: (jobId: number, segmentId: number, targetText: string, rerun: boolean) =>
     apiFetch(`/jobs/${jobId}/segments/${segmentId}`, {
@@ -150,11 +150,11 @@ export const api = {
     return key ? `${base}?api_key=${encodeURIComponent(key)}` : base;
   },
 
-  listBindings: (jobId: number) =>
-    apiFetch<{ bindings: Binding[] }>(`/jobs/${jobId}/bindings`),
+  listBindings: (jobId: number, signal?: AbortSignal) =>
+    apiFetch<{ bindings: Binding[] }>(`/jobs/${jobId}/bindings`, { signal }),
 
-  listVoiceProfiles: () =>
-    apiFetch<{ voice_profiles: VoiceProfile[] }>("/voice-profiles"),
+  listVoiceProfiles: (signal?: AbortSignal) =>
+    apiFetch<{ voice_profiles: VoiceProfile[] }>("/voice-profiles", { signal }),
 
   upsertBindings: (jobId: number, bindings: { speaker_label: string; voice_profile_id: number }[], rerunAffected?: boolean) =>
     apiFetch(`/jobs/${jobId}/bindings`, {

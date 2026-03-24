@@ -161,7 +161,8 @@ const loading = ref(false);
 const error = ref("");
 const actionLoading = ref(false);
 const activeTab = ref("segments");
-const isRefreshing = ref(false);
+
+let currentRefreshAbort: AbortController | null = null;
 
 const tabs = [
   { key: "segments", label: "段落" },
@@ -197,18 +198,19 @@ const filteredSegments = computed(() => {
 // Full refresh: fetches all data including static resources.
 // Used on mount and after structural changes (retry, cancel, etc.).
 async function refresh(silent = false) {
-  if (isRefreshing.value) return;
-  isRefreshing.value = true;
+  currentRefreshAbort?.abort();
+  const ctrl = new AbortController();
+  currentRefreshAbort = ctrl;
   if (!silent) loading.value = true;
   error.value = "";
   try {
     const [j, segs, runs, arts, bnd, vp] = await Promise.all([
-      api.getJob(jobId.value),
-      api.listSegments(jobId.value),
-      api.listStageRuns(jobId.value),
-      api.listArtifacts(jobId.value),
-      api.listBindings(jobId.value),
-      api.listVoiceProfiles(),
+      api.getJob(jobId.value, ctrl.signal),
+      api.listSegments(jobId.value, ctrl.signal),
+      api.listStageRuns(jobId.value, ctrl.signal),
+      api.listArtifacts(jobId.value, ctrl.signal),
+      api.listBindings(jobId.value, ctrl.signal),
+      api.listVoiceProfiles(ctrl.signal),
     ]);
     job.value = j;
     segments.value = segs.segments || [];
@@ -217,33 +219,32 @@ async function refresh(silent = false) {
     bindings.value = bnd.bindings || [];
     voiceProfiles.value = vp.voice_profiles || [];
   } catch (e: unknown) {
+    if (e instanceof DOMException && e.name === "AbortError") return;
     error.value = e instanceof Error ? e.message : String(e);
   } finally {
     if (!silent) loading.value = false;
-    isRefreshing.value = false;
   }
 }
 
 // Light refresh: only job status + segments + stage runs.
 // Used for polling and after segment-level operations (quality, rerun).
 // Skips artifacts/bindings/voiceProfiles which are expensive or rarely change.
-let isLightRefreshing = false;
 async function lightRefresh() {
-  if (isLightRefreshing || isRefreshing.value) return;
-  isLightRefreshing = true;
+  currentRefreshAbort?.abort();
+  const ctrl = new AbortController();
+  currentRefreshAbort = ctrl;
   try {
     const [j, segs, runs] = await Promise.all([
-      api.getJob(jobId.value),
-      api.listSegments(jobId.value),
-      api.listStageRuns(jobId.value),
+      api.getJob(jobId.value, ctrl.signal),
+      api.listSegments(jobId.value, ctrl.signal),
+      api.listStageRuns(jobId.value, ctrl.signal),
     ]);
     job.value = j;
     segments.value = segs.segments || [];
     stageRuns.value = runs.stage_runs || [];
-  } catch {
+  } catch (e: unknown) {
+    if (e instanceof DOMException && e.name === "AbortError") return;
     // Polling failures are silent — don't clobber existing error state.
-  } finally {
-    isLightRefreshing = false;
   }
 }
 
@@ -326,7 +327,7 @@ function onBindingUpdated(speakerLabel: string, voiceProfileId: number) {
   setTimeout(() => lightRefresh(), 1500);
 }
 
-watch(jobId, () => { refresh(); }, { immediate: false });
+watch(jobId, () => { currentRefreshAbort?.abort(); refresh(); }, { immediate: false });
 
 // Poll only job status + segments during active runs.
 // Use lightRefresh to avoid hammering all 6 endpoints every 5s.
@@ -344,6 +345,7 @@ watch(
 );
 onUnmounted(() => {
   if (pollTimer) clearInterval(pollTimer);
+  currentRefreshAbort?.abort();
 });
 
 // When filter is "unsynthesized" but all segments are now synthesized, reset filter.
