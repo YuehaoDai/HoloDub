@@ -18,6 +18,12 @@ class Settings(BaseSettings):
     ml_tts_backend: str = "silence"
 
     faster_whisper_model: str = "small"
+    # vad_filter uses Silero-VAD to skip silence, significantly reducing peak VRAM
+    # usage on long audio files. Strongly recommended for videos > 30 minutes.
+    faster_whisper_vad_filter: bool = True
+    # beam_size=1 (greedy) uses ~5x less VRAM than the default beam_size=5.
+    # Accuracy drops slightly but is usually acceptable for dubbing ASR.
+    faster_whisper_beam_size: int = 1
     pyannote_auth_token: str = ""
     pyannote_pipeline: str = "pyannote/speaker-diarization-3.1"
 

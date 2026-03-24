@@ -101,6 +101,8 @@ class ASRAdapter:
             str(audio_path),
             word_timestamps=True,
             language=source_language or None,
+            vad_filter=self.settings.faster_whisper_vad_filter,
+            beam_size=self.settings.faster_whisper_beam_size,
         )
         words: list[WordToken] = []
         for segment in segments:
