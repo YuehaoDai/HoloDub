@@ -130,6 +130,8 @@ func NewRouter(cfg config.Config, st *store.Store, pipelineSvc *pipeline.Service
 	router.GET("/voice-profiles/:id", server.getVoiceProfile)
 	router.POST("/voice-profiles/:id/validate", server.validateVoiceProfile)
 	router.PUT("/jobs/:id/bindings", server.upsertBindings)
+	router.POST("/jobs/:id/segments/:segmentId/preview-voice", server.previewSegmentVoice)
+	router.GET("/jobs/:id/preview-voice/:segmentId", server.servePreviewAudio)
 
 	return router
 }
@@ -640,8 +642,9 @@ func (s *Server) serveOriginalAudio(c *gin.Context) {
 }
 
 type patchSegmentRequest struct {
-	TargetText string `json:"target_text" binding:"required"`
-	Rerun      bool   `json:"rerun"`
+	TargetText     string `json:"target_text"`
+	Rerun          bool   `json:"rerun"`
+	VoiceProfileID *uint  `json:"voice_profile_id"`
 }
 
 func (s *Server) patchSegment(c *gin.Context) {
@@ -657,6 +660,28 @@ func (s *Server) patchSegment(c *gin.Context) {
 	var request patchSegmentRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
 		respondError(c, stdhttp.StatusBadRequest, "invalid_patch_request", err.Error())
+		return
+	}
+
+	// Handle per-segment voice override update
+	if request.VoiceProfileID != nil {
+		if err := s.store.UpdateSegmentVoice(c.Request.Context(), segmentID, *request.VoiceProfileID); err != nil {
+			respondError(c, stdhttp.StatusInternalServerError, "patch_segment_voice_failed", err.Error())
+			return
+		}
+		// If only changing voice (no text change), and rerun is requested, retrigger TTS
+		if request.TargetText == "" && request.Rerun {
+			if err := s.pipeline.RetryJob(c.Request.Context(), job.ID, models.StageTTSDuration, []uint{segmentID}, "segment_voice_patch"); err != nil {
+				respondError(c, stdhttp.StatusInternalServerError, "rerun_segment_failed", err.Error())
+				return
+			}
+			c.JSON(stdhttp.StatusOK, gin.H{"updated": true, "segment_id": segmentID, "rerun": true})
+			return
+		}
+	}
+
+	if request.TargetText == "" {
+		c.JSON(stdhttp.StatusOK, gin.H{"updated": true, "segment_id": segmentID, "rerun": false})
 		return
 	}
 
@@ -708,6 +733,87 @@ func (s *Server) patchSegmentQuality(c *gin.Context) {
 		return
 	}
 	c.JSON(stdhttp.StatusOK, gin.H{"updated": true, "segment_id": segmentID, "quality": request.Quality})
+}
+
+type previewVoiceRequest struct {
+	VoiceProfileID uint `json:"voice_profile_id" binding:"required"`
+}
+
+func (s *Server) previewSegmentVoice(c *gin.Context) {
+	job, ok := s.getJobForTenant(c)
+	if !ok {
+		return
+	}
+	segmentID, ok := parseUintParam(c, "segmentId")
+	if !ok {
+		return
+	}
+	var request previewVoiceRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		respondError(c, stdhttp.StatusBadRequest, "invalid_preview_request", err.Error())
+		return
+	}
+	profile, err := s.store.GetVoiceProfile(c.Request.Context(), request.VoiceProfileID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		respondError(c, stdhttp.StatusNotFound, "voice_profile_not_found", "voice profile not found")
+		return
+	}
+	if err != nil {
+		respondError(c, stdhttp.StatusInternalServerError, "get_voice_profile_failed", err.Error())
+		return
+	}
+	seg, err := s.store.GetSegment(c.Request.Context(), segmentID)
+	if err != nil {
+		respondError(c, stdhttp.StatusNotFound, "segment_not_found", "segment not found")
+		return
+	}
+
+	audioRelPath, actualMs, err := s.pipeline.PreviewVoice(c.Request.Context(), job.ID, *seg, *profile)
+	if err != nil {
+		respondError(c, stdhttp.StatusInternalServerError, "preview_voice_failed", err.Error())
+		return
+	}
+
+	key := ""
+	if v, exists := c.Get("api_key"); exists {
+		if s, ok := v.(string); ok {
+			key = s
+		}
+	}
+	previewURL := fmt.Sprintf("/jobs/%d/preview-voice/%d?vp=%d", job.ID, seg.ID, request.VoiceProfileID)
+	if key != "" {
+		previewURL += "&api_key=" + key
+	}
+	c.JSON(stdhttp.StatusOK, gin.H{
+		"audio_relpath":      audioRelPath,
+		"actual_duration_ms": actualMs,
+		"preview_url":        previewURL,
+	})
+}
+
+func (s *Server) servePreviewAudio(c *gin.Context) {
+	_, ok := s.getJobForTenant(c)
+	if !ok {
+		return
+	}
+	segmentID, ok := parseUintParam(c, "segmentId")
+	if !ok {
+		return
+	}
+	vpID := c.Query("vp")
+	if vpID == "" {
+		respondError(c, stdhttp.StatusBadRequest, "missing_vp", "vp query param required")
+		return
+	}
+	jobID, _ := parseUintParam(c, "id")
+	audioPath := filepath.Join(s.cfg.DataRoot, "preview", fmt.Sprintf("job_%d_seg_%d_vp_%s.wav", jobID, segmentID, vpID))
+	if _, err := os.Stat(audioPath); err != nil {
+		respondError(c, stdhttp.StatusNotFound, "preview_not_found", "preview audio not found; run preview-voice first")
+		return
+	}
+	c.Header("Content-Type", "audio/wav")
+	c.Header("Cache-Control", "no-store, no-cache, must-revalidate")
+	c.File(audioPath)
 }
 
 func parseUintParam(c *gin.Context, name string) (uint, bool) {

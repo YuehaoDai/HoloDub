@@ -57,6 +57,7 @@ export interface Segment {
   tts_duration_ms: number;
   status: string;
   speaker_label: string;
+  voice_profile_id?: number;
   meta?: Record<string, unknown>;
 }
 
@@ -83,6 +84,10 @@ export interface VoiceProfile {
   mode: string;
   provider: string;
   language: string;
+  sample_relpaths?: string[];
+  checkpoint_relpath?: string;
+  validation_status?: string;
+  validation_error?: string;
 }
 
 export interface Binding {
@@ -123,10 +128,14 @@ export const api = {
 
   listArtifacts: (id: number, signal?: AbortSignal) => apiFetch<{ artifacts: Artifact[] }>(`/jobs/${id}/artifacts`, { signal }),
 
-  patchSegment: (jobId: number, segmentId: number, targetText: string, rerun: boolean) =>
+  patchSegment: (jobId: number, segmentId: number, targetText: string, rerun: boolean, voiceProfileId?: number | null) =>
     apiFetch(`/jobs/${jobId}/segments/${segmentId}`, {
       method: "PATCH",
-      body: JSON.stringify({ target_text: targetText, rerun }),
+      body: JSON.stringify({
+        target_text: targetText,
+        rerun,
+        ...(voiceProfileId !== undefined ? { voice_profile_id: voiceProfileId ?? 0 } : {}),
+      }),
     }),
 
   rerunSegment: (jobId: number, segmentId: number) =>
@@ -155,6 +164,42 @@ export const api = {
 
   listVoiceProfiles: (signal?: AbortSignal) =>
     apiFetch<{ voice_profiles: VoiceProfile[] }>("/voice-profiles", { signal }),
+
+  createVoiceProfile: (data: {
+    name: string;
+    mode?: string;
+    provider?: string;
+    language?: string;
+    sample_relpaths?: string[];
+    checkpoint_relpath?: string;
+    index_relpath?: string;
+    config_relpath?: string;
+    internal_speaker_id?: string;
+    meta?: Record<string, unknown>;
+  }) =>
+    apiFetch<VoiceProfile>("/voice-profiles", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  validateVoiceProfile: (id: number) =>
+    apiFetch<{ voice_profile_id: number; status: string; missing_paths: string[] }>(
+      `/voice-profiles/${id}/validate`,
+      { method: "POST" }
+    ),
+
+  previewVoice: (jobId: number, segmentId: number, voiceProfileId: number) =>
+    apiFetch<{ audio_relpath: string; actual_duration_ms: number; preview_url: string }>(
+      `/jobs/${jobId}/segments/${segmentId}/preview-voice`,
+      { method: "POST", body: JSON.stringify({ voice_profile_id: voiceProfileId }) }
+    ),
+
+  previewVoiceUrl: (jobId: number, segmentId: number, voiceProfileId: number): string => {
+    const key = getApiKey();
+    let url = `/jobs/${jobId}/preview-voice/${segmentId}?vp=${voiceProfileId}`;
+    if (key) url += `&api_key=${encodeURIComponent(key)}`;
+    return url;
+  },
 
   upsertBindings: (jobId: number, bindings: { speaker_label: string; voice_profile_id: number }[], rerunAffected?: boolean) =>
     apiFetch(`/jobs/${jobId}/bindings`, {

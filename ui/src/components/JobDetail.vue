@@ -137,6 +137,11 @@
           <div v-if="!artifacts.length" class="text-xs text-[#37465f] py-4 text-center">暂无文件</div>
         </div>
       </div>
+
+      <!-- Voice Profiles Tab -->
+      <div v-if="activeTab === 'voice-profiles'">
+        <VoiceProfileManager />
+      </div>
     </template>
   </div>
 </template>
@@ -147,6 +152,7 @@ import { useRoute } from "vue-router";
 import { api, type Job, type Segment, type StageRun, type Artifact, type Binding, type VoiceProfile } from "../api";
 import SegmentTable from "./SegmentTable.vue";
 import SegmentFilter from "./SegmentFilter.vue";
+import VoiceProfileManager from "./VoiceProfileManager.vue";
 
 const route = useRoute();
 const jobId = computed(() => Number(route.params.id));
@@ -168,6 +174,7 @@ const tabs = [
   { key: "segments", label: "段落" },
   { key: "stage-runs", label: "阶段记录" },
   { key: "artifacts", label: "输出文件" },
+  { key: "voice-profiles", label: "音色管理" },
 ];
 
 const filter = ref<"all" | "high-drift" | "unsynthesized">("all");

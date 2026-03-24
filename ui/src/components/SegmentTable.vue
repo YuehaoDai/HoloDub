@@ -215,6 +215,31 @@
                   rows="3"
                   class="w-full text-xs px-2 py-1.5 rounded bg-[#1e2535] border border-[#273246] text-[#f2f5f7] placeholder-[#37465f] focus:outline-none focus:border-[#4a6080] resize-none"
                 ></textarea>
+                <!-- 段落级音色覆盖 -->
+                <div v-if="voiceProfiles?.length" class="flex items-center gap-2">
+                  <label class="text-[10px] text-[#9db0c9] shrink-0">音色覆盖（此段）</label>
+                  <select
+                    v-model="editVoiceProfileId"
+                    class="text-[10px] px-1 py-0.5 rounded bg-[#1e2535] border border-[#273246] text-[#f2f5f7] flex-1"
+                  >
+                    <option :value="0">— 跟随说话人绑定 —</option>
+                    <option v-for="vp in voiceProfiles" :key="vp.id" :value="vp.id">{{ vp.name }}</option>
+                  </select>
+                  <button
+                    class="text-[10px] px-2 py-1 rounded bg-[#273246] hover:bg-[#37465f] text-[#9db0c9] hover:text-white transition-colors disabled:opacity-50 shrink-0"
+                    :disabled="previewing[seg.id]"
+                    @click="previewVoice(seg)"
+                  >
+                    {{ previewing[seg.id] ? '合成中…' : '试听' }}
+                  </button>
+                </div>
+                <!-- 试听播放区 -->
+                <div v-if="previewUrls[seg.id]" class="flex items-center gap-2">
+                  <span class="text-[10px] text-[#9db0c9] shrink-0">试听结果</span>
+                  <audio :src="previewUrls[seg.id]" controls preload="none" class="h-6 flex-1 min-w-0" />
+                  <span class="text-[10px] text-[#37465f]">{{ previewDurations[seg.id] ? (previewDurations[seg.id]! / 1000).toFixed(2) + 's' : '' }}</span>
+                </div>
+                <div v-if="previewError[seg.id]" class="text-[10px] text-red-400">试听失败: {{ previewError[seg.id] }}</div>
                 <div class="flex gap-2">
                   <button
                     class="text-xs px-3 py-1.5 rounded bg-[#273246] hover:bg-[#37465f] text-[#f2f5f7] transition-colors disabled:opacity-50"
@@ -276,6 +301,7 @@ const emit = defineEmits<{
 const editingId = ref<number | null>(null);
 const waveformSegId = ref<number | null>(null);
 const editText = ref("");
+const editVoiceProfileId = ref<number>(0);
 const saving = ref<Record<number, boolean>>({});
 const rerunning = ref<Record<number, boolean>>({});
 const batchRerunning = ref(false);
@@ -288,6 +314,10 @@ const selectedIds = ref<Set<number>>(new Set());
 const focusedIndex = ref<number>(0);
 const rowRefs = ref<Record<number, HTMLElement | null>>({});
 const tableContainerRef = ref<HTMLElement | null>(null);
+const previewing = ref<Record<number, boolean>>({});
+const previewUrls = ref<Record<number, string>>({});
+const previewDurations = ref<Record<number, number | null>>({});
+const previewError = ref<Record<number, string>>({});
 
 const synthesizableSegments = computed(() =>
   props.segments.filter((s) => s.status === "synthesized")
@@ -489,12 +519,14 @@ function toggleEdit(seg: Segment) {
   waveformSegId.value = null;
   editingId.value = seg.id;
   editText.value = seg.tgt_text || "";
+  editVoiceProfileId.value = seg.voice_profile_id ?? 0;
   saveError.value = "";
 }
 
 function cancelEdit() {
   editingId.value = null;
   editText.value = "";
+  editVoiceProfileId.value = 0;
   saveError.value = "";
 }
 
@@ -502,7 +534,10 @@ async function saveEdit(seg: Segment, rerun: boolean) {
   saving.value[seg.id] = true;
   saveError.value = "";
   try {
-    await api.patchSegment(props.jobId, seg.id, editText.value, rerun);
+    // Pass voice override if it changed
+    const voiceChanged = editVoiceProfileId.value !== (seg.voice_profile_id ?? 0);
+    const voiceArg = voiceChanged ? editVoiceProfileId.value : undefined;
+    await api.patchSegment(props.jobId, seg.id, editText.value, rerun, voiceArg);
     cancelEdit();
     // Invalidate cached audio if rerunning
     if (rerun && audioUrls.value[seg.id]) {
@@ -514,6 +549,38 @@ async function saveEdit(seg: Segment, rerun: boolean) {
     saveError.value = e instanceof Error ? e.message : String(e);
   } finally {
     saving.value[seg.id] = false;
+  }
+}
+
+async function previewVoice(seg: Segment) {
+  const vpId = editVoiceProfileId.value || (seg.voice_profile_id ?? 0);
+  if (!vpId) {
+    previewError.value[seg.id] = "请先选择一个音色";
+    return;
+  }
+  previewing.value[seg.id] = true;
+  previewError.value[seg.id] = "";
+  // Revoke old preview URL
+  if (previewUrls.value[seg.id]) {
+    URL.revokeObjectURL(previewUrls.value[seg.id]);
+    delete previewUrls.value[seg.id];
+  }
+  try {
+    await api.previewVoice(props.jobId, seg.id, vpId);
+    // Fetch the audio via the serve endpoint
+    const headers: Record<string, string> = {};
+    const key = getApiKey();
+    if (key) headers["X-API-Key"] = key;
+    const resp = await fetch(`/jobs/${props.jobId}/preview-voice/${seg.id}?vp=${vpId}`, { headers });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const blob = await resp.blob();
+    previewUrls.value[seg.id] = URL.createObjectURL(blob);
+    // Estimate duration from blob size (rough; will be updated)
+    previewDurations.value[seg.id] = null;
+  } catch (e: unknown) {
+    previewError.value[seg.id] = e instanceof Error ? e.message : String(e);
+  } finally {
+    previewing.value[seg.id] = false;
   }
 }
 
@@ -574,6 +641,9 @@ onBeforeUnmount(() => {
     if (url) URL.revokeObjectURL(url);
   }
   for (const url of Object.values(originalAudioUrls.value)) {
+    if (url) URL.revokeObjectURL(url);
+  }
+  for (const url of Object.values(previewUrls.value)) {
     if (url) URL.revokeObjectURL(url);
   }
 });

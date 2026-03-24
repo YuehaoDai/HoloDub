@@ -427,6 +427,15 @@ func (s *Store) ListBindings(ctx context.Context, jobID uint) ([]models.SpeakerV
 }
 
 func (s *Store) ResolveVoiceProfileForSegment(ctx context.Context, jobID uint, segment models.Segment) (*models.VoiceProfile, error) {
+	// Priority 1: per-segment voice override
+	if segment.VoiceProfileID != nil {
+		var profile models.VoiceProfile
+		if err := s.db.WithContext(ctx).First(&profile, *segment.VoiceProfileID).Error; err == nil {
+			return &profile, nil
+		}
+		// If the overridden profile was deleted, fall through to speaker binding
+	}
+	// Priority 2: speaker-level binding
 	if segment.SpeakerID == nil {
 		var profile models.VoiceProfile
 		if err := s.db.WithContext(ctx).Order("id asc").First(&profile).Error; err != nil {
@@ -451,6 +460,23 @@ func (s *Store) ResolveVoiceProfileForSegment(ctx context.Context, jobID uint, s
 		return nil, err
 	}
 	return &binding.VoiceProfile, nil
+}
+
+// UpdateSegmentVoice sets or clears the per-segment voice profile override.
+// Pass voiceProfileID=0 to clear the override (revert to speaker binding).
+func (s *Store) UpdateSegmentVoice(ctx context.Context, segmentID uint, voiceProfileID uint) error {
+	var val interface{}
+	if voiceProfileID == 0 {
+		val = nil
+	} else {
+		val = voiceProfileID
+	}
+	return s.db.WithContext(ctx).Model(&models.Segment{}).
+		Where("id = ?", segmentID).
+		Updates(map[string]any{
+			"voice_profile_id": val,
+			"updated_at":       time.Now().UTC(),
+		}).Error
 }
 
 func (s *Store) ListSegmentsForMerge(ctx context.Context, jobID uint) ([]models.Segment, error) {

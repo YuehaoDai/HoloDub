@@ -686,6 +686,44 @@ func (s *Service) runMerge(ctx context.Context, task models.TaskPayload) error {
 	return s.store.SaveJob(ctx, job)
 }
 
+// PreviewVoice synthesizes a single segment with the specified voice profile
+// without persisting any results to the database. The output is written to
+// data/preview/job_{jobID}_seg_{segID}_vp_{vpID}.wav and the relpath is returned.
+func (s *Service) PreviewVoice(ctx context.Context, jobID uint, seg models.Segment, profile models.VoiceProfile) (audioRelPath string, actualDurationMs int64, err error) {
+	voiceConfig, err := buildVoiceConfig(profile)
+	if err != nil {
+		return "", 0, fmt.Errorf("build voice config: %w", err)
+	}
+
+	previewDir := filepath.Join(s.cfg.DataRoot, "preview")
+	if mkErr := os.MkdirAll(previewDir, 0755); mkErr != nil {
+		return "", 0, fmt.Errorf("create preview dir: %w", mkErr)
+	}
+
+	outputRelPath := fmt.Sprintf("preview/job_%d_seg_%d_vp_%d.wav", jobID, seg.ID, profile.ID)
+
+	targetMs := seg.DurationMs()
+	targetSec := float64(targetMs) / 1000.0
+	maxAllowedSec := targetSec + 5.0
+
+	text := seg.TargetText
+	if text == "" {
+		text = seg.SourceText
+	}
+
+	resp, ttsErr := s.ml.RunTTS(ctx, ml.TTSRequest{
+		Text:              text,
+		TargetDurationSec: targetSec,
+		MaxAllowedSec:     maxAllowedSec,
+		VoiceConfig:       voiceConfig,
+		OutputRelPath:     outputRelPath,
+	})
+	if ttsErr != nil {
+		return "", 0, fmt.Errorf("preview tts: %w", ttsErr)
+	}
+	return outputRelPath, resp.ActualDurationMs, nil
+}
+
 func buildVoiceConfig(profile models.VoiceProfile) (map[string]any, error) {
 	config := map[string]any{
 		"name":                profile.Name,

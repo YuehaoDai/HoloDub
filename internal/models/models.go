@@ -117,6 +117,9 @@ type Segment struct {
 	JobID              uint              `json:"job_id" gorm:"index"`
 	SpeakerID          *uint             `json:"speaker_id" gorm:"index"`
 	SpeakerLabel       string            `json:"speaker_label" gorm:"size:64;index"`
+	// VoiceProfileID is an optional per-segment voice override.
+	// When set, it takes priority over the speaker-level SpeakerVoiceBinding.
+	VoiceProfileID     *uint             `json:"voice_profile_id,omitempty" gorm:"index"`
 	Ordinal            int               `json:"ordinal" gorm:"index"`
 	StartMs            int64             `json:"start_ms"`
 	EndMs              int64             `json:"end_ms"`
