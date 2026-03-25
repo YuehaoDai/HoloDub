@@ -83,6 +83,49 @@
 
       <!-- Segments Tab -->
       <div v-if="activeTab === 'segments'">
+        <!-- 音色配置面板 -->
+        <div v-if="voiceProfiles.length" class="mb-4 rounded-lg border border-[#273246] overflow-hidden text-xs">
+          <div class="px-4 py-2 bg-[#1e2535] flex items-center justify-between border-b border-[#273246]">
+            <span class="font-medium text-white">音色配置</span>
+            <span class="text-[10px] text-[#37465f]">修改后须手动触发合成，不会自动执行</span>
+          </div>
+          <!-- 步骤 1 -->
+          <div class="px-4 py-3 flex items-center gap-3 bg-[#111722]">
+            <span class="text-[#9db0c9] shrink-0 w-28">① 选择目标音色</span>
+            <select
+              v-model="bulkVoiceId"
+              class="px-2 py-1 rounded bg-[#1e2535] border border-[#273246] text-[#f2f5f7] flex-1 max-w-xs"
+              @wheel.prevent
+            >
+              <option :value="0">原声（默认，跟随说话人绑定）</option>
+              <option v-for="vp in voiceProfiles" :key="vp.id" :value="vp.id">{{ vp.name }}</option>
+            </select>
+          </div>
+          <!-- 步骤 2 -->
+          <div class="px-4 py-3 flex items-center gap-3 border-t border-[#273246]">
+            <span class="text-[#9db0c9] shrink-0 w-28">② 应用到段落</span>
+            <button
+              class="px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-500 text-white transition-colors disabled:opacity-50"
+              :disabled="bulkApplying"
+              @click="applyBulkVoice"
+            >
+              {{ bulkApplying ? '应用中…' : '为全部段落设置此音色' }}
+            </button>
+            <span class="text-[#37465f]">仅更新记录，不开始合成，可随时更改</span>
+          </div>
+          <!-- 步骤 3 -->
+          <div class="px-4 py-3 flex items-center gap-3 border-t border-red-900/40 bg-red-950/20">
+            <span class="text-[#9db0c9] shrink-0 w-28">③ 开始合成</span>
+            <button
+              class="px-3 py-1.5 rounded bg-red-700 hover:bg-red-600 text-white transition-colors disabled:opacity-50 font-medium"
+              :disabled="resetRetrying"
+              @click="resetAndRetryTTS"
+            >
+              {{ resetRetrying ? '操作中…' : '清除已有音频并重新合成全部' }}
+            </button>
+            <span class="text-red-400">⚠ 不可撤销 — 所有已生成音频将被清除</span>
+          </div>
+        </div>
         <SegmentFilter
           v-model:filter="filter"
           v-model:sort="sort"
@@ -166,6 +209,9 @@ const voiceProfiles = ref<VoiceProfile[]>([]);
 const loading = ref(false);
 const error = ref("");
 const actionLoading = ref(false);
+const bulkVoiceId = ref<number>(0);
+const bulkApplying = ref(false);
+const resetRetrying = ref(false);
 const activeTab = ref("segments");
 
 let currentRefreshAbort: AbortController | null = null;
@@ -332,6 +378,40 @@ function onBindingUpdated(speakerLabel: string, voiceProfileId: number) {
   // After a binding change the affected segments get re-queued — do a light refresh
   // after a short delay to pick up the new status without hammering the server.
   setTimeout(() => lightRefresh(), 1500);
+}
+
+async function applyBulkVoice() {
+  if (bulkApplying.value) return;
+  const vpName = bulkVoiceId.value === 0
+    ? "原声（默认）"
+    : (voiceProfiles.value.find((v) => v.id === bulkVoiceId.value)?.name ?? `#${bulkVoiceId.value}`);
+  if (!window.confirm(`将把「${vpName}」应用到全部 ${segments.value.length} 个段落。\n\n这只是更新记录，不会开始合成，可随时修改。\n\n确认继续？`)) return;
+  bulkApplying.value = true;
+  try {
+    await api.bulkSetVoice(jobId.value, bulkVoiceId.value);
+    await lightRefresh();
+  } catch (e: unknown) {
+    alert(e instanceof Error ? e.message : String(e));
+  } finally {
+    bulkApplying.value = false;
+  }
+}
+
+async function resetAndRetryTTS() {
+  if (resetRetrying.value) return;
+  const confirmed = window.confirm(
+    "⚠ 危险操作，不可撤销\n\n将清除全部已合成音频，并按当前音色设置重新合成。\n\n已合成的音频文件将被清除，无法恢复。\n\n确认继续？"
+  );
+  if (!confirmed) return;
+  resetRetrying.value = true;
+  try {
+    await api.resetAndRetryTTS(jobId.value);
+    await refresh();
+  } catch (e: unknown) {
+    alert(e instanceof Error ? e.message : String(e));
+  } finally {
+    resetRetrying.value = false;
+  }
 }
 
 watch(jobId, () => { currentRefreshAbort?.abort(); refresh(); }, { immediate: false });

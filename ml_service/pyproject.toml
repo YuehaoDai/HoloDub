@@ -28,12 +28,7 @@ real = [
   "pyannote.audio>=3.3.0",
   "demucs",
   "soundfile",
-  "edge-tts",
   "indextts2-inference",
-]
-# Lightweight TTS-only extras (no GPU required).
-edge_tts = [
-  "edge-tts",
 ]
 dev = [
   "pytest",

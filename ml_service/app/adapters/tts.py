@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import base64
 import json
 import shlex
@@ -73,72 +72,7 @@ class TTSAdapter:
             if self.settings.indextts2_inline:
                 return self._run_indextts2_inline(request)
             return self._run_indextts2(request)
-        if self.settings.ml_tts_backend == "edge_tts":
-            return self._run_edge_tts(request)
         return self._run_silence(request)
-
-    def _run_edge_tts(self, request: TTSRequest) -> TTSResponse:
-        try:
-            import edge_tts
-        except ImportError as exc:
-            raise RuntimeError("edge-tts is not installed; add it to pyproject.toml[edge_tts] or install manually") from exc
-
-        output_path = resolve_data_path(self.settings.data_root, request.output_relpath)
-        ensure_parent(output_path)
-
-        # Resolve voice: use voice_config["edge_tts_voice"] if set, else fall back to locale default
-        voice = (request.voice_config or {}).get("edge_tts_voice") or self.settings.edge_tts_voice
-
-        tmp_mp3 = output_path.with_suffix(".mp3")
-
-        async def _synthesize() -> None:
-            communicate = edge_tts.Communicate(request.text, voice)
-            await communicate.save(str(tmp_mp3))
-
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
-
-        if loop and loop.is_running():
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                future = pool.submit(asyncio.run, _synthesize())
-                future.result(timeout=60)
-        else:
-            asyncio.run(_synthesize())
-
-        # Convert mp3 → wav at the project sample rate, then apply atempo to hit target duration
-        actual_raw_sec = probe_duration(self.settings, tmp_mp3)
-        target_sec = max(request.target_duration_sec, 0.05)
-        # clamp atempo to [0.5, 2.0] – ffmpeg hard limits
-        if actual_raw_sec > 0:
-            ratio = actual_raw_sec / target_sec
-            ratio = max(0.5, min(2.0, ratio))
-            atempo_filter = f"atempo={ratio:.6f}"
-        else:
-            atempo_filter = "atempo=1.0"
-
-        subprocess.run(
-            [
-                self.settings.ffmpeg_bin, "-y",
-                "-i", str(tmp_mp3),
-                "-af", atempo_filter,
-                "-ar", str(self.settings.default_sample_rate),
-                "-ac", str(self.settings.default_channels),
-                str(output_path),
-            ],
-            check=True,
-            capture_output=True,
-        )
-        tmp_mp3.unlink(missing_ok=True)
-
-        duration_ms = int(probe_duration(self.settings, output_path) * 1000)
-        return TTSResponse(
-            audio_relpath=request.output_relpath,
-            actual_duration_ms=duration_ms,
-            diagnostics=[f"tts backend=edge_tts voice={voice} atempo={atempo_filter}"],
-        )
 
     def _run_silence(self, request: TTSRequest) -> TTSResponse:
         output_path = resolve_data_path(self.settings.data_root, request.output_relpath)

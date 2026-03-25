@@ -43,10 +43,6 @@ class Settings(BaseSettings):
     # fallback spk_audio_prompt when no VoiceProfile is bound to the speaker
     indextts2_default_voice_relpath: str = ""
 
-    # edge-tts voice name; see `edge-tts --list-voices` for options.
-    # zh-CN-XiaoxiaoNeural is a natural female Mandarin voice.
-    edge_tts_voice: str = "zh-CN-XiaoxiaoNeural"
-
     default_sample_rate: int = 24000
     default_channels: int = 1
     model_manifest_path: Path = Path("/app/config/model-manifest.example.json")

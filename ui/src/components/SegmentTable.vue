@@ -58,7 +58,7 @@
               'ring-1 ring-blue-500/50': focusedIndex === index
             }"
             :ref="(el) => setRowRef(seg.ordinal, el)"
-            @click="focusRow(seg)"
+            @click="focusRow(seg, $event)"
           >
             <td class="px-2 py-2 text-center">
               <input
@@ -78,16 +78,38 @@
               <div class="truncate" :title="seg.tgt_text">{{ seg.tgt_text || '—' }}</div>
             </td>
             <td class="px-3 py-2">
-              <select
-                v-if="voiceProfiles?.length"
-                :value="bindingProfileId(seg.speaker_label)"
-                class="w-full text-[10px] px-1 py-0.5 rounded bg-[#1e2535] border border-[#273246] text-[#f2f5f7] disabled:opacity-50"
-                :disabled="bindingSaving[seg.speaker_label]"
-                @change="onVoiceChange(seg.speaker_label, Number(($event.target as HTMLSelectElement).value))"
-              >
-                <option value="">—</option>
-                <option v-for="vp in voiceProfiles" :key="vp.id" :value="vp.id">{{ vp.name }}</option>
-              </select>
+              <template v-if="voiceProfiles?.length">
+                <div v-if="pendingBinding[seg.speaker_label] !== undefined" class="flex items-center gap-1">
+                  <select
+                    :value="pendingBinding[seg.speaker_label]"
+                    class="w-full text-[10px] px-1 py-0.5 rounded bg-[#1e2535] border border-amber-500 text-[#f2f5f7]"
+                    @wheel.prevent
+                    @change="pendingBinding[seg.speaker_label] = Number(($event.target as HTMLSelectElement).value)"
+                  >
+                    <option value="">—</option>
+                    <option v-for="vp in voiceProfiles" :key="vp.id" :value="vp.id">{{ vp.name }}</option>
+                  </select>
+                  <button
+                    class="text-[10px] px-1.5 py-0.5 rounded bg-blue-600 hover:bg-blue-500 text-white shrink-0 disabled:opacity-50"
+                    :disabled="bindingSaving[seg.speaker_label]"
+                    title="保存绑定"
+                    @click="commitBinding(seg.speaker_label)"
+                  >✓</button>
+                  <button
+                    class="text-[10px] px-1.5 py-0.5 rounded bg-[#273246] hover:bg-[#37465f] text-[#9db0c9] shrink-0"
+                    title="取消"
+                    @click="delete pendingBinding[seg.speaker_label]"
+                  >✕</button>
+                </div>
+                <div v-else class="flex items-center gap-1">
+                  <span class="text-[10px] text-[#f2f5f7] truncate flex-1">{{ voiceNameForSpeaker(seg.speaker_label) }}</span>
+                  <button
+                    class="text-[10px] px-1 py-0.5 rounded bg-[#273246] hover:bg-[#37465f] text-[#9db0c9] shrink-0"
+                    title="修改绑定"
+                    @click="startBindingEdit(seg.speaker_label)"
+                  >✎</button>
+                </div>
+              </template>
               <span v-else class="text-[10px] text-[#37465f]">{{ seg.speaker_label || '—' }}</span>
             </td>
             <td class="px-3 py-2 text-center">
@@ -221,6 +243,7 @@
                   <select
                     v-model="editVoiceProfileId"
                     class="text-[10px] px-1 py-0.5 rounded bg-[#1e2535] border border-[#273246] text-[#f2f5f7] flex-1"
+                    @wheel.prevent
                   >
                     <option :value="0">— 跟随说话人绑定 —</option>
                     <option v-for="vp in voiceProfiles" :key="vp.id" :value="vp.id">{{ vp.name }}</option>
@@ -338,11 +361,30 @@ function bindingProfileId(speakerLabel: string): number | string {
 }
 
 const bindingSaving = ref<Record<string, boolean>>({});
+const pendingBinding = ref<Record<string, number | string>>({});
+
+function voiceNameForSpeaker(speakerLabel: string): string {
+  const id = bindingProfileId(speakerLabel);
+  if (!id) return speakerLabel || "—";
+  const vp = props.voiceProfiles?.find((v) => v.id === Number(id));
+  return vp ? vp.name : speakerLabel || "—";
+}
+
+function startBindingEdit(speakerLabel: string) {
+  pendingBinding.value[speakerLabel] = bindingProfileId(speakerLabel);
+}
+
+async function commitBinding(speakerLabel: string) {
+  const vpId = Number(pendingBinding.value[speakerLabel]);
+  delete pendingBinding.value[speakerLabel];
+  await onVoiceChange(speakerLabel, vpId);
+}
+
 async function onVoiceChange(speakerLabel: string, voiceProfileId: number) {
   if (!voiceProfileId || !speakerLabel) return;
   bindingSaving.value[speakerLabel] = true;
   try {
-    await api.upsertBindings(props.jobId, [{ speaker_label: speakerLabel, voice_profile_id: voiceProfileId }], true);
+    await api.upsertBindings(props.jobId, [{ speaker_label: speakerLabel, voice_profile_id: voiceProfileId }], false);
     emit("binding-updated", speakerLabel, voiceProfileId);
   } catch (e: unknown) {
     alert(e instanceof Error ? e.message : String(e));
@@ -432,7 +474,12 @@ function scrollToFocused() {
   el?.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
-function focusRow(seg: Segment) {
+function focusRow(seg: Segment, e?: MouseEvent) {
+  const target = e?.target as HTMLElement | null;
+  const INTERACTIVE = ["SELECT", "INPUT", "TEXTAREA", "BUTTON", "AUDIO"];
+  if (target && (INTERACTIVE.includes(target.tagName) || target.closest("select,input,textarea,button,audio"))) {
+    return;
+  }
   const i = props.segments.findIndex((s) => s.id === seg.id);
   if (i >= 0) focusedIndex.value = i;
   tableContainerRef.value?.focus();

@@ -54,7 +54,14 @@
             </div>
             <div>
               <label class="block text-xs text-[#9db0c9] mb-1">输入文件路径 *</label>
-              <input v-model="newJob.input_relpath" type="text" placeholder="input.mp4" required class="hd-input" />
+              <div class="flex gap-2">
+                <input v-model="newJob.input_relpath" type="text" placeholder="input.mp4" required class="hd-input flex-1" />
+                <button
+                  type="button"
+                  class="text-xs px-2.5 py-1.5 rounded bg-[#273246] hover:bg-[#37465f] text-[#9db0c9] hover:text-white transition-colors shrink-0"
+                  @click="showFilePicker = true"
+                >浏览</button>
+              </div>
             </div>
             <div class="grid grid-cols-2 gap-3">
               <div>
@@ -83,6 +90,13 @@
         </div>
       </div>
     </Transition>
+
+    <!-- 文件浏览弹窗 -->
+    <FilePicker
+      v-model="showFilePicker"
+      filter="video"
+      @select="onFilePickerSelect"
+    />
   </div>
 </template>
 
@@ -91,11 +105,13 @@ import { ref, onMounted, onUnmounted } from "vue";
 import { useRouter } from "vue-router";
 import { api, getApiKey, setApiKey } from "./api";
 import JobSidebar from "./components/JobSidebar.vue";
+import FilePicker from "./components/FilePicker.vue";
 
 const router = useRouter();
 const apiKey = ref(getApiKey());
 const selectedJobId = ref<number | null>(null);
 const showCreateJob = ref(false);
+const showFilePicker = ref(false);
 const createError = ref("");
 const ttsWarmupStatus = ref<string>("idle");
 let mlHealthTimer: ReturnType<typeof setInterval> | null = null;
@@ -122,6 +138,10 @@ const newJob = ref({
 
 function onApiKeyChange() {
   setApiKey(apiKey.value);
+}
+
+function onFilePickerSelect(path: string) {
+  newJob.value.input_relpath = path;
 }
 
 function selectJob(id: number) {

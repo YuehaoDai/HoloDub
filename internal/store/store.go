@@ -155,6 +155,14 @@ func (s *Store) GetVoiceProfile(ctx context.Context, id uint) (*models.VoiceProf
 	return &profile, nil
 }
 
+func (s *Store) UpdateVoiceProfile(ctx context.Context, profile *models.VoiceProfile) error {
+	return s.db.WithContext(ctx).Save(profile).Error
+}
+
+func (s *Store) DeleteVoiceProfile(ctx context.Context, id uint) error {
+	return s.db.WithContext(ctx).Delete(&models.VoiceProfile{}, id).Error
+}
+
 func (s *Store) UpdateVoiceProfileValidation(ctx context.Context, profileID uint, status, errMsg string) error {
 	updates := map[string]any{
 		"validation_status": status,
@@ -476,6 +484,36 @@ func (s *Store) UpdateSegmentVoice(ctx context.Context, segmentID uint, voicePro
 		Updates(map[string]any{
 			"voice_profile_id": val,
 			"updated_at":       time.Now().UTC(),
+		}).Error
+}
+
+// BulkSetSegmentVoice sets or clears the per-segment voice override for all
+// segments of a job in one query. Pass voiceProfileID=0 to clear overrides.
+func (s *Store) BulkSetSegmentVoice(ctx context.Context, jobID uint, voiceProfileID uint) error {
+	var val interface{}
+	if voiceProfileID == 0 {
+		val = nil
+	} else {
+		val = voiceProfileID
+	}
+	return s.db.WithContext(ctx).Model(&models.Segment{}).
+		Where("job_id = ?", jobID).
+		Updates(map[string]any{
+			"voice_profile_id": val,
+			"updated_at":       time.Now().UTC(),
+		}).Error
+}
+
+// ResetAllSegmentTTS clears TTS results for all segments of a job so the
+// tts_duration stage will re-synthesize them from scratch.
+func (s *Store) ResetAllSegmentTTS(ctx context.Context, jobID uint) error {
+	return s.db.WithContext(ctx).Model(&models.Segment{}).
+		Where("job_id = ?", jobID).
+		Updates(map[string]any{
+			"tts_audio_rel_path": "",
+			"tts_duration_ms":    0,
+			"status":             "pending",
+			"updated_at":         time.Now().UTC(),
 		}).Error
 }
 

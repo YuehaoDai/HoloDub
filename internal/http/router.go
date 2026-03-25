@@ -125,11 +125,16 @@ func NewRouter(cfg config.Config, st *store.Store, pipelineSvc *pipeline.Service
 	router.PATCH("/jobs/:id/segments/:segmentId", server.patchSegment)
 	router.PATCH("/jobs/:id/segments/:segmentId/quality", server.patchSegmentQuality)
 
+	router.GET("/files", server.listFiles)
 	router.GET("/voice-profiles", server.listVoiceProfiles)
 	router.POST("/voice-profiles", server.createVoiceProfile)
 	router.GET("/voice-profiles/:id", server.getVoiceProfile)
+	router.PATCH("/voice-profiles/:id", server.updateVoiceProfile)
+	router.DELETE("/voice-profiles/:id", server.deleteVoiceProfile)
 	router.POST("/voice-profiles/:id/validate", server.validateVoiceProfile)
 	router.PUT("/jobs/:id/bindings", server.upsertBindings)
+	router.PUT("/jobs/:id/segments/voice", server.bulkSetSegmentVoice)
+	router.POST("/jobs/:id/segments/reset-tts", server.resetAndRetryTTS)
 	router.POST("/jobs/:id/segments/:segmentId/preview-voice", server.previewSegmentVoice)
 	router.GET("/jobs/:id/preview-voice/:segmentId", server.servePreviewAudio)
 
@@ -463,6 +468,81 @@ func (s *Server) getVoiceProfile(c *gin.Context) {
 	c.JSON(stdhttp.StatusOK, profile)
 }
 
+func (s *Server) updateVoiceProfile(c *gin.Context) {
+	profileID, ok := parseUintParam(c, "id")
+	if !ok {
+		return
+	}
+	profile, err := s.store.GetVoiceProfile(c.Request.Context(), profileID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		respondError(c, stdhttp.StatusNotFound, "voice_profile_not_found", "voice profile not found")
+		return
+	}
+	if err != nil {
+		respondError(c, stdhttp.StatusInternalServerError, "get_voice_profile_failed", err.Error())
+		return
+	}
+	if profile.TenantKey != "" && profile.TenantKey != tenantKeyFromContext(c) {
+		respondError(c, stdhttp.StatusNotFound, "voice_profile_not_found", "voice profile not found")
+		return
+	}
+
+	var request voiceProfileRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		respondError(c, stdhttp.StatusBadRequest, "invalid_voice_profile_request", err.Error())
+		return
+	}
+
+	profile.Name = request.Name
+	profile.Mode = request.Mode
+	profile.Provider = request.Provider
+	profile.Language = request.Language
+	profile.CheckpointRelPath = request.CheckpointRelPath
+	profile.IndexRelPath = request.IndexRelPath
+	profile.ConfigRelPath = request.ConfigRelPath
+	profile.InternalSpeakerID = request.InternalSpeakerID
+	if request.Meta != nil {
+		profile.Meta = datatypes.JSONMap(request.Meta)
+	}
+	samples, err := json.Marshal(request.SampleRelPaths)
+	if err != nil {
+		respondError(c, stdhttp.StatusBadRequest, "invalid_sample_paths", err.Error())
+		return
+	}
+	profile.SampleRelPaths = datatypes.JSON(samples)
+
+	if err := s.store.UpdateVoiceProfile(c.Request.Context(), profile); err != nil {
+		respondError(c, stdhttp.StatusInternalServerError, "update_voice_profile_failed", err.Error())
+		return
+	}
+	c.JSON(stdhttp.StatusOK, profile)
+}
+
+func (s *Server) deleteVoiceProfile(c *gin.Context) {
+	profileID, ok := parseUintParam(c, "id")
+	if !ok {
+		return
+	}
+	profile, err := s.store.GetVoiceProfile(c.Request.Context(), profileID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		respondError(c, stdhttp.StatusNotFound, "voice_profile_not_found", "voice profile not found")
+		return
+	}
+	if err != nil {
+		respondError(c, stdhttp.StatusInternalServerError, "get_voice_profile_failed", err.Error())
+		return
+	}
+	if profile.TenantKey != "" && profile.TenantKey != tenantKeyFromContext(c) {
+		respondError(c, stdhttp.StatusNotFound, "voice_profile_not_found", "voice profile not found")
+		return
+	}
+	if err := s.store.DeleteVoiceProfile(c.Request.Context(), profileID); err != nil {
+		respondError(c, stdhttp.StatusInternalServerError, "delete_voice_profile_failed", err.Error())
+		return
+	}
+	c.Status(stdhttp.StatusNoContent)
+}
+
 func (s *Server) validateVoiceProfile(c *gin.Context) {
 	profileID, ok := parseUintParam(c, "id")
 	if !ok {
@@ -512,6 +592,46 @@ func (s *Server) validateVoiceProfile(c *gin.Context) {
 		"status":           status,
 		"missing_paths":    missing,
 	})
+}
+
+type bulkSetVoiceRequest struct {
+	VoiceProfileID uint `json:"voice_profile_id"`
+}
+
+func (s *Server) bulkSetSegmentVoice(c *gin.Context) {
+	job, ok := s.getJobForTenant(c)
+	if !ok {
+		return
+	}
+	var req bulkSetVoiceRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondError(c, stdhttp.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	if err := s.store.BulkSetSegmentVoice(c.Request.Context(), job.ID, req.VoiceProfileID); err != nil {
+		respondError(c, stdhttp.StatusInternalServerError, "bulk_set_voice_failed", err.Error())
+		return
+	}
+	c.JSON(stdhttp.StatusOK, gin.H{"updated": true})
+}
+
+// resetAndRetryTTS resets all segment TTS results to pending and re-queues
+// the tts_duration stage so every segment is re-synthesized with its current
+// voice assignment.
+func (s *Server) resetAndRetryTTS(c *gin.Context) {
+	job, ok := s.getJobForTenant(c)
+	if !ok {
+		return
+	}
+	if err := s.store.ResetAllSegmentTTS(c.Request.Context(), job.ID); err != nil {
+		respondError(c, stdhttp.StatusInternalServerError, "reset_tts_failed", err.Error())
+		return
+	}
+	if err := s.pipeline.RetryJob(c.Request.Context(), job.ID, models.StageTTSDuration, nil, "reset_retry_tts"); err != nil {
+		respondError(c, stdhttp.StatusInternalServerError, "retry_tts_failed", err.Error())
+		return
+	}
+	c.JSON(stdhttp.StatusOK, gin.H{"queued": true})
 }
 
 func (s *Server) upsertBindings(c *gin.Context) {
@@ -573,7 +693,7 @@ func (s *Server) getJobForTenant(c *gin.Context) (*models.Job, bool) {
 }
 
 func (s *Server) serveSegmentAudio(c *gin.Context) {
-	_, ok := s.getJobForTenant(c)
+	job, ok := s.getJobForTenant(c)
 	if !ok {
 		return
 	}
@@ -583,8 +703,23 @@ func (s *Server) serveSegmentAudio(c *gin.Context) {
 		respondError(c, stdhttp.StatusBadRequest, "invalid_ordinal", "invalid ordinal")
 		return
 	}
-	audioPath := filepath.Join(s.cfg.DataRoot, "jobs", c.Param("id"),
-		"tts", fmt.Sprintf("segment-%04d.wav", ordinalInt))
+	segments, err := s.store.ListSegments(c.Request.Context(), job.ID, nil)
+	if err != nil {
+		respondError(c, stdhttp.StatusInternalServerError, "list_segments_failed", err.Error())
+		return
+	}
+	var relPath string
+	for _, seg := range segments {
+		if seg.Ordinal == ordinalInt {
+			relPath = seg.TTSAudioRelPath
+			break
+		}
+	}
+	if relPath == "" {
+		respondError(c, stdhttp.StatusNotFound, "audio_not_found", "audio file not found")
+		return
+	}
+	audioPath := filepath.Join(s.cfg.DataRoot, relPath)
 	if _, err := os.Stat(audioPath); err != nil {
 		respondError(c, stdhttp.StatusNotFound, "audio_not_found", "audio file not found")
 		return
@@ -824,4 +959,84 @@ func parseUintParam(c *gin.Context, name string) (uint, bool) {
 		return 0, false
 	}
 	return uint(value), true
+}
+
+type fileEntry struct {
+	Name       string    `json:"name"`
+	IsDir      bool      `json:"is_dir"`
+	RelPath    string    `json:"relpath"`
+	SizeBytes  int64     `json:"size_bytes,omitempty"`
+	ModifiedAt time.Time `json:"modified_at,omitempty"`
+}
+
+// listFiles lists the contents of a directory under DATA_ROOT.
+// Query params:
+//   dir    - relative path inside DATA_ROOT (empty = root)
+//   filter - "video" | "audio" | "all" (default "all")
+func (s *Server) listFiles(c *gin.Context) {
+	relDir := filepath.ToSlash(filepath.Clean(c.Query("dir")))
+	if relDir == "." {
+		relDir = ""
+	}
+	filter := c.Query("filter")
+
+	// Security: prevent path traversal outside DATA_ROOT
+	absDir := filepath.Join(s.cfg.DataRoot, filepath.FromSlash(relDir))
+	if !strings.HasPrefix(absDir+string(filepath.Separator), s.cfg.DataRoot+string(filepath.Separator)) &&
+		absDir != s.cfg.DataRoot {
+		respondError(c, stdhttp.StatusBadRequest, "invalid_path", "path outside data root")
+		return
+	}
+
+	entries, err := os.ReadDir(absDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			respondError(c, stdhttp.StatusNotFound, "dir_not_found", "directory not found")
+			return
+		}
+		respondError(c, stdhttp.StatusInternalServerError, "list_files_failed", err.Error())
+		return
+	}
+
+	videoExts := map[string]bool{".mp4": true, ".mkv": true, ".avi": true, ".mov": true, ".webm": true, ".ts": true, ".flv": true}
+	audioExts := map[string]bool{".wav": true, ".mp3": true, ".flac": true, ".m4a": true, ".ogg": true, ".aac": true}
+
+	result := make([]fileEntry, 0, len(entries))
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".") {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		var entryRelPath string
+		if relDir == "" {
+			entryRelPath = e.Name()
+		} else {
+			entryRelPath = relDir + "/" + e.Name()
+		}
+		if !e.IsDir() {
+			ext := strings.ToLower(filepath.Ext(e.Name()))
+			switch filter {
+			case "video":
+				if !videoExts[ext] {
+					continue
+				}
+			case "audio":
+				if !audioExts[ext] {
+					continue
+				}
+			}
+		}
+		result = append(result, fileEntry{
+			Name:       e.Name(),
+			IsDir:      e.IsDir(),
+			RelPath:    entryRelPath,
+			SizeBytes:  info.Size(),
+			ModifiedAt: info.ModTime(),
+		})
+	}
+
+	c.JSON(stdhttp.StatusOK, gin.H{"dir": relDir, "entries": result})
 }

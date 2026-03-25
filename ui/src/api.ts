@@ -78,6 +78,14 @@ export interface Artifact {
   modified_at: string;
 }
 
+export interface FileEntry {
+  name: string;
+  is_dir: boolean;
+  relpath: string;
+  size_bytes?: number;
+  modified_at?: string;
+}
+
 export interface VoiceProfile {
   id: number;
   name: string;
@@ -165,6 +173,13 @@ export const api = {
   listVoiceProfiles: (signal?: AbortSignal) =>
     apiFetch<{ voice_profiles: VoiceProfile[] }>("/voice-profiles", { signal }),
 
+  listFiles: (dir?: string, filter?: "video" | "audio" | "all", signal?: AbortSignal) => {
+    const params = new URLSearchParams();
+    if (dir) params.set("dir", dir);
+    if (filter && filter !== "all") params.set("filter", filter);
+    return apiFetch<{ dir: string; entries: FileEntry[] }>(`/files?${params}`, { signal });
+  },
+
   createVoiceProfile: (data: {
     name: string;
     mode?: string;
@@ -188,6 +203,24 @@ export const api = {
       { method: "POST" }
     ),
 
+  updateVoiceProfile: (id: number, data: {
+    name: string;
+    mode?: string;
+    provider?: string;
+    language?: string;
+    sample_relpaths?: string[];
+    checkpoint_relpath?: string;
+    index_relpath?: string;
+    config_relpath?: string;
+  }) =>
+    apiFetch<VoiceProfile>(`/voice-profiles/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+
+  deleteVoiceProfile: (id: number) =>
+    apiFetch<void>(`/voice-profiles/${id}`, { method: "DELETE" }),
+
   previewVoice: (jobId: number, segmentId: number, voiceProfileId: number) =>
     apiFetch<{ audio_relpath: string; actual_duration_ms: number; preview_url: string }>(
       `/jobs/${jobId}/segments/${segmentId}/preview-voice`,
@@ -209,6 +242,15 @@ export const api = {
         rerun_affected: !!rerunAffected,
       }),
     }),
+
+  bulkSetVoice: (jobId: number, voiceProfileId: number) =>
+    apiFetch(`/jobs/${jobId}/segments/voice`, {
+      method: "PUT",
+      body: JSON.stringify({ voice_profile_id: voiceProfileId }),
+    }),
+
+  resetAndRetryTTS: (jobId: number) =>
+    apiFetch(`/jobs/${jobId}/segments/reset-tts`, { method: "POST" }),
 
   mlHealth: () =>
     apiFetch<{ tts_warmup_status?: string; adapters?: Record<string, string> }>("/ml-health"),

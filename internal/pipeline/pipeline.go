@@ -9,6 +9,8 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -427,7 +429,11 @@ func (s *Service) processOneTTSSegment(ctx context.Context, job *models.Job, seg
 		text = seg.SourceText
 	}
 
-	outputRelPath := fmt.Sprintf("jobs/%d/tts/segment-%04d.wav", job.ID, seg.Ordinal)
+	var vpID uint = 0
+	if profile != nil {
+		vpID = profile.ID
+	}
+	outputRelPath := fmt.Sprintf("jobs/%d/tts/vp%d/segment-%04d.wav", job.ID, vpID, seg.Ordinal)
 	maxAttempts := s.cfg.RetranslationMaxAttempts
 	driftThreshold := s.cfg.RetranslationDriftThreshold
 	// Effective threshold: stricter of the relative % or the absolute-seconds cap,
@@ -623,6 +629,32 @@ func (s *Service) processOneTTSSegment(ctx context.Context, job *models.Job, seg
 	return nil
 }
 
+// mergeVoiceKey returns a deterministic directory key that reflects which
+// voice profile(s) were used to synthesise the segments being merged.
+// Single profile → "vp2"; mixed → "vp1_vp2"; all default → "vp0".
+// This ensures re-running merge with a different voice profile produces a
+// separate output file instead of overwriting the previous result.
+func mergeVoiceKey(segments []models.Segment) string {
+	seen := map[uint]struct{}{}
+	for _, seg := range segments {
+		if seg.VoiceProfileID != nil {
+			seen[*seg.VoiceProfileID] = struct{}{}
+		} else {
+			seen[0] = struct{}{}
+		}
+	}
+	ids := make([]uint, 0, len(seen))
+	for id := range seen {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	parts := make([]string, len(ids))
+	for i, id := range ids {
+		parts[i] = fmt.Sprintf("vp%d", id)
+	}
+	return strings.Join(parts, "_")
+}
+
 func (s *Service) runMerge(ctx context.Context, task models.TaskPayload) error {
 	job, err := s.store.GetJob(ctx, task.JobID)
 	if err != nil {
@@ -669,13 +701,13 @@ func (s *Service) runMerge(ctx context.Context, task models.TaskPayload) error {
 		totalDurationMs = inputDurationMs
 	}
 
-	dubTrackRelPath := fmt.Sprintf("jobs/%d/output/dub_track.wav", job.ID)
+	dubTrackRelPath := fmt.Sprintf("jobs/%d/output/%s/dub_track.wav", job.ID, mergeVoiceKey(segments))
 	if err := media.RenderDubTrack(s.cfg.DataRoot, s.cfg.FFmpegBin, dubTrackRelPath, totalDurationMs, job.BgmRelPath, overlays); err != nil {
 		return fmt.Errorf("render dub track: %w", err)
 	}
 
 	if media.IsVideoFile(job.InputRelPath) {
-		outputRelPath := fmt.Sprintf("jobs/%d/output/final.mp4", job.ID)
+		outputRelPath := fmt.Sprintf("jobs/%d/output/%s/final.mp4", job.ID, mergeVoiceKey(segments))
 		if err := media.MuxVideo(s.cfg.DataRoot, s.cfg.FFmpegBin, job.InputRelPath, dubTrackRelPath, outputRelPath); err != nil {
 			return fmt.Errorf("mux final video: %w", err)
 		}
