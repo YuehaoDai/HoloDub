@@ -97,12 +97,14 @@ func (c *Client) TranslateText(ctx context.Context, sourceLanguage, targetLangua
 
 // TranslateTextWithDuration translates text with an explicit duration constraint
 // embedded in the system prompt so the model targets the right character budget.
-func (c *Client) TranslateTextWithDuration(ctx context.Context, sourceLanguage, targetLanguage, text string, targetSec float64) (string, error) {
+// charsPerSecHint, when > 0, overrides the language-based default speaking rate
+// so the prompt reflects the actual voice profile's measured speed.
+func (c *Client) TranslateTextWithDuration(ctx context.Context, sourceLanguage, targetLanguage, text string, targetSec float64, charsPerSecHint float64) (string, error) {
 	switch c.provider {
 	case "", "mock":
 		return mockTranslate(targetLanguage, text), nil
 	case "openai_compatible", "openai-compatible":
-		return c.translateWithDurationViaOpenAI(ctx, sourceLanguage, targetLanguage, text, targetSec)
+		return c.translateWithDurationViaOpenAI(ctx, sourceLanguage, targetLanguage, text, targetSec, charsPerSecHint)
 	default:
 		return "", fmt.Errorf("unsupported translation provider %q", c.provider)
 	}
@@ -114,11 +116,74 @@ type RetranslationAttempt struct {
 	ActualSec float64 // TTS output duration in seconds
 }
 
+// ContextSegment holds a source+translation pair from an adjacent segment.
+// Used to give the LLM local coherence context around the segment being retranslated.
+type ContextSegment struct {
+	SrcText string // original source-language text
+	TgtText string // already-accepted target-language translation
+}
+
+// SummarizeTranslation generates a compact episode reference card from a
+// representative sample of (source, translation) pairs produced during the
+// initial batch translation. The result is stored on the Job and injected
+// into every subsequent TTS retranslation prompt to maintain global coherence.
+//
+// sample should contain 20–30 representative ContextSegment pairs spread
+// across the episode. targetLanguage is the dubbed language (e.g. "zh").
+func (c *Client) SummarizeTranslation(ctx context.Context, sourceLanguage, targetLanguage string, sample []ContextSegment) (string, error) {
+	if c.baseURL == "" || c.apiKey == "" {
+		return "", nil // silently skip when no LLM is configured (e.g. mock mode)
+	}
+	if len(sample) == 0 {
+		return "", nil
+	}
+
+	var sb strings.Builder
+	for i, seg := range sample {
+		sb.WriteString(fmt.Sprintf("[%d] %s: %s\n    %s: %s\n", i+1, sourceLanguage, seg.SrcText, targetLanguage, seg.TgtText))
+	}
+
+	systemPrompt := fmt.Sprintf(
+		"You are a professional dubbing localization consultant.\n\n"+
+			"Below is a representative sample of (source, translation) pairs from a dubbing project.\n"+
+			"Source language: %s. Target language: %s.\n\n"+
+			"%s\n"+
+			"Based on these samples, produce a concise REFERENCE CARD (≤200 words) that a translator\n"+
+			"can consult to maintain consistency throughout the episode. Include:\n"+
+			"1. Genre / setting (e.g. anime, documentary, action film)\n"+
+			"2. Key characters or speakers with their names in both languages\n"+
+			"3. Recurring terminology, proper nouns, or technical terms with their translations\n"+
+			"4. Speaking register and tone (formal/informal, dialect, age group, etc.)\n"+
+			"5. Any notable style conventions used in this translation\n\n"+
+			"Be specific and concise. Do NOT include the sample texts in your output.",
+		sourceLanguage, targetLanguage, sb.String(),
+	)
+
+	model := c.model
+	if c.retranslationModel != "" {
+		model = c.retranslationModel
+	}
+	payload := chatCompletionRequest{
+		Model:       model,
+		Temperature: 0.3,
+		Messages: []map[string]string{
+			{"role": "system", "content": systemPrompt},
+			{"role": "user", "content": "Please produce the reference card now."},
+		},
+	}
+	return c.doChat(ctx, payload)
+}
+
 // RetranslateWithConstraint re-translates using the configured retranslation model
 // with drift-rate feedback. history contains all previous attempts (text, actualSec).
 // driftThresholdPct is the max allowed drift (e.g. 0.06 = 6%).
 // useThinking switches to the thinking model with SSE streaming when the normal
 // model has stalled (same output for multiple consecutive attempts).
+// observedCharsPerSec, when > 0, overrides the language-based default speaking rate
+// so the character ceiling reflects the actual voice's measured speed.
+// contextBefore contains the preceding 1-2 segments (src+tgt) for local coherence.
+// nextSrcText is the source text of the following segment (tone/connector reference).
+// translationSummary is the episode-level reference card generated after initial translation.
 func (c *Client) RetranslateWithConstraint(
 	ctx context.Context,
 	sourceLanguage, targetLanguage, srcText, currentTrans string,
@@ -127,6 +192,10 @@ func (c *Client) RetranslateWithConstraint(
 	driftThresholdPct float64,
 	history []RetranslationAttempt,
 	useThinking bool,
+	observedCharsPerSec float64,
+	contextBefore []ContextSegment,
+	nextSrcText string,
+	translationSummary string,
 ) (string, error) {
 	if c.baseURL == "" || c.apiKey == "" {
 		return "", errors.New("OPENAI_BASE_URL and OPENAI_API_KEY are required for retranslation")
@@ -140,6 +209,15 @@ func (c *Client) RetranslateWithConstraint(
 	}
 	limit := maxChars(targetLanguage, targetSec)
 	rate := charsPerSec(targetLanguage)
+	// Use the observed voice-specific rate when available; it overrides the
+	// language default and gives the LLM a calibrated character ceiling.
+	if observedCharsPerSec > 0 {
+		rate = observedCharsPerSec
+		limit = int(math.Ceil(targetSec * observedCharsPerSec))
+		if limit < 1 {
+			limit = 1
+		}
+	}
 	currentLen := len([]rune(currentTrans))
 	pctDiff := math.Abs(actualSec-targetSec) / targetSec * 100
 	direction := "over"
@@ -152,6 +230,8 @@ func (c *Client) RetranslateWithConstraint(
 	// show an inflated rate (e.g. 5.27 chars/sec vs the true ~5.0), pushing the ceiling
 	// too high (412 chars vs the actual sweet-spot ~395), causing the LLM to overshoot.
 	// Weighted average over all data points gives a more stable estimate.
+	// When observedCharsPerSec was already provided by the pipeline, only raise the
+	// ceiling — never lower it back to the raw history average.
 	if currentLen > 0 && actualSec > 0 {
 		totalChars := float64(currentLen)
 		totalSec := actualSec
@@ -162,10 +242,10 @@ func (c *Client) RetranslateWithConstraint(
 				totalSec += h.ActualSec
 			}
 		}
-		observedRate := totalChars / totalSec
-		observedCeiling := int(math.Ceil(targetSec * observedRate))
-		if observedCeiling > limit {
-			limit = observedCeiling
+		histRate := totalChars / totalSec
+		histCeiling := int(math.Ceil(targetSec * histRate))
+		if histCeiling > limit {
+			limit = histCeiling
 		}
 	}
 
@@ -326,6 +406,29 @@ func (c *Client) RetranslateWithConstraint(
 		charTargetInstruction, targetLanguage, targetSec,
 	)
 
+	// Build episode-level and local context blocks to append to the system prompt.
+	var contextSuffix strings.Builder
+	if translationSummary != "" {
+		contextSuffix.WriteString("\n\n[Episode reference — maintain consistency with this]\n")
+		contextSuffix.WriteString(translationSummary)
+		contextSuffix.WriteString("\n[End of episode reference]")
+	}
+	if len(contextBefore) > 0 || nextSrcText != "" {
+		contextSuffix.WriteString("\n\n[Adjacent segments — for coherence and natural flow]\n")
+		for i, seg := range contextBefore {
+			label := fmt.Sprintf("-%d", len(contextBefore)-i)
+			contextSuffix.WriteString(fmt.Sprintf("(%s) %s: %s\n     %s: %s\n", label, sourceLanguage, seg.SrcText, targetLanguage, seg.TgtText))
+		}
+		contextSuffix.WriteString(fmt.Sprintf("(→ current segment) %s: %s\n", sourceLanguage, srcText))
+		if nextSrcText != "" {
+			contextSuffix.WriteString(fmt.Sprintf("(+1) %s: %s  ← upcoming (for tone reference only, do NOT translate)\n", sourceLanguage, nextSrcText))
+		}
+		contextSuffix.WriteString("[End of adjacent segments]")
+	}
+	if contextSuffix.Len() > 0 {
+		systemPrompt += contextSuffix.String()
+	}
+
 	requestPayload := chatCompletionRequest{
 		Model:       model,
 		Temperature: c.retranslationTemperature,
@@ -395,13 +498,19 @@ func (c *Client) translateViaOpenAI(ctx context.Context, sourceLanguage, targetL
 	return c.doChat(ctx, requestPayload)
 }
 
-func (c *Client) translateWithDurationViaOpenAI(ctx context.Context, sourceLanguage, targetLanguage, text string, targetSec float64) (string, error) {
+func (c *Client) translateWithDurationViaOpenAI(ctx context.Context, sourceLanguage, targetLanguage, text string, targetSec float64, charsPerSecHint float64) (string, error) {
 	if c.baseURL == "" || c.apiKey == "" || c.model == "" {
 		return "", errors.New("OPENAI_BASE_URL, OPENAI_API_KEY and OPENAI_MODEL are required for openai_compatible provider")
 	}
 
-	limit := maxChars(targetLanguage, targetSec)
 	rate := charsPerSec(targetLanguage)
+	if charsPerSecHint > 0 {
+		rate = charsPerSecHint
+	}
+	limit := int(math.Ceil(rate * targetSec))
+	if limit < 1 {
+		limit = 1
+	}
 
 	systemPrompt := fmt.Sprintf(
 		"You translate subtitle segments for dubbing.\n\n"+

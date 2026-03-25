@@ -61,6 +61,12 @@ type Config struct {
 	RetranslationThinkingModel          string        // e.g. "kimi-k2-thinking"; MUST support stream=true
 	RetranslationThinkingTimeoutSeconds int           // timeout in seconds for thinking-mode calls (default 600)
 	RetranslationStuckThreshold         int           // consecutive same-char attempts before switching (default 2)
+	RetranslationNonConvergenceWindow   int           // trigger thinking after N attempts without drift improvement (default 3)
+	RetranslationInitialMaxAttempts     int           // max retranslation attempts for pipeline-triggered (initial) synthesis (default 50)
+	RetranslationInitialAbsMaxDriftSec  float64       // stricter absolute drift ceiling for initial synthesis, e.g. 0.75 s
+	// VoiceProfileRateAlpha: weight given to new observations when updating EstCharsPerSec
+	// via exponential moving average. 0.3 means 30% new data, 70% old estimate.
+	VoiceProfileRateAlpha float64
 
 	// ASR segmentation limits passed to the ML service smart_split call.
 	HardMaxSegmentSec float64 // absolute ceiling for any segment after post-merge; e.g. 45.0 s
@@ -203,6 +209,26 @@ func Load() (Config, error) {
 	cfg.RetranslationStuckThreshold, err = getEnvInt("RETRANSLATION_STUCK_THRESHOLD", 2)
 	if err != nil {
 		return Config{}, fmt.Errorf("parse RETRANSLATION_STUCK_THRESHOLD: %w", err)
+	}
+
+	cfg.RetranslationNonConvergenceWindow, err = getEnvInt("RETRANSLATION_NON_CONVERGENCE_WINDOW", 3)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse RETRANSLATION_NON_CONVERGENCE_WINDOW: %w", err)
+	}
+
+	cfg.RetranslationInitialMaxAttempts, err = getEnvInt("RETRANSLATION_INITIAL_MAX_ATTEMPTS", 50)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse RETRANSLATION_INITIAL_MAX_ATTEMPTS: %w", err)
+	}
+
+	cfg.RetranslationInitialAbsMaxDriftSec, err = getEnvFloat("RETRANSLATION_INITIAL_ABS_MAX_DRIFT_SEC", 0.75)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse RETRANSLATION_INITIAL_ABS_MAX_DRIFT_SEC: %w", err)
+	}
+
+	cfg.VoiceProfileRateAlpha, err = getEnvFloat("VOICE_PROFILE_RATE_ALPHA", 0.3)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse VOICE_PROFILE_RATE_ALPHA: %w", err)
 	}
 
 	cfg.HardMaxSegmentSec, err = getEnvFloat("HARD_MAX_SEGMENT_SEC", 45.0)

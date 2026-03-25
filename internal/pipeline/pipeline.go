@@ -309,16 +309,120 @@ func (s *Service) runTranslate(ctx context.Context, task models.TaskPayload) err
 	if err != nil {
 		return err
 	}
+
+	// Determine the voice-profile speaking-rate hint to pass to the LLM.
+	// Query distinct VPs already assigned to this job's segments; if any have
+	// a calibrated EstCharsPerSec, use their average as the translation hint.
+	charsPerSecHint := s.voiceRateHintForJob(ctx, job.ID, job.TargetLanguage)
+
 	for idx := range segments {
 		targetSec := float64(segments[idx].DurationMs()) / 1000.0
-		translated, err := s.llm.TranslateTextWithDuration(ctx, job.SourceLanguage, job.TargetLanguage, segments[idx].SourceText, targetSec)
+		translated, err := s.llm.TranslateTextWithDuration(ctx, job.SourceLanguage, job.TargetLanguage, segments[idx].SourceText, targetSec, charsPerSecHint)
 		if err != nil {
 			return fmt.Errorf("translate segment %d: %w", segments[idx].ID, err)
 		}
 		segments[idx].TargetText = translated
 		segments[idx].Status = "translated"
 	}
-	return s.store.UpdateSegmentTranslations(ctx, segments)
+	if err := s.store.UpdateSegmentTranslations(ctx, segments); err != nil {
+		return err
+	}
+
+	// After all translations are saved, generate a compact episode reference card.
+	// The summary is stored on the job and injected into every subsequent TTS
+	// retranslation prompt to maintain global coherence (terminology, register, etc.).
+	// We sample up to 30 segments spread evenly across the episode.
+	sample := buildTranslationSample(segments, 30)
+	if len(sample) > 0 {
+		summary, sumErr := s.llm.SummarizeTranslation(ctx, job.SourceLanguage, job.TargetLanguage, sample)
+		if sumErr != nil {
+			// Non-fatal: log and continue without summary.
+			slog.Warn("failed to generate translation summary",
+				"job_id", job.ID, "error", sumErr)
+		} else if summary != "" {
+			if storeErr := s.store.UpdateJobTranslationSummary(ctx, job.ID, summary); storeErr != nil {
+				slog.Warn("failed to store translation summary",
+					"job_id", job.ID, "error", storeErr)
+			} else {
+				slog.Info("translation summary generated",
+					"job_id", job.ID, "summary_len", len(summary))
+			}
+		}
+	}
+	return nil
+}
+
+// buildTranslationSample returns up to maxSamples (source, translation) pairs
+// sampled evenly from segments that have a non-empty TargetText.
+func buildTranslationSample(segments []models.Segment, maxSamples int) []llm.ContextSegment {
+	// Collect only segments with translations.
+	var translated []models.Segment
+	for _, seg := range segments {
+		if seg.TargetText != "" && seg.SourceText != "" {
+			translated = append(translated, seg)
+		}
+	}
+	if len(translated) == 0 {
+		return nil
+	}
+	if len(translated) <= maxSamples {
+		result := make([]llm.ContextSegment, len(translated))
+		for i, seg := range translated {
+			result[i] = llm.ContextSegment{SrcText: seg.SourceText, TgtText: seg.TargetText}
+		}
+		return result
+	}
+	// Evenly spaced sampling.
+	result := make([]llm.ContextSegment, maxSamples)
+	for i := 0; i < maxSamples; i++ {
+		idx := i * (len(translated) - 1) / (maxSamples - 1)
+		result[i] = llm.ContextSegment{SrcText: translated[idx].SourceText, TgtText: translated[idx].TargetText}
+	}
+	return result
+}
+
+// voiceRateHintForJob returns the average EstCharsPerSec across all voice profiles
+// currently assigned to segments of the given job. Returns 0 if no calibrated
+// rate is available, in which case the LLM falls back to language defaults.
+func (s *Service) voiceRateHintForJob(ctx context.Context, jobID uint, targetLang string) float64 {
+	type vpIDRow struct {
+		VoiceProfileID *uint
+	}
+	var rows []vpIDRow
+	if err := s.store.DB().WithContext(ctx).
+		Table("segments").
+		Select("DISTINCT voice_profile_id").
+		Where("job_id = ? AND voice_profile_id IS NOT NULL", jobID).
+		Scan(&rows).Error; err != nil || len(rows) == 0 {
+		return 0
+	}
+	ids := make([]uint, 0, len(rows))
+	for _, r := range rows {
+		if r.VoiceProfileID != nil {
+			ids = append(ids, *r.VoiceProfileID)
+		}
+	}
+	if len(ids) == 0 {
+		return 0
+	}
+	var profiles []models.VoiceProfile
+	if err := s.store.DB().WithContext(ctx).
+		Where("id IN ? AND est_chars_per_sec IS NOT NULL", ids).
+		Find(&profiles).Error; err != nil || len(profiles) == 0 {
+		return 0
+	}
+	var sum float64
+	var count int
+	for _, vp := range profiles {
+		if vp.EstCharsPerSec != nil && *vp.EstCharsPerSec > 0 {
+			sum += *vp.EstCharsPerSec
+			count++
+		}
+	}
+	if count == 0 {
+		return 0
+	}
+	return sum / float64(count)
 }
 
 func (s *Service) runTTSDuration(ctx context.Context, task models.TaskPayload) error {
@@ -333,6 +437,9 @@ func (s *Service) runTTSDuration(ctx context.Context, task models.TaskPayload) e
 	if len(segments) == 0 {
 		return errors.New("no segments available for tts stage")
 	}
+
+	// Pipeline-triggered synthesis uses stricter thresholds and more attempts.
+	isInitial := task.Reason == "translate_completed"
 
 	concurrency := s.cfg.TTSConcurrency
 	if concurrency < 1 {
@@ -355,7 +462,7 @@ func (s *Service) runTTSDuration(ctx context.Context, task models.TaskPayload) e
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			if err := s.processOneTTSSegment(ctx, job, segments, idx); err != nil {
+			if err := s.processOneTTSSegment(ctx, job, segments, idx, isInitial); err != nil {
 				errMu.Lock()
 				if firstErr == nil {
 					firstErr = err
@@ -380,10 +487,46 @@ func (s *Service) runTTSDuration(ctx context.Context, task models.TaskPayload) e
 	for _, idx := range processedIdx {
 		processed = append(processed, segments[idx])
 	}
+
+	// Update each voice profile's empirical speaking rate from this batch.
+	// Group synthesized segments by VP and compute the average chars/sec.
+	vpRateAccum := map[uint][]float64{}
+	for _, idx := range processedIdx {
+		seg := segments[idx]
+		if seg.TTSDurationMs <= 0 || seg.TargetText == "" {
+			continue
+		}
+		chars := len([]rune(seg.TargetText))
+		if chars == 0 {
+			continue
+		}
+		durationSec := float64(seg.TTSDurationMs) / 1000.0
+		rate := float64(chars) / durationSec
+		var vpID uint = 0
+		if seg.VoiceProfileID != nil {
+			vpID = *seg.VoiceProfileID
+		}
+		vpRateAccum[vpID] = append(vpRateAccum[vpID], rate)
+	}
+	for vpID, rates := range vpRateAccum {
+		if vpID == 0 {
+			continue // skip default (nil) voice — no VP record to update
+		}
+		var sum float64
+		for _, r := range rates {
+			sum += r
+		}
+		avgRate := sum / float64(len(rates))
+		if updateErr := s.store.UpdateVoiceProfileSpeakingRate(context.Background(), vpID, avgRate, s.cfg.VoiceProfileRateAlpha); updateErr != nil {
+			slog.Warn("failed to update voice profile speaking rate",
+				"vp_id", vpID, "avg_rate", avgRate, "error", updateErr)
+		}
+	}
+
 	return s.store.UpdateSegmentSynthResults(ctx, processed)
 }
 
-func (s *Service) processOneTTSSegment(ctx context.Context, job *models.Job, segments []models.Segment, idx int) error {
+func (s *Service) processOneTTSSegment(ctx context.Context, job *models.Job, segments []models.Segment, idx int, isInitial bool) error {
 	seg := &segments[idx]
 	voiceConfig := map[string]any{}
 	profile, err := s.store.ResolveVoiceProfileForSegment(ctx, job.ID, *seg)
@@ -434,19 +577,63 @@ func (s *Service) processOneTTSSegment(ctx context.Context, job *models.Job, seg
 		vpID = profile.ID
 	}
 	outputRelPath := fmt.Sprintf("jobs/%d/tts/vp%d/segment-%04d.wav", job.ID, vpID, seg.Ordinal)
+
+	// isInitial uses a stricter drift ceiling and more retranslation attempts;
+	// manual retries keep the original (looser) settings for quick tweaks.
+	absMaxDriftSec := s.cfg.RetranslationAbsMaxDriftSec
 	maxAttempts := s.cfg.RetranslationMaxAttempts
+	if isInitial {
+		absMaxDriftSec = s.cfg.RetranslationInitialAbsMaxDriftSec
+		maxAttempts = s.cfg.RetranslationInitialMaxAttempts
+	}
+
 	driftThreshold := s.cfg.RetranslationDriftThreshold
 	// Effective threshold: stricter of the relative % or the absolute-seconds cap,
 	// but never below the minimum relative floor (prevents impossibly strict targets
 	// for very long segments, e.g. 0.8s / 105.9s = 0.76% is unreachable).
-	if s.cfg.RetranslationAbsMaxDriftSec > 0 && targetSec > 0 {
-		absThreshold := s.cfg.RetranslationAbsMaxDriftSec / targetSec
+	if absMaxDriftSec > 0 && targetSec > 0 {
+		absThreshold := absMaxDriftSec / targetSec
 		if absThreshold < driftThreshold {
 			driftThreshold = absThreshold
 		}
 	}
 	if s.cfg.RetranslationMinDriftThreshold > 0 && driftThreshold < s.cfg.RetranslationMinDriftThreshold {
 		driftThreshold = s.cfg.RetranslationMinDriftThreshold
+	}
+
+	// Voice-adaptive speaking rate: start from VP's calibrated rate if available,
+	// then update from empirical TTS results within this segment's retry loop.
+	var observedCharsPerSec float64
+	if profile != nil && profile.EstCharsPerSec != nil && *profile.EstCharsPerSec > 0 {
+		observedCharsPerSec = *profile.EstCharsPerSec
+	}
+	var totalObsChars int
+	var totalObsSec float64
+
+	// Build the local context window (prev 2 segments) and forward hint (next 1 source).
+	// These are passed to every retranslation call to improve coherence and natural flow.
+	var contextBefore []llm.ContextSegment
+	for i := max(0, idx-2); i < idx; i++ {
+		if segments[i].SourceText != "" && segments[i].TargetText != "" {
+			contextBefore = append(contextBefore, llm.ContextSegment{
+				SrcText: segments[i].SourceText,
+				TgtText: segments[i].TargetText,
+			})
+		}
+	}
+	var nextSrcText string
+	if idx+1 < len(segments) {
+		nextSrcText = segments[idx+1].SourceText
+	}
+
+	// Non-convergence and best-result tracking.
+	var bestAbsDrift float64 = math.MaxFloat64
+	var bestText string
+	var bestActualMs int64
+	var attemptsWithoutImprovement int
+	nonConvergenceWindow := s.cfg.RetranslationNonConvergenceWindow
+	if nonConvergenceWindow <= 0 {
+		nonConvergenceWindow = 3
 	}
 
 	var response *ml.TTSResponse
@@ -476,6 +663,25 @@ func (s *Service) processOneTTSSegment(ctx context.Context, job *models.Job, seg
 		actualSec := float64(actualMs) / 1000.0
 		overflowMs := actualMs - targetMs
 
+		// Update observed speaking rate with this run's data.
+		obsChars := len([]rune(text))
+		if obsChars > 0 && actualSec > 0 {
+			totalObsChars += obsChars
+			totalObsSec += actualSec
+			observedCharsPerSec = float64(totalObsChars) / totalObsSec
+		}
+
+		// Update non-convergence and best-result tracking.
+		absDrift := math.Abs(actualSec - targetSec)
+		if absDrift < bestAbsDrift {
+			bestAbsDrift = absDrift
+			bestText = text
+			bestActualMs = actualMs
+			attemptsWithoutImprovement = 0
+		} else {
+			attemptsWithoutImprovement++
+		}
+
 		// --- Overflow policy ---
 		// Case 1: no overflow, or overflow within drift threshold — accept.
 		if overflowMs <= 0 {
@@ -489,12 +695,10 @@ func (s *Service) processOneTTSSegment(ctx context.Context, job *models.Job, seg
 			borrowableMs := gapAfterMs - breathMarginMs
 			overDrift := float64(actualMs-targetMs) / float64(targetMs)
 			// Apply the absolute-seconds cap to the borrow threshold so that long segments
-			// (e.g. 78s) are held to the same ±0.8s absolute ceiling as the retranslation
-			// threshold.  Do NOT add the min-floor here — the borrow path should remain
-			// strict for long segments.
+			// (e.g. 78s) are held to the same absolute ceiling as the retranslation threshold.
 			maxBorrowDriftPct := s.cfg.RetranslationMaxBorrowDriftPct
-			if s.cfg.RetranslationAbsMaxDriftSec > 0 && targetMs > 0 {
-				absCap := s.cfg.RetranslationAbsMaxDriftSec / (float64(targetMs) / 1000.0)
+			if absMaxDriftSec > 0 && targetMs > 0 {
+				absCap := absMaxDriftSec / (float64(targetMs) / 1000.0)
 				if absCap < maxBorrowDriftPct {
 					maxBorrowDriftPct = absCap
 				}
@@ -552,6 +756,10 @@ func (s *Service) processOneTTSSegment(ctx context.Context, job *models.Job, seg
 			)
 		}
 
+		// thinking is triggered either by consecutive same-char stall OR by
+		// non-convergence (N attempts without improving best drift).
+		useThinking := consecutiveSameChars >= stuckThreshold || attemptsWithoutImprovement >= nonConvergenceWindow
+
 		newText, retErr := s.llm.RetranslateWithConstraint(
 			ctx,
 			job.SourceLanguage, job.TargetLanguage,
@@ -560,7 +768,11 @@ func (s *Service) processOneTTSSegment(ctx context.Context, job *models.Job, seg
 			attempt+1, maxAttempts,
 			driftThreshold,
 			retryHistory,
-			consecutiveSameChars >= stuckThreshold,
+			useThinking,
+			observedCharsPerSec,
+			contextBefore,
+			nextSrcText,
+			job.TranslationSummary,
 		)
 		if retErr != nil {
 			slog.Warn("re-translation failed, accepting current result",
@@ -578,7 +790,8 @@ func (s *Service) processOneTTSSegment(ctx context.Context, job *models.Job, seg
 			"prev_chars", len([]rune(text)),
 			"new_chars", len([]rune(newText)),
 			"prev_actual_sec", actualSec,
-			"use_thinking", consecutiveSameChars >= stuckThreshold,
+			"use_thinking", useThinking,
+			"obs_chars_per_sec", observedCharsPerSec,
 		)
 		retryHistory = append(retryHistory, llm.RetranslationAttempt{Text: text, ActualSec: actualSec})
 		if len([]rune(newText)) == len([]rune(text)) {
@@ -612,6 +825,40 @@ func (s *Service) processOneTTSSegment(ctx context.Context, job *models.Job, seg
 				"segment_id", seg.ID,
 				"error", saveErr,
 			)
+		}
+	}
+
+	// Best-result restoration: if the loop exit left us with a worse result than
+	// the best seen mid-loop (by more than 0.1 s), re-run TTS with the best text
+	// so the stored audio matches the optimal translation found.
+	if bestText != "" && bestText != text {
+		currentAbsDrift := math.Abs(float64(response.ActualDurationMs)/1000.0 - targetSec)
+		if bestAbsDrift < currentAbsDrift-0.1 {
+			slog.Info("tts best-result restore",
+				"job_id", job.ID,
+				"segment_id", seg.ID,
+				"best_drift_sec", bestAbsDrift,
+				"final_drift_sec", currentAbsDrift,
+				"best_actual_ms", bestActualMs,
+			)
+			bestResp, bestErr := s.ml.RunTTS(ctx, ml.TTSRequest{
+				Text:              bestText,
+				TargetDurationSec: targetSec,
+				MaxAllowedSec:     maxAllowedSec,
+				VoiceConfig:       voiceConfig,
+				OutputRelPath:     outputRelPath,
+			})
+			if bestErr == nil {
+				response = bestResp
+			}
+			seg.TargetText = bestText
+			if saveErr := s.store.UpdateSegmentTranslations(ctx, []models.Segment{*seg}); saveErr != nil {
+				slog.Warn("failed to persist best-attempt text",
+					"job_id", job.ID,
+					"segment_id", seg.ID,
+					"error", saveErr,
+				)
+			}
 		}
 	}
 

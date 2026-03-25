@@ -54,6 +54,10 @@ type Job struct {
 	OutputRelPath     string            `json:"output_relpath"`
 	Config            datatypes.JSONMap `json:"config" gorm:"type:jsonb"`
 	ErrorMessage      string            `json:"error_message" gorm:"type:text"`
+	// TranslationSummary is a compact LLM-generated reference card produced after the
+	// initial batch translation. It captures topic, characters, key terminology and
+	// register so that later TTS retranslations maintain global coherence.
+	TranslationSummary string            `json:"translation_summary" gorm:"type:text"`
 	RetryCount        int               `json:"retry_count"`
 	MaxRetries        int               `json:"max_retries"`
 	WebhookURL        string            `json:"webhook_url"`
@@ -87,6 +91,10 @@ type VoiceProfile struct {
 	ValidationError   string            `json:"validation_error" gorm:"type:text"`
 	ValidatedAt       *time.Time        `json:"validated_at"`
 	Meta              datatypes.JSONMap `json:"meta" gorm:"type:jsonb"`
+	// EstCharsPerSec is an empirically calibrated speaking rate for the target language.
+	// Populated automatically from TTS synthesis results via exponential moving average.
+	// nil means no data yet; use language-based default instead.
+	EstCharsPerSec    *float64          `json:"est_chars_per_sec,omitempty"`
 	CreatedAt         time.Time         `json:"created_at"`
 	UpdatedAt         time.Time         `json:"updated_at"`
 }

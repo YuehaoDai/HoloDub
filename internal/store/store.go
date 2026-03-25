@@ -104,6 +104,15 @@ func (s *Store) SaveJob(ctx context.Context, job *models.Job) error {
 	return s.db.WithContext(ctx).Save(job).Error
 }
 
+func (s *Store) UpdateJobTranslationSummary(ctx context.Context, jobID uint, summary string) error {
+	return s.db.WithContext(ctx).Model(&models.Job{}).
+		Where("id = ?", jobID).
+		Updates(map[string]any{
+			"translation_summary": summary,
+			"updated_at":          time.Now().UTC(),
+		}).Error
+}
+
 func (s *Store) TouchJobHeartbeat(ctx context.Context, jobID uint) error {
 	now := time.Now().UTC()
 	return s.db.WithContext(ctx).Model(&models.Job{}).
@@ -174,6 +183,35 @@ func (s *Store) UpdateVoiceProfileValidation(ctx context.Context, profileID uint
 		updates["validated_at"] = &now
 	}
 	return s.db.WithContext(ctx).Model(&models.VoiceProfile{}).Where("id = ?", profileID).Updates(updates).Error
+}
+
+// UpdateVoiceProfileSpeakingRate updates the empirical speaking-rate estimate for a
+// voice profile using an exponential moving average:
+//
+//	if EstCharsPerSec is nil (first calibration): new = observedRate
+//	otherwise: new = alpha * observedRate + (1 - alpha) * old
+//
+// alpha should be in (0, 1]; 0.3 is a reasonable default (30% new data).
+func (s *Store) UpdateVoiceProfileSpeakingRate(ctx context.Context, vpID uint, observedRate float64, alpha float64) error {
+	if observedRate <= 0 {
+		return nil
+	}
+	if alpha <= 0 || alpha > 1 {
+		alpha = 0.3
+	}
+	var vp models.VoiceProfile
+	if err := s.db.WithContext(ctx).First(&vp, vpID).Error; err != nil {
+		return err
+	}
+	var newRate float64
+	if vp.EstCharsPerSec == nil {
+		newRate = observedRate
+	} else {
+		newRate = alpha*observedRate + (1-alpha)*(*vp.EstCharsPerSec)
+	}
+	return s.db.WithContext(ctx).Model(&models.VoiceProfile{}).
+		Where("id = ?", vpID).
+		Update("est_chars_per_sec", newRate).Error
 }
 
 func (s *Store) ReplaceSegments(ctx context.Context, jobID uint, drafts []models.SegmentDraft) error {
@@ -445,11 +483,8 @@ func (s *Store) ResolveVoiceProfileForSegment(ctx context.Context, jobID uint, s
 	}
 	// Priority 2: speaker-level binding
 	if segment.SpeakerID == nil {
-		var profile models.VoiceProfile
-		if err := s.db.WithContext(ctx).Order("id asc").First(&profile).Error; err != nil {
-			return nil, err
-		}
-		return &profile, nil
+		// No speaker assigned — use default TTS voice (no profile).
+		return nil, nil
 	}
 	var binding models.SpeakerVoiceBinding
 	err := s.db.WithContext(ctx).
@@ -458,11 +493,8 @@ func (s *Store) ResolveVoiceProfileForSegment(ctx context.Context, jobID uint, s
 		Where("speaker_id = ?", *segment.SpeakerID).
 		First(&binding).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		var profile models.VoiceProfile
-		if err := s.db.WithContext(ctx).Order("id asc").First(&profile).Error; err != nil {
-			return nil, err
-		}
-		return &profile, nil
+		// Speaker exists but has no voice binding — use default TTS voice.
+		return nil, nil
 	}
 	if err != nil {
 		return nil, err
