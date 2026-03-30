@@ -326,6 +326,231 @@ Default is `zh-CN-XiaoxiaoNeural` (female, conversational). Override with `EDGE_
 
 ---
 
+## 🐧 Deploying to a Linux Server
+
+This section covers running HoloDub on a headless Linux GPU server (cloud VM or bare-metal).  
+No Docker Desktop is needed — everything runs with Docker Engine + NVIDIA Container Toolkit.
+
+### Hardware requirements
+
+| Component | Minimum | Recommended |
+|-----------|---------|-------------|
+| GPU VRAM | 8 GB | 16–24 GB (enables `GPU_CONCURRENCY=2`) |
+| System RAM | 16 GB | 32 GB |
+| CPU | 4 cores | 8+ cores |
+| Disk | 50 GB free | 200 GB+ (models ~10 GB, data grows with videos) |
+| CUDA | 11.8+ | 12.x |
+
+> The indexTTS2 model suite weighs ~5 GB; Faster-Whisper large-v3 adds ~3 GB.  
+> Plan for at least 20 GB under `./hf-cache` + `./data` combined.
+
+---
+
+### Step 1 — Install Docker Engine & NVIDIA Container Toolkit
+
+```bash
+# Docker Engine (Ubuntu / Debian)
+curl -fsSL https://get.docker.com | sh
+sudo usermod -aG docker $USER   # log out and back in after this
+
+# NVIDIA Container Toolkit
+curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | \
+  sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \
+  sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
+  sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+sudo apt-get update && sudo apt-get install -y nvidia-container-toolkit
+sudo nvidia-ctk runtime configure --runtime=docker
+sudo systemctl restart docker
+
+# Verify GPU is visible inside Docker
+docker run --rm --gpus all nvidia/cuda:12.8.0-base-ubuntu22.04 nvidia-smi
+```
+
+---
+
+### Step 2 — Clone and configure
+
+```bash
+git clone https://github.com/YuehaoDai/HoloDub.git
+cd HoloDub
+cp .env.example .env
+```
+
+Edit `.env` for production use.  At a minimum set:
+
+```env
+# Real translation
+TRANSLATION_PROVIDER=openai_compatible
+OPENAI_BASE_URL=https://api.deepseek.com/v1
+OPENAI_API_KEY=sk-xxxxxx
+OPENAI_MODEL=deepseek-chat
+RETRANSLATION_MODEL=deepseek-chat   # or any model on the same endpoint
+
+# Real ML backends
+ML_PYTHON_EXTRAS=real
+ML_ASR_BACKEND=faster_whisper
+FASTER_WHISPER_MODEL=large-v3
+ML_TTS_BACKEND=indextts2
+INDEXTTS2_INLINE=true
+
+# Timeouts — bump for very long videos (seconds)
+STAGE_TIMEOUT_SECONDS=14400
+
+# Security — set a strong random token to protect the API
+API_AUTH_TOKEN=<generate with: openssl rand -hex 32>
+```
+
+> **Tip**: run `openssl rand -hex 32` on the server to generate a secure token,  
+> then set the same value in the UI (or `Authorization: Bearer <token>` header) to access the API.
+
+---
+
+### Step 3 — Build and start
+
+```bash
+# Build the ML service image (~10-20 min on first run)
+docker compose build ml-service
+
+# Start all services in production mode
+docker compose -f docker-compose.yml -f docker-compose.staging.yml --env-file .env up -d
+```
+
+`docker-compose.staging.yml` adds `restart: unless-stopped` to every service so they survive reboots automatically.
+
+Check that everything came up:
+
+```bash
+docker compose ps
+docker compose logs -f worker      # pipeline logs
+docker compose logs -f ml-service  # model loading / TTS logs
+```
+
+Open `http://<server-ip>:8080/ui/` in your browser.
+
+---
+
+### Step 4 — Pre-download model weights (recommended)
+
+On first start `ml-service` downloads Whisper large-v3 (~3 GB) and IndexTTS2 (~5 GB) from HuggingFace.  
+Downloads happen inside the container and can take 10–30 min depending on bandwidth.
+
+To monitor progress:
+
+```bash
+docker compose logs -f ml-service
+```
+
+If the XetHub protocol stalls (large `.incomplete` files stop growing), use the workaround from the Known Issues section:
+
+```bash
+docker exec -it holodub-ml-service-1 python3 /data/dl_gpt.py
+```
+
+All weights land in `./hf-cache` (mounted as `/root/.cache/huggingface`) and persist across container restarts and rebuilds.
+
+---
+
+### Step 5 — Firewall and reverse proxy
+
+By default port `8080` is exposed on all interfaces.  Either restrict it at the firewall level or put Nginx/Caddy in front.
+
+**Minimal ufw rules:**
+
+```bash
+sudo ufw allow ssh
+sudo ufw allow 8080/tcp   # or restrict to your IP: ufw allow from <your-ip> to any port 8080
+sudo ufw enable
+```
+
+**Minimal Caddy reverse proxy** (auto-HTTPS with a domain):
+
+```
+example.com {
+    reverse_proxy localhost:8080
+}
+```
+
+When behind a trusted reverse proxy, also set in `.env`:
+
+```env
+TRUSTED_PROXIES=127.0.0.1
+```
+
+---
+
+### Migrating data from an existing instance
+
+If you are moving from a Windows/Docker Desktop setup to a Linux server, transfer three things:
+
+#### 1. PostgreSQL database
+
+```bash
+# On the source machine (Windows — run in WSL or Git Bash)
+docker exec holodub-postgres-1 \
+  pg_dump -U holodub -Fc holodub > holodub.dump
+
+scp holodub.dump user@server:/home/user/
+
+# On the Linux server (after docker compose is running)
+docker exec -i holodub-postgres-1 \
+  pg_restore -U holodub -d holodub --clean --if-exists < /home/user/holodub.dump
+```
+
+#### 2. Job data (`./data`)
+
+```bash
+# From source machine — rsync over SSH (adjust paths as needed)
+rsync -avz --progress ./data/ user@server:/path/to/HoloDub/data/
+```
+
+> `./data` holds all uploaded videos, separated audio, TTS output, and merged videos.  
+> It can be large (tens of GB for long projects); use `--bwlimit=5000` to cap bandwidth.
+
+#### 3. Model cache (`./hf-cache`)
+
+```bash
+# Option A — rsync (fastest if source already has everything downloaded)
+rsync -avz --progress ./hf-cache/ user@server:/path/to/HoloDub/hf-cache/
+
+# Option B — let ml-service re-download on first start (simpler, slower)
+# Just skip this step; the cache will be rebuilt automatically.
+```
+
+After transfer, restart the stack on the server:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.staging.yml --env-file .env up -d
+```
+
+---
+
+### Common Linux commands
+
+```bash
+docker compose ps                          # service status
+docker compose logs -f worker              # tail worker logs
+docker compose logs -f ml-service          # ML service logs
+docker compose --env-file .env up -d       # restart with explicit env file
+
+# Check GPU utilisation inside the ml-service container
+docker exec holodub-ml-service-1 nvidia-smi
+
+# Submit a test job from the server
+curl -s -X POST http://localhost:8080/jobs \
+  -H "Content-Type: application/json" \
+  -d '{"input_relpath":"input-smoke.mp4","target_language":"zh","auto_start":true}' \
+  | python3 -m json.tool
+
+# Clear a stale Redis stage lease (if a job is stuck)
+docker exec holodub-redis-1 redis-cli DEL holodub:lease:job:<id>:stage:<stage>
+
+# Stop and clean up (keeps ./data and postgres-data volume)
+docker compose down
+```
+
+---
+
 ## 🎙 IndexTTS2 — zero-shot dubbing (available now)
 
 [IndexTTS2](https://github.com/index-tts/index-tts) (Bilibili, Apache 2.0) is the primary TTS backend HoloDub is built for. The `indextts2-inference` package is now **integrated and tested** inside `ml-service`.

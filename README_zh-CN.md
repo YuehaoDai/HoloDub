@@ -317,6 +317,231 @@ docker compose --env-file .env up -d      # 显式指定 .env 重启（推荐）
 
 ---
 
+## 🐧 部署到 Linux 服务器
+
+本节介绍如何在无桌面环境的 Linux GPU 服务器（云主机或裸金属机）上运行 HoloDub。  
+无需 Docker Desktop，只需 Docker Engine + NVIDIA Container Toolkit 即可。
+
+### 硬件要求
+
+| 组件 | 最低要求 | 推荐配置 |
+|------|---------|---------|
+| GPU 显存 | 8 GB | 16–24 GB（可开启 `GPU_CONCURRENCY=2`） |
+| 内存 | 16 GB | 32 GB |
+| CPU | 4 核 | 8 核+ |
+| 磁盘 | 50 GB 可用 | 200 GB+（模型约 10 GB，数据随视频增长） |
+| CUDA | 11.8+ | 12.x |
+
+> IndexTTS2 模型约 5 GB，Faster-Whisper large-v3 约 3 GB。  
+> `./hf-cache` + `./data` 合计至少预留 20 GB。
+
+---
+
+### 第一步 — 安装 Docker Engine 和 NVIDIA Container Toolkit
+
+```bash
+# Docker Engine（Ubuntu / Debian）
+curl -fsSL https://get.docker.com | sh
+sudo usermod -aG docker $USER   # 执行后退出并重新登录
+
+# NVIDIA Container Toolkit
+curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | \
+  sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \
+  sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
+  sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+sudo apt-get update && sudo apt-get install -y nvidia-container-toolkit
+sudo nvidia-ctk runtime configure --runtime=docker
+sudo systemctl restart docker
+
+# 验证 Docker 内 GPU 可见
+docker run --rm --gpus all nvidia/cuda:12.8.0-base-ubuntu22.04 nvidia-smi
+```
+
+---
+
+### 第二步 — 克隆仓库并配置环境变量
+
+```bash
+git clone https://github.com/YuehaoDai/HoloDub.git
+cd HoloDub
+cp .env.example .env
+```
+
+编辑 `.env`，至少配置以下字段：
+
+```env
+# 真实翻译
+TRANSLATION_PROVIDER=openai_compatible
+OPENAI_BASE_URL=https://api.deepseek.com/v1
+OPENAI_API_KEY=sk-xxxxxx
+OPENAI_MODEL=deepseek-chat
+RETRANSLATION_MODEL=deepseek-chat   # 或同一接口上的其他模型
+
+# 真实 ML 后端
+ML_PYTHON_EXTRAS=real
+ML_ASR_BACKEND=faster_whisper
+FASTER_WHISPER_MODEL=large-v3
+ML_TTS_BACKEND=indextts2
+INDEXTTS2_INLINE=true
+
+# 超时时间——长视频建议调大（单位秒）
+STAGE_TIMEOUT_SECONDS=14400
+
+# 安全——设置强随机 token 保护 API
+API_AUTH_TOKEN=<用 openssl rand -hex 32 生成>
+```
+
+> **提示**：在服务器上运行 `openssl rand -hex 32` 生成 token，  
+> 然后在 UI 或请求头 `Authorization: Bearer <token>` 中填入相同的值。
+
+---
+
+### 第三步 — 构建并启动
+
+```bash
+# 首次构建 ML 服务镜像（约 10–20 分钟）
+docker compose build ml-service
+
+# 以生产模式启动所有服务
+docker compose -f docker-compose.yml -f docker-compose.staging.yml --env-file .env up -d
+```
+
+`docker-compose.staging.yml` 会给每个服务添加 `restart: unless-stopped`，服务器重启后自动恢复。
+
+检查运行状态：
+
+```bash
+docker compose ps
+docker compose logs -f worker      # 流水线日志
+docker compose logs -f ml-service  # 模型加载 / TTS 日志
+```
+
+在浏览器打开 `http://<服务器IP>:8080/ui/`。
+
+---
+
+### 第四步 — 预下载模型权重（推荐）
+
+`ml-service` 首次启动时会从 HuggingFace 下载 Whisper large-v3（约 3 GB）和 IndexTTS2（约 5 GB），  
+根据带宽不同可能需要 10–30 分钟。
+
+监控下载进度：
+
+```bash
+docker compose logs -f ml-service
+```
+
+如果 XetHub 协议卡住（大文件的 `.incomplete` 停止增长），使用已知问题章节中的解决方案：
+
+```bash
+docker exec -it holodub-ml-service-1 python3 /data/dl_gpt.py
+```
+
+所有权重存储在 `./hf-cache`（挂载为 `/root/.cache/huggingface`），重启和重建镜像后均可持久保留。
+
+---
+
+### 第五步 — 防火墙与反向代理
+
+默认 `8080` 端口对所有网卡开放。建议在防火墙层面限制访问，或在前面架设 Nginx/Caddy。
+
+**最简 ufw 规则：**
+
+```bash
+sudo ufw allow ssh
+sudo ufw allow 8080/tcp   # 或限定 IP：ufw allow from <your-ip> to any port 8080
+sudo ufw enable
+```
+
+**最简 Caddy 反向代理**（自动 HTTPS，需要域名）：
+
+```
+example.com {
+    reverse_proxy localhost:8080
+}
+```
+
+使用反向代理时，`.env` 中还需设置：
+
+```env
+TRUSTED_PROXIES=127.0.0.1
+```
+
+---
+
+### 从现有实例迁移数据
+
+如果你要从 Windows/Docker Desktop 迁移到 Linux 服务器，需要迁移以下三项内容：
+
+#### 1. PostgreSQL 数据库
+
+```bash
+# 在源机器上（Windows — 在 WSL 或 Git Bash 中执行）
+docker exec holodub-postgres-1 \
+  pg_dump -U holodub -Fc holodub > holodub.dump
+
+scp holodub.dump user@server:/home/user/
+
+# 在 Linux 服务器上（docker compose 启动后执行）
+docker exec -i holodub-postgres-1 \
+  pg_restore -U holodub -d holodub --clean --if-exists < /home/user/holodub.dump
+```
+
+#### 2. 任务数据（`./data`）
+
+```bash
+# 从源机器通过 SSH 同步（根据实际路径调整）
+rsync -avz --progress ./data/ user@server:/path/to/HoloDub/data/
+```
+
+> `./data` 存放所有上传的视频、分离音频、TTS 输出和合成视频。  
+> 大型项目可达数十 GB，可用 `--bwlimit=5000` 限速（单位 KB/s）。
+
+#### 3. 模型缓存（`./hf-cache`）
+
+```bash
+# 方案 A — rsync（源机器已有缓存时最快）
+rsync -avz --progress ./hf-cache/ user@server:/path/to/HoloDub/hf-cache/
+
+# 方案 B — 让 ml-service 首次启动时重新下载（更简单，较慢）
+# 跳过此步骤，缓存会自动重建。
+```
+
+迁移完成后，在服务器上重启整个 stack：
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.staging.yml --env-file .env up -d
+```
+
+---
+
+### 常用 Linux 命令
+
+```bash
+docker compose ps                          # 查看服务状态
+docker compose logs -f worker              # 实时查看 worker 日志
+docker compose logs -f ml-service          # 实时查看 ML 服务日志
+docker compose --env-file .env up -d       # 使用指定 env 文件重启
+
+# 在 ml-service 容器内查看 GPU 使用情况
+docker exec holodub-ml-service-1 nvidia-smi
+
+# 从服务器提交测试任务
+curl -s -X POST http://localhost:8080/jobs \
+  -H "Content-Type: application/json" \
+  -d '{"input_relpath":"input-smoke.mp4","target_language":"zh","auto_start":true}' \
+  | python3 -m json.tool
+
+# 清除卡住的 Redis stage lease（任务卡死时使用）
+docker exec holodub-redis-1 redis-cli DEL holodub:lease:job:<id>:stage:<stage>
+
+# 停止并清理（保留 ./data 和 postgres-data 卷）
+docker compose down
+```
+
+---
+
 ## 🎙 IndexTTS2 零样本配音（已可用）
 
 [IndexTTS2](https://github.com/index-tts/index-tts)（Bilibili 发布，Apache 2.0）是 HoloDub 的核心 TTS 后端。  
