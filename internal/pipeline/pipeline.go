@@ -538,6 +538,13 @@ func (s *Service) processOneTTSSegment(ctx context.Context, job *models.Job, seg
 		if err != nil {
 			return fmt.Errorf("build voice config for segment %d: %w", seg.ID, err)
 		}
+	} else if job.VocalsRelPath != "" {
+		// No voice profile assigned: fall back to the current job's separated
+		// vocals so TTS clones the actual speaker from this video, not the
+		// global test_ref.wav which belongs to an unrelated previous recording.
+		voiceConfig = map[string]any{
+			"sample_relpaths": []string{job.VocalsRelPath},
+		}
 	}
 
 	targetMs := seg.DurationMs()
