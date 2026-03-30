@@ -35,17 +35,19 @@ def test_no_split_when_word_count_below_minimum():
 
 def test_splits_on_sentence_ending_punctuation_with_enough_words():
     """≥5 words + sentence-ending punctuation → split, both halves kept."""
+    # Gap between the two phrases must be ≥ 800 ms so _merge_close_gap_segments
+    # does not re-absorb the second segment.
     words = _make_words([
         ("This",      0,    300),
         ("is",        320,  500),
         ("a",         520,  600),
         ("complete",  620,  900),
-        ("sentence.", 920,  1400),   # 5th word, ends sentence
-        ("And",       1420, 1700),
-        ("this",      1720, 1900),
-        ("is",        1920, 2100),
-        ("another",   2120, 2400),
-        ("one",       2420, 2700),
+        ("sentence.", 920,  1400),   # 5th word, ends sentence; gap to next = 900 ms
+        ("And",       2300, 2580),
+        ("this",      2600, 2780),
+        ("is",        2800, 2980),
+        ("another",   3000, 3280),
+        ("one",       3300, 3600),
     ])
     segments = segment_words(words, min_segment_sec=1.0, max_segment_sec=10.0)
 
@@ -127,17 +129,19 @@ def test_comma_does_not_split():
 
 def test_max_duration_forces_split():
     """max_duration split fires even without punctuation or a silence gap."""
+    # Gap after "five" must be ≥ 800 ms so _merge_close_gap_segments does not
+    # re-merge the two halves after the max_duration boundary is committed.
     words = _make_words([
         ("one",   0,    500),
         ("two",   510,  1000),
         ("three", 1010, 1500),
         ("four",  1510, 2000),
         ("five",  2010, 2500),   # duration = 2500 ms == max → split here
-        ("six",   2510, 3000),
-        ("seven", 3010, 3500),
-        ("eight", 3510, 4000),
-        ("nine",  4010, 4500),
-        ("ten",   4510, 5000),
+        ("six",   3400, 3900),   # gap = 900 ms ≥ 800 ms; no close-gap merge
+        ("seven", 3910, 4400),
+        ("eight", 4410, 4900),
+        ("nine",  4910, 5400),
+        ("ten",   5410, 5900),
     ])
     segments = segment_words(words, min_segment_sec=1.0, max_segment_sec=2.5)
 
