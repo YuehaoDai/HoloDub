@@ -59,6 +59,7 @@ func (s *Store) AutoMigrate() error {
 		&models.Segment{},
 		&models.JobStageRun{},
 		&models.TenantQuota{},
+		&models.SegmentSuggestion{},
 	)
 }
 
@@ -646,4 +647,259 @@ func UniqueUint(values []uint) []uint {
 	cloned := slices.Clone(values)
 	slices.Sort(cloned)
 	return slices.Compact(cloned)
+}
+
+// ── Segment suggestions (segment_review stage) ────────────────────────────────
+
+// CreateSuggestions bulk-inserts LLM-generated review suggestions for a job.
+// Any existing suggestions for the job are deleted first so that re-running
+// segment_review is always idempotent.
+func (s *Store) CreateSuggestions(ctx context.Context, jobID uint, suggestions []models.SegmentSuggestion) error {
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("job_id = ?", jobID).Delete(&models.SegmentSuggestion{}).Error; err != nil {
+			return err
+		}
+		if len(suggestions) == 0 {
+			return nil
+		}
+		for i := range suggestions {
+			suggestions[i].JobID = jobID
+			suggestions[i].Status = "pending"
+		}
+		return tx.Create(&suggestions).Error
+	})
+}
+
+// ListSuggestions returns all suggestions for a job ordered by ordinal.
+func (s *Store) ListSuggestions(ctx context.Context, jobID uint) ([]models.SegmentSuggestion, error) {
+	var items []models.SegmentSuggestion
+	err := s.db.WithContext(ctx).
+		Where("job_id = ?", jobID).
+		Order("ordinal asc").
+		Find(&items).Error
+	return items, err
+}
+
+// UpdateSuggestionStatus sets the status of a single suggestion.
+// A suggestion that is already accepted or rejected is not modified.
+func (s *Store) UpdateSuggestionStatus(ctx context.Context, suggestionID uint, status string) error {
+	return s.db.WithContext(ctx).
+		Model(&models.SegmentSuggestion{}).
+		Where("id = ? AND status = 'pending'", suggestionID).
+		Updates(map[string]any{
+			"status":     status,
+			"updated_at": time.Now().UTC(),
+		}).Error
+}
+
+// DeleteSuggestionsForJob removes all suggestions for a job.
+func (s *Store) DeleteSuggestionsForJob(ctx context.Context, jobID uint) error {
+	return s.db.WithContext(ctx).Where("job_id = ?", jobID).Delete(&models.SegmentSuggestion{}).Error
+}
+
+// GetSuggestion fetches a single suggestion by id.
+func (s *Store) GetSuggestion(ctx context.Context, id uint) (*models.SegmentSuggestion, error) {
+	var s2 models.SegmentSuggestion
+	if err := s.db.WithContext(ctx).First(&s2, id).Error; err != nil {
+		return nil, err
+	}
+	return &s2, nil
+}
+
+// ── Segment structural edits ──────────────────────────────────────────────────
+
+// MergeSegments merges a set of consecutive segments (identified by IDs) into
+// a single segment.  The merged segment uses the earliest start_ms and latest
+// end_ms, concatenates the source texts with a space, and inherits the
+// speaker / voice of the first segment.  All TTS and translation fields are
+// cleared so the merged segment starts fresh.
+//
+// Constraints enforced:
+//   - All segment IDs must belong to the specified job.
+//   - The segments must be consecutive by ordinal (no gaps allowed).
+//   - At least 2 IDs must be provided.
+func (s *Store) MergeSegments(ctx context.Context, jobID uint, segmentIDs []uint) error {
+	if len(segmentIDs) < 2 {
+		return fmt.Errorf("merge requires at least 2 segment IDs")
+	}
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var segs []models.Segment
+		if err := tx.Where("job_id = ? AND id IN ?", jobID, segmentIDs).
+			Order("ordinal asc").
+			Find(&segs).Error; err != nil {
+			return err
+		}
+		if len(segs) != len(segmentIDs) {
+			return fmt.Errorf("some segment IDs not found in job %d", jobID)
+		}
+		// Verify consecutive ordinals
+		for i := 1; i < len(segs); i++ {
+			if segs[i].Ordinal != segs[i-1].Ordinal+1 {
+				return fmt.Errorf("segments are not consecutive (ordinal gap between %d and %d)", segs[i-1].Ordinal, segs[i].Ordinal)
+			}
+		}
+
+		first := segs[0]
+		last := segs[len(segs)-1]
+
+		// Concatenate source texts
+		texts := make([]string, len(segs))
+		for i, seg := range segs {
+			texts[i] = seg.SourceText
+		}
+		mergedText := strings.Join(texts, " ")
+
+		// Update the first segment with merged data
+		now := time.Now().UTC()
+		if err := tx.Model(&models.Segment{}).Where("id = ?", first.ID).
+			Updates(map[string]any{
+				"end_ms":              last.EndMs,
+				"original_duration_ms": last.EndMs - first.StartMs,
+				"source_text":         mergedText,
+				"target_text":         "",
+				"tts_audio_rel_path":  "",
+				"tts_duration_ms":     0,
+				"status":              "pending",
+				"split_reason":        "merged",
+				"updated_at":          now,
+			}).Error; err != nil {
+			return err
+		}
+
+		// Delete the rest
+		deleteIDs := make([]uint, 0, len(segs)-1)
+		for _, seg := range segs[1:] {
+			deleteIDs = append(deleteIDs, seg.ID)
+		}
+		if err := tx.Where("id IN ?", deleteIDs).Delete(&models.Segment{}).Error; err != nil {
+			return err
+		}
+
+		// Renumber all ordinals for the job
+		return renumberSegmentOrdinals(tx, jobID)
+	})
+}
+
+// SplitSegment splits one segment into two at a given character index within
+// its source text.  The time boundary is estimated by character proportion.
+// Both resulting segments have their TTS and translation fields cleared.
+func (s *Store) SplitSegment(ctx context.Context, jobID uint, segmentID uint, splitCharIndex int) error {
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var seg models.Segment
+		if err := tx.Where("id = ? AND job_id = ?", segmentID, jobID).First(&seg).Error; err != nil {
+			return err
+		}
+
+		runes := []rune(seg.SourceText)
+		total := len(runes)
+		if splitCharIndex <= 0 || splitCharIndex >= total {
+			return fmt.Errorf("split_char_index %d out of range [1, %d)", splitCharIndex, total)
+		}
+
+		textA := strings.TrimSpace(string(runes[:splitCharIndex]))
+		textB := strings.TrimSpace(string(runes[splitCharIndex:]))
+
+		// Proportional time split
+		ratio := float64(splitCharIndex) / float64(total)
+		splitMs := seg.StartMs + int64(ratio*float64(seg.EndMs-seg.StartMs))
+
+		now := time.Now().UTC()
+
+		// Update first half in-place
+		if err := tx.Model(&models.Segment{}).Where("id = ?", seg.ID).
+			Updates(map[string]any{
+				"end_ms":              splitMs,
+				"original_duration_ms": splitMs - seg.StartMs,
+				"source_text":         textA,
+				"target_text":         "",
+				"tts_audio_rel_path":  "",
+				"tts_duration_ms":     0,
+				"status":              "pending",
+				"split_reason":        "manual_split",
+				"updated_at":          now,
+			}).Error; err != nil {
+			return err
+		}
+
+		// Insert second half after the first — temporarily use a large ordinal, renumber at end
+		secondSpeakerID := seg.SpeakerID
+		second := models.Segment{
+			JobID:              jobID,
+			SpeakerID:          secondSpeakerID,
+			SpeakerLabel:       seg.SpeakerLabel,
+			VoiceProfileID:     seg.VoiceProfileID,
+			Ordinal:            seg.Ordinal + 1,
+			StartMs:            splitMs,
+			EndMs:              seg.EndMs,
+			OriginalDurationMs: seg.EndMs - splitMs,
+			SourceText:         textB,
+			SplitReason:        "manual_split",
+			Status:             "pending",
+		}
+
+		// Make room: shift ordinals of segments after the split point by 1
+		if err := tx.Model(&models.Segment{}).
+			Where("job_id = ? AND ordinal > ?", jobID, seg.Ordinal).
+			Update("ordinal", gorm.Expr("ordinal + 1")).Error; err != nil {
+			return err
+		}
+
+		if err := tx.Create(&second).Error; err != nil {
+			return err
+		}
+
+		return renumberSegmentOrdinals(tx, jobID)
+	})
+}
+
+// UpdateSegmentTimes adjusts the start/end timestamps of a single segment.
+// original_duration_ms is recalculated from the new range.
+// Any cached TTS audio is cleared so the segment is re-synthesised after translation.
+// Ordinals are renumbered in case the adjusted start_ms changes the segment order.
+func (s *Store) UpdateSegmentTimes(ctx context.Context, segmentID uint, startMs, endMs int64) error {
+	if endMs <= startMs {
+		return fmt.Errorf("end_ms (%d) must be greater than start_ms (%d)", endMs, startMs)
+	}
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var seg models.Segment
+		if err := tx.Where("id = ?", segmentID).First(&seg).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&models.Segment{}).
+			Where("id = ?", segmentID).
+			Updates(map[string]any{
+				"start_ms":             startMs,
+				"end_ms":               endMs,
+				"original_duration_ms": endMs - startMs,
+				"tts_audio_rel_path":   "",
+				"tts_duration_ms":      0,
+				"status":               "pending",
+				"updated_at":           time.Now().UTC(),
+			}).Error; err != nil {
+			return err
+		}
+		// Renumber ordinals in case start_ms adjustment changed the segment order.
+		return renumberSegmentOrdinals(tx, seg.JobID)
+	})
+}
+
+// renumberSegmentOrdinals reassigns ordinal values 0,1,2,… to all segments of
+// a job sorted by (start_ms, id), ensuring a clean gap-free sequence after any
+// structural edits.
+func renumberSegmentOrdinals(tx *gorm.DB, jobID uint) error {
+	var segs []models.Segment
+	if err := tx.Where("job_id = ?", jobID).Order("start_ms asc, id asc").Find(&segs).Error; err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	for i, seg := range segs {
+		if seg.Ordinal == i {
+			continue
+		}
+		if err := tx.Model(&models.Segment{}).Where("id = ?", seg.ID).
+			Updates(map[string]any{"ordinal": i, "updated_at": now}).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }

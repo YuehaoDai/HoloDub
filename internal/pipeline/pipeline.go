@@ -100,6 +100,53 @@ func (s *Service) RetryJob(ctx context.Context, jobID uint, stage models.JobStag
 	})
 }
 
+// ConfirmSegmentation advances a job that is blocked in awaiting_review status
+// to the translate stage.  It is called when the user clicks "Confirm segmentation"
+// in the UI after reviewing (and optionally adjusting) the ASR segments.
+func (s *Service) ConfirmSegmentation(ctx context.Context, jobID uint, requestedBy string) error {
+	job, err := s.store.GetJob(ctx, jobID)
+	if err != nil {
+		return err
+	}
+	if job.Status != models.JobStatusAwaitingReview {
+		return fmt.Errorf("job %d is not in awaiting_review state (current: %s)", jobID, job.Status)
+	}
+	return s.EnqueueStage(ctx, models.TaskPayload{
+		JobID:       jobID,
+		Stage:       models.StageTranslate,
+		Attempt:     0,
+		RequestedBy: requestedBy,
+		Reason:      "segmentation_confirmed",
+	})
+}
+
+// RetryASR re-runs the asr_smart stage for a job that is in awaiting_review.
+// It clears all existing segments and suggestions so the new ASR run starts
+// from a clean slate and will produce fresh segment_review suggestions.
+func (s *Service) RetryASR(ctx context.Context, jobID uint, requestedBy string) error {
+	job, err := s.store.GetJob(ctx, jobID)
+	if err != nil {
+		return err
+	}
+	if job.Status != models.JobStatusAwaitingReview {
+		return fmt.Errorf("job %d is not in awaiting_review state (current: %s)", jobID, job.Status)
+	}
+	// Clear suggestions and segments atomically before re-queuing
+	if err := s.store.DeleteSuggestionsForJob(ctx, jobID); err != nil {
+		return err
+	}
+	if err := s.store.ReplaceSegments(ctx, jobID, nil); err != nil {
+		return err
+	}
+	return s.EnqueueStage(ctx, models.TaskPayload{
+		JobID:       jobID,
+		Stage:       models.StageASRSmart,
+		Attempt:     0,
+		RequestedBy: requestedBy,
+		Reason:      "asr_retry_from_review",
+	})
+}
+
 func (s *Service) HandleTask(ctx context.Context, task models.TaskPayload) error {
 	job, err := s.store.GetJob(ctx, task.JobID)
 	if err != nil {
@@ -165,6 +212,8 @@ func (s *Service) HandleTask(ctx context.Context, task models.TaskPayload) error
 		stageErr = s.runSeparate(stageCtx, task)
 	case models.StageASRSmart:
 		stageErr = s.runASRSmart(stageCtx, task)
+	case models.StageSegmentReview:
+		stageErr = s.runSegmentReview(stageCtx, task)
 	case models.StageTranslate:
 		stageErr = s.runTranslate(stageCtx, task)
 	case models.StageTTSDuration:
@@ -209,6 +258,12 @@ func (s *Service) HandleTask(ctx context.Context, task models.TaskPayload) error
 		_ = s.notifyJobEvent(ctx, *job, "job.completed", task, map[string]any{
 			"output_relpath": job.OutputRelPath,
 		})
+		return nil
+	}
+	// Blocking stage: if the stage set job status to awaiting_review (e.g.
+	// segment_review waiting for user confirmation), do not auto-advance.
+	refreshedJob, refreshErr := s.store.GetJob(ctx, task.JobID)
+	if refreshErr == nil && refreshedJob.Status == models.JobStatusAwaitingReview {
 		return nil
 	}
 	return s.EnqueueStage(ctx, models.TaskPayload{
@@ -300,6 +355,106 @@ func (s *Service) runASRSmart(ctx context.Context, task models.TaskPayload) erro
 	return s.store.ReplaceSegments(ctx, job.ID, drafts)
 }
 
+// runSegmentReview is the pipeline stage that sits between asr_smart and translate.
+// It runs the LLM segmentation-review agent and stores suggestions, then sets the
+// job status to awaiting_review so HandleTask does NOT auto-advance to translate.
+// The job resumes when the user calls POST /jobs/:id/confirm-segmentation.
+func (s *Service) runSegmentReview(ctx context.Context, task models.TaskPayload) error {
+	if !s.cfg.SegmentReviewEnabled {
+		slog.Info("segment_review disabled by config, skipping", "job_id", task.JobID)
+		return nil // HandleTask will auto-advance to translate
+	}
+
+	job, err := s.store.GetJob(ctx, task.JobID)
+	if err != nil {
+		return err
+	}
+
+	segments, err := s.store.ListSegments(ctx, task.JobID, nil)
+	if err != nil {
+		return err
+	}
+	if len(segments) == 0 {
+		slog.Warn("segment_review: no segments found, skipping", "job_id", task.JobID)
+		return nil
+	}
+
+	// Build SegmentInfo list for the LLM
+	segInfos := make([]llm.SegmentInfo, len(segments))
+	for i, seg := range segments {
+		var gapAfterMs int64
+		if i+1 < len(segments) {
+			gapAfterMs = segments[i+1].StartMs - seg.EndMs
+			if gapAfterMs < 0 {
+				gapAfterMs = 0
+			}
+		}
+		segInfos[i] = llm.SegmentInfo{
+			Ordinal:     seg.Ordinal,
+			Text:        seg.SourceText,
+			StartMs:     seg.StartMs,
+			EndMs:       seg.EndMs,
+			GapAfterMs:  gapAfterMs,
+			SplitReason: seg.SplitReason,
+		}
+	}
+
+	slog.Info("segment_review starting LLM review", "job_id", task.JobID, "segment_count", len(segments))
+	suggestions, err := s.llm.ReviewSegmentation(ctx, job.SourceLanguage, segInfos)
+	if err != nil {
+		// Non-fatal: log and continue with zero suggestions so the user still gets
+		// the manual-review UI even without LLM suggestions.
+		slog.Warn("segment_review LLM call failed, continuing without suggestions",
+			"job_id", task.JobID, "error", err)
+		suggestions = nil
+	}
+	slog.Info("segment_review LLM review done", "job_id", task.JobID, "suggestion_count", len(suggestions))
+
+	// Build an ordinal→segment mapping to resolve real segment IDs
+	ordinalToSegment := make(map[int]models.Segment, len(segments))
+	for _, seg := range segments {
+		ordinalToSegment[seg.Ordinal] = seg
+	}
+
+	// Convert to models.SegmentSuggestion with real segment IDs
+	dbSuggestions := make([]models.SegmentSuggestion, 0, len(suggestions))
+	for i, sug := range suggestions {
+		realIDs := make([]uint, 0, len(sug.SegmentIDs))
+		valid := true
+		for _, ordinal := range sug.SegmentIDs {
+			seg, ok := ordinalToSegment[int(ordinal)]
+			if !ok {
+				valid = false
+				break
+			}
+			realIDs = append(realIDs, seg.ID)
+		}
+		if !valid || len(realIDs) < 2 {
+			continue
+		}
+		dbSuggestions = append(dbSuggestions, models.SegmentSuggestion{
+			Ordinal:    i,
+			Action:     "merge",
+			SegmentIDs: realIDs,
+			Reason:     sug.Reason,
+			Confidence: sug.Confidence,
+			Status:     "pending",
+		})
+	}
+
+	if err := s.store.CreateSuggestions(ctx, task.JobID, dbSuggestions); err != nil {
+		return fmt.Errorf("segment_review: save suggestions: %w", err)
+	}
+
+	// Mark the job as awaiting_review — HandleTask will see this and skip auto-advance.
+	if err := s.store.UpdateJobState(ctx, task.JobID, models.JobStatusAwaitingReview, models.StageSegmentReview, "", false); err != nil {
+		return fmt.Errorf("segment_review: set awaiting_review: %w", err)
+	}
+	slog.Info("segment_review: job is now awaiting user confirmation",
+		"job_id", task.JobID, "suggestions", len(dbSuggestions))
+	return nil
+}
+
 func (s *Service) runTranslate(ctx context.Context, task models.TaskPayload) error {
 	job, err := s.store.GetJob(ctx, task.JobID)
 	if err != nil {
@@ -311,40 +466,127 @@ func (s *Service) runTranslate(ctx context.Context, task models.TaskPayload) err
 	}
 
 	// Determine the voice-profile speaking-rate hint to pass to the LLM.
-	// Query distinct VPs already assigned to this job's segments; if any have
-	// a calibrated EstCharsPerSec, use their average as the translation hint.
 	charsPerSecHint := s.voiceRateHintForJob(ctx, job.ID, job.TargetLanguage)
 
-	for idx := range segments {
+	// Two-pass translation strategy:
+	//   Pass 1 — translate the first ~20% of segments (seed pass).
+	//   Between passes — generate an episode reference card (terminology, register, style)
+	//                    from the seed translations.
+	//   Pass 2 — translate the remaining segments with the reference card injected,
+	//             plus a rolling window of the last 2 translated segments as local context.
+	//
+	// This fixes the "blind translation" problem where every segment was translated in
+	// isolation, causing inconsistent terminology (e.g. "Raft"→"筏", "term"→"段", mixed
+	// "leader"/"领导者"/"领袖") and unwanted elaborations.
+
+	const seedFraction = 0.20   // translate this fraction first to bootstrap the summary
+	const contextWindowSize = 2 // preceding segments to pass as local context
+
+	total := len(segments)
+	seedCount := int(math.Ceil(float64(total) * seedFraction))
+	if seedCount < 5 {
+		seedCount = 5 // always seed at least 5 segments
+	}
+	if seedCount > total {
+		seedCount = total
+	}
+
+	// translationSummary starts empty; will be populated after the seed pass.
+	var translationSummary string
+
+	// translateOne translates a single segment and updates segments[idx] in place.
+	// contextWindow is the slice of the last N successfully translated segments.
+	translateOne := func(idx int, contextWindow []llm.ContextSegment, summary string) error {
 		targetSec := float64(segments[idx].DurationMs()) / 1000.0
-		translated, err := s.llm.TranslateTextWithDuration(ctx, job.SourceLanguage, job.TargetLanguage, segments[idx].SourceText, targetSec, charsPerSecHint)
+		translated, err := s.llm.TranslateTextWithDuration(
+			ctx,
+			job.SourceLanguage,
+			job.TargetLanguage,
+			segments[idx].SourceText,
+			targetSec,
+			charsPerSecHint,
+			contextWindow,
+			summary,
+		)
 		if err != nil {
 			return fmt.Errorf("translate segment %d: %w", segments[idx].ID, err)
 		}
 		segments[idx].TargetText = translated
 		segments[idx].Status = "translated"
+		return nil
 	}
+
+	// buildContext returns the last min(contextWindowSize, n) translated segments as
+	// ContextSegment pairs, suitable for passing to TranslateTextWithDuration.
+	buildContext := func(upToIdx int) []llm.ContextSegment {
+		start := upToIdx - contextWindowSize
+		if start < 0 {
+			start = 0
+		}
+		window := make([]llm.ContextSegment, 0, upToIdx-start)
+		for i := start; i < upToIdx; i++ {
+			if segments[i].TargetText != "" {
+				window = append(window, llm.ContextSegment{
+					SrcText: segments[i].SourceText,
+					TgtText: segments[i].TargetText,
+				})
+			}
+		}
+		return window
+	}
+
+	// ── Pass 1: seed translation (no summary yet, no context for very first segment) ──
+	for idx := 0; idx < seedCount; idx++ {
+		if err := translateOne(idx, buildContext(idx), ""); err != nil {
+			return err
+		}
+	}
+
+	// Save seed translations so they're not lost if the summary call fails.
+	if err := s.store.UpdateSegmentTranslations(ctx, segments[:seedCount]); err != nil {
+		return err
+	}
+
+	// Generate episode reference card from the seed translations.
+	seedSample := buildTranslationSample(segments[:seedCount], 20)
+	if len(seedSample) > 0 {
+		summary, sumErr := s.llm.SummarizeTranslation(ctx, job.SourceLanguage, job.TargetLanguage, seedSample)
+		if sumErr != nil {
+			slog.Warn("failed to generate seed translation summary; continuing without it",
+				"job_id", job.ID, "error", sumErr)
+		} else {
+			translationSummary = summary
+			slog.Info("seed translation summary generated",
+				"job_id", job.ID, "seed_count", seedCount, "summary_len", len(summary))
+		}
+	}
+
+	// ── Pass 2: translate remaining segments with summary + rolling context ──
+	for idx := seedCount; idx < total; idx++ {
+		if err := translateOne(idx, buildContext(idx), translationSummary); err != nil {
+			return err
+		}
+	}
+
+	// Save all translations (pass 1 already saved its slice; saving again is idempotent).
 	if err := s.store.UpdateSegmentTranslations(ctx, segments); err != nil {
 		return err
 	}
 
-	// After all translations are saved, generate a compact episode reference card.
-	// The summary is stored on the job and injected into every subsequent TTS
-	// retranslation prompt to maintain global coherence (terminology, register, etc.).
-	// We sample up to 30 segments spread evenly across the episode.
-	sample := buildTranslationSample(segments, 30)
-	if len(sample) > 0 {
-		summary, sumErr := s.llm.SummarizeTranslation(ctx, job.SourceLanguage, job.TargetLanguage, sample)
+	// Final summary refresh: regenerate from the full set for higher quality.
+	// This replaces the seed-only summary and is what retranslation will use.
+	finalSample := buildTranslationSample(segments, 30)
+	if len(finalSample) > 0 {
+		summary, sumErr := s.llm.SummarizeTranslation(ctx, job.SourceLanguage, job.TargetLanguage, finalSample)
 		if sumErr != nil {
-			// Non-fatal: log and continue without summary.
-			slog.Warn("failed to generate translation summary",
+			slog.Warn("failed to generate final translation summary",
 				"job_id", job.ID, "error", sumErr)
 		} else if summary != "" {
 			if storeErr := s.store.UpdateJobTranslationSummary(ctx, job.ID, summary); storeErr != nil {
 				slog.Warn("failed to store translation summary",
 					"job_id", job.ID, "error", storeErr)
 			} else {
-				slog.Info("translation summary generated",
+				slog.Info("final translation summary generated",
 					"job_id", job.ID, "summary_len", len(summary))
 			}
 		}

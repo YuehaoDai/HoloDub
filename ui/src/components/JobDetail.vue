@@ -41,6 +41,17 @@
         </div>
       </div>
 
+      <!-- 等待分段确认横幅 -->
+      <div
+        v-if="job.status === 'awaiting_review'"
+        class="mb-4 p-3 rounded-lg bg-yellow-900/20 border border-yellow-600/40 flex items-center gap-3"
+      >
+        <span class="text-yellow-300 font-semibold text-sm shrink-0">⏸ 等待分段确认</span>
+        <span class="text-xs text-yellow-200/80">
+          ASR 分段已完成，AI 已生成合并建议。请在下方「分段审核」面板中查看建议、手动调整，然后确认分段后继续翻译。
+        </span>
+      </div>
+
       <!-- 操作按钮 -->
       <div class="flex gap-2 mb-6 flex-wrap">
         <button
@@ -50,7 +61,7 @@
           @click="startJob"
         >开始</button>
         <button
-          v-if="['pending','queued','running'].includes(job.status)"
+          v-if="['pending','queued','running','awaiting_review'].includes(job.status)"
           class="hd-btn hd-btn-danger"
           :disabled="actionLoading"
           @click="cancelJob"
@@ -75,10 +86,23 @@
           @click="activeTab = tab.key"
         >
           {{ tab.label }}
-          <span v-if="tab.key === 'segments' && segments.length" class="ml-1 text-[10px] bg-[#1e2535] px-1.5 py-0.5 rounded-full">
+          <span v-if="tab.key === 'segments' && segments.length && job.status !== 'awaiting_review'" class="ml-1 text-[10px] bg-[#1e2535] px-1.5 py-0.5 rounded-full">
             {{ segments.length }}
           </span>
+          <span v-if="tab.key === 'review'" class="ml-1 text-[10px] bg-yellow-700/50 text-yellow-300 px-1.5 py-0.5 rounded-full">
+            待确认
+          </span>
         </button>
+      </div>
+
+      <!-- Segment Review Tab (only when awaiting_review) -->
+      <div v-if="activeTab === 'review'">
+        <SegmentReview
+          :job-id="job.id"
+          @confirmed="refresh"
+          @asr-retried="refresh"
+          @segments-changed="lightRefresh"
+        />
       </div>
 
       <!-- Segments Tab -->
@@ -196,6 +220,7 @@ import { api, type Job, type Segment, type StageRun, type Artifact, type Binding
 import SegmentTable from "./SegmentTable.vue";
 import SegmentFilter from "./SegmentFilter.vue";
 import VoiceProfileManager from "./VoiceProfileManager.vue";
+import SegmentReview from "./SegmentReview.vue";
 
 const route = useRoute();
 const jobId = computed(() => Number(route.params.id));
@@ -216,12 +241,18 @@ const activeTab = ref("segments");
 
 let currentRefreshAbort: AbortController | null = null;
 
-const tabs = [
-  { key: "segments", label: "段落" },
-  { key: "stage-runs", label: "阶段记录" },
-  { key: "artifacts", label: "输出文件" },
-  { key: "voice-profiles", label: "音色管理" },
-];
+const tabs = computed(() => {
+  const base = [
+    { key: "segments", label: "段落" },
+    { key: "stage-runs", label: "阶段记录" },
+    { key: "artifacts", label: "输出文件" },
+    { key: "voice-profiles", label: "音色管理" },
+  ];
+  if (job.value?.status === "awaiting_review") {
+    return [{ key: "review", label: "分段审核" }, ...base];
+  }
+  return base;
+});
 
 const filter = ref<"all" | "high-drift" | "unsynthesized">("all");
 const sort = ref<"ordinal" | "drift">("ordinal");
@@ -330,6 +361,7 @@ async function retryMerge() {
 function statusClass(status: string) {
   switch (status) {
     case "running": return "bg-blue-900/60 text-blue-300";
+    case "awaiting_review": return "bg-yellow-900/60 text-yellow-300";
     case "completed": return "bg-green-900/60 text-green-300";
     case "failed": return "bg-red-900/60 text-red-300";
     case "cancelled": return "bg-slate-700 text-slate-400";
@@ -421,11 +453,19 @@ watch(jobId, () => { currentRefreshAbort?.abort(); refresh(); }, { immediate: fa
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 watch(
   () => job.value?.status,
-  (status) => {
+  (status, prevStatus) => {
     if (pollTimer) clearInterval(pollTimer);
     pollTimer = null;
-    if (status && ["pending", "queued", "running"].includes(status)) {
+    if (status && ["pending", "queued", "running", "awaiting_review"].includes(status)) {
       pollTimer = setInterval(() => lightRefresh(), 5000);
+    }
+    // Auto-switch to review tab when job enters awaiting_review
+    if (status === "awaiting_review" && prevStatus !== "awaiting_review") {
+      activeTab.value = "review";
+    }
+    // Leave review tab when job is no longer in awaiting_review
+    if (prevStatus === "awaiting_review" && status !== "awaiting_review") {
+      activeTab.value = "segments";
     }
   },
   { immediate: true }

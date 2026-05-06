@@ -9,18 +9,20 @@ import (
 type JobStage string
 
 const (
-	StageMedia       JobStage = "media"
-	StageSeparate    JobStage = "separate"
-	StageASRSmart    JobStage = "asr_smart"
-	StageTranslate   JobStage = "translate"
-	StageTTSDuration JobStage = "tts_duration"
-	StageMerge       JobStage = "merge"
+	StageMedia          JobStage = "media"
+	StageSeparate       JobStage = "separate"
+	StageASRSmart       JobStage = "asr_smart"
+	StageSegmentReview  JobStage = "segment_review"
+	StageTranslate      JobStage = "translate"
+	StageTTSDuration    JobStage = "tts_duration"
+	StageMerge          JobStage = "merge"
 )
 
 var StageOrder = []JobStage{
 	StageMedia,
 	StageSeparate,
 	StageASRSmart,
+	StageSegmentReview,
 	StageTranslate,
 	StageTTSDuration,
 	StageMerge,
@@ -32,6 +34,7 @@ const (
 	JobStatusPending         JobStatus = "pending"
 	JobStatusQueued          JobStatus = "queued"
 	JobStatusRunning         JobStatus = "running"
+	JobStatusAwaitingReview  JobStatus = "awaiting_review"
 	JobStatusFailed          JobStatus = "failed"
 	JobStatusCompleted       JobStatus = "completed"
 	JobStatusTimedOut        JobStatus = "timed_out"
@@ -175,6 +178,24 @@ type TenantQuota struct {
 	UpdatedAt         time.Time         `json:"updated_at"`
 }
 
+// SegmentSuggestion represents a single merge or split recommendation produced
+// by the LLM segmentation-review agent during the segment_review stage.
+// Actions are applied by the user (accept / reject) through the UI before
+// the pipeline advances to translate.
+type SegmentSuggestion struct {
+	ID             uint                     `json:"id" gorm:"primaryKey"`
+	JobID          uint                     `json:"job_id" gorm:"index"`
+	Ordinal        int                      `json:"ordinal"`
+	Action         string                   `json:"action" gorm:"size:32"` // "merge" | "split"
+	SegmentIDs     datatypes.JSONSlice[uint] `json:"segment_ids" gorm:"type:jsonb"`
+	SplitCharIndex int                      `json:"split_char_index"`
+	Reason         string                   `json:"reason" gorm:"type:text"`
+	Confidence     float64                  `json:"confidence"`
+	Status         string                   `json:"status" gorm:"size:32"` // "pending" | "accepted" | "rejected"
+	CreatedAt      time.Time                `json:"created_at"`
+	UpdatedAt      time.Time                `json:"updated_at"`
+}
+
 type TaskPayload struct {
 	JobID           uint     `json:"job_id"`
 	Stage           JobStage `json:"stage"`
@@ -215,6 +236,17 @@ func (segment Segment) DurationMs() int64 {
 func (status JobStatus) IsTerminal() bool {
 	switch status {
 	case JobStatusCompleted, JobStatusFailed, JobStatusTimedOut, JobStatusCancelled:
+		return true
+	default:
+		return false
+	}
+}
+
+// IsActive returns true for statuses where the job is alive and may still make progress
+// (either running automatically or waiting for user input).
+func (status JobStatus) IsActive() bool {
+	switch status {
+	case JobStatusQueued, JobStatusRunning, JobStatusAwaitingReview:
 		return true
 	default:
 		return false

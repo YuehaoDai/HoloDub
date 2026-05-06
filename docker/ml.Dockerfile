@@ -7,7 +7,9 @@ FROM nvidia/cuda:12.8.0-devel-ubuntu22.04
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    DEBIAN_FRONTEND=noninteractive
+    DEBIAN_FRONTEND=noninteractive \
+    PIP_DEFAULT_TIMEOUT=1200 \
+    PIP_RETRIES=10
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -30,11 +32,14 @@ ARG PYTHON_EXTRAS=
 # the correct GPU wheels are pulled (avoids falling back to CPU-only torch).
 RUN python -m pip install --no-cache-dir ninja
 
+# Large CUDA wheels come from PyPI mirrors; default pip read timeout is too short on slow links.
 RUN if [ -n "$PYTHON_EXTRAS" ]; then \
-        pip install --no-cache-dir torch torchaudio --index-url https://download.pytorch.org/whl/cu128 \
-        && python -m pip install --no-cache-dir "/app/ml_service[$PYTHON_EXTRAS]"; \
+        pip install --no-cache-dir --retries 10 \
+            torch torchaudio --index-url https://download.pytorch.org/whl/cu128 \
+        && python -m pip install --no-cache-dir --retries 10 \
+            "/app/ml_service[$PYTHON_EXTRAS]"; \
        else \
-        python -m pip install --no-cache-dir /app/ml_service; \
+        python -m pip install --no-cache-dir --retries 10 /app/ml_service; \
        fi
 
 # Patch BigVGAN CUDA sources: remove the unused #include <cuda_profiler_api.h>

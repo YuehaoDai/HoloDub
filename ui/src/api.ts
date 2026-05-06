@@ -106,6 +106,19 @@ export interface Binding {
   voice_profile?: VoiceProfile;
 }
 
+export interface SegmentSuggestion {
+  id: number;
+  job_id: number;
+  ordinal: number;
+  action: "merge" | "split";
+  segment_ids: number[];
+  split_char_index: number;
+  reason: string;
+  confidence: number;
+  status: "pending" | "accepted" | "rejected";
+  created_at: string;
+}
+
 export const api = {
   listJobs: () => apiFetch<{ jobs: Job[] }>("/jobs"),
 
@@ -146,6 +159,12 @@ export const api = {
       }),
     }),
 
+  patchSegmentTimes: (jobId: number, segmentId: number, startMs: number, endMs: number) =>
+    apiFetch(`/jobs/${jobId}/segments/${segmentId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ start_ms: startMs, end_ms: endMs }),
+    }),
+
   rerunSegment: (jobId: number, segmentId: number) =>
     apiFetch(`/jobs/${jobId}/segments/${segmentId}/rerun`, { method: "POST" }),
 
@@ -161,10 +180,18 @@ export const api = {
     return key ? `${base}?api_key=${encodeURIComponent(key)}` : base;
   },
 
-  originalAudioUrl: (jobId: number, ordinal: number): string => {
+  originalAudioUrl: (jobId: number, ordinal: number, v?: number, previewStartMs?: number, previewEndMs?: number): string => {
     const key = getApiKey();
     const base = `/jobs/${jobId}/audio/${ordinal}`;
-    return key ? `${base}?api_key=${encodeURIComponent(key)}` : base;
+    const params = new URLSearchParams();
+    // URLSearchParams.set already encodes values — do NOT wrap with encodeURIComponent
+    if (key) params.set('api_key', key);
+    // v combines both start and end so any time range change produces a distinct URL
+    if (v !== undefined) params.set('v', String(v));
+    if (previewStartMs !== undefined) params.set('start_ms', String(previewStartMs));
+    if (previewEndMs !== undefined) params.set('end_ms', String(previewEndMs));
+    const q = params.toString();
+    return q ? `${base}?${q}` : base;
   },
 
   listBindings: (jobId: number, signal?: AbortSignal) =>
@@ -254,4 +281,32 @@ export const api = {
 
   mlHealth: () =>
     apiFetch<{ tts_warmup_status?: string; adapters?: Record<string, string> }>("/ml-health"),
+
+  // ── Segment review ────────────────────────────────────────────────────────
+  listSegmentSuggestions: (jobId: number, signal?: AbortSignal) =>
+    apiFetch<{ suggestions: SegmentSuggestion[] }>(`/jobs/${jobId}/segment-suggestions`, { signal }),
+
+  acceptSuggestion: (jobId: number, suggestionId: number) =>
+    apiFetch(`/jobs/${jobId}/segment-suggestions/${suggestionId}/accept`, { method: "POST" }),
+
+  rejectSuggestion: (jobId: number, suggestionId: number) =>
+    apiFetch(`/jobs/${jobId}/segment-suggestions/${suggestionId}/reject`, { method: "POST" }),
+
+  mergeSegments: (jobId: number, segmentIds: number[]) =>
+    apiFetch(`/jobs/${jobId}/segments/merge`, {
+      method: "POST",
+      body: JSON.stringify({ segment_ids: segmentIds }),
+    }),
+
+  splitSegment: (jobId: number, segmentId: number, splitCharIndex: number) =>
+    apiFetch(`/jobs/${jobId}/segments/${segmentId}/split`, {
+      method: "POST",
+      body: JSON.stringify({ split_char_index: splitCharIndex }),
+    }),
+
+  confirmSegmentation: (jobId: number) =>
+    apiFetch(`/jobs/${jobId}/confirm-segmentation`, { method: "POST" }),
+
+  retryASR: (jobId: number) =>
+    apiFetch(`/jobs/${jobId}/retry-asr`, { method: "POST" }),
 };

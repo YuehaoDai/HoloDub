@@ -72,6 +72,10 @@ type Config struct {
 	HardMaxSegmentSec float64 // absolute ceiling for any segment after post-merge; e.g. 45.0 s
 	CloseGapMs        int     // inter-segment gap threshold for close-gap merge pass; e.g. 800 ms
 
+	// Segment review: LLM-powered merge suggestions after asr_smart, before translate.
+	SegmentReviewEnabled bool   // default true
+	SegmentReviewModel   string // model name; falls back to RetranslationModel then OpenAIModel
+
 	FFmpegBin  string
 	FFprobeBin string
 
@@ -240,6 +244,12 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("parse CLOSE_GAP_MS: %w", err)
 	}
+
+	cfg.SegmentReviewEnabled, err = getEnvBool("SEGMENT_REVIEW_ENABLED", true)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse SEGMENT_REVIEW_ENABLED: %w", err)
+	}
+	cfg.SegmentReviewModel = getEnv("SEGMENT_REVIEW_MODEL", "")
 
 	cfg.TTSConcurrency, err = getEnvInt("TTS_CONCURRENCY", 2)
 	if err != nil {

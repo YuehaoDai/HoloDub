@@ -138,6 +138,15 @@ func NewRouter(cfg config.Config, st *store.Store, pipelineSvc *pipeline.Service
 	router.POST("/jobs/:id/segments/:segmentId/preview-voice", server.previewSegmentVoice)
 	router.GET("/jobs/:id/preview-voice/:segmentId", server.servePreviewAudio)
 
+	// Segment review routes (segment_review stage)
+	router.GET("/jobs/:id/segment-suggestions", server.listSegmentSuggestions)
+	router.POST("/jobs/:id/segment-suggestions/:sid/accept", server.acceptSegmentSuggestion)
+	router.POST("/jobs/:id/segment-suggestions/:sid/reject", server.rejectSegmentSuggestion)
+	router.POST("/jobs/:id/segments/merge", server.mergeSegments)
+	router.POST("/jobs/:id/segments/:segmentId/split", server.splitSegment)
+	router.POST("/jobs/:id/confirm-segmentation", server.confirmSegmentation)
+	router.POST("/jobs/:id/retry-asr", server.retryASR)
+
 	return router
 }
 
@@ -765,9 +774,37 @@ func (s *Server) serveOriginalAudio(c *gin.Context) {
 		respondError(c, stdhttp.StatusNotFound, "vocals_not_found", "vocals file not found")
 		return
 	}
-	tmpPath := filepath.Join(os.TempDir(), fmt.Sprintf("holodub-orig-%d-%d.wav", job.ID, ordinalInt))
+
+	// Allow caller to override trim range for live preview (e.g. before saving edits).
+	startMs := int64(seg.StartMs)
+	endMs := int64(seg.EndMs)
+	callerOverrodeEnd := false
+	if qStart := c.Query("start_ms"); qStart != "" {
+		if v, err2 := strconv.ParseInt(qStart, 10, 64); err2 == nil && v >= 0 {
+			startMs = v
+		}
+	}
+	if qEnd := c.Query("end_ms"); qEnd != "" {
+		if v, err2 := strconv.ParseInt(qEnd, 10, 64); err2 == nil && v > startMs {
+			endMs = v
+			callerOverrodeEnd = true
+		}
+	}
+
+	// When playing back the segment from its stored DB times (not a manual live-preview
+	// override), extend the trim window by a small constant so that trailing phonemes
+	// that Whisper's word-timestamp heuristic slightly under-reports are always audible.
+	// This is a playback-only adjustment — it does NOT modify any stored timestamps or
+	// affect TTS duration calculations.
+	const playbackTailPadMs = 300
+	if !callerOverrodeEnd {
+		endMs += playbackTailPadMs
+	}
+
+	// Include times in tmpPath so concurrent preview requests don't collide.
+	tmpPath := filepath.Join(os.TempDir(), fmt.Sprintf("holodub-orig-%d-%d-%d-%d.wav", job.ID, ordinalInt, startMs, endMs))
 	defer os.Remove(tmpPath)
-	if err := media.TrimAudioSegment(s.cfg.FFmpegBin, vocalsPath, tmpPath, int64(seg.StartMs), int64(seg.EndMs)); err != nil {
+	if err := media.TrimAudioSegment(s.cfg.FFmpegBin, vocalsPath, tmpPath, startMs, endMs); err != nil {
 		respondError(c, stdhttp.StatusInternalServerError, "trim_failed", err.Error())
 		return
 	}
@@ -780,6 +817,8 @@ type patchSegmentRequest struct {
 	TargetText     string `json:"target_text"`
 	Rerun          bool   `json:"rerun"`
 	VoiceProfileID *uint  `json:"voice_profile_id"`
+	StartMs        *int64 `json:"start_ms"`
+	EndMs          *int64 `json:"end_ms"`
 }
 
 func (s *Server) patchSegment(c *gin.Context) {
@@ -813,6 +852,20 @@ func (s *Server) patchSegment(c *gin.Context) {
 			c.JSON(stdhttp.StatusOK, gin.H{"updated": true, "segment_id": segmentID, "rerun": true})
 			return
 		}
+	}
+
+	// Handle time range adjustment (trim leading silence / trailing audio)
+	if request.StartMs != nil || request.EndMs != nil {
+		if request.StartMs == nil || request.EndMs == nil {
+			respondError(c, stdhttp.StatusBadRequest, "invalid_request", "both start_ms and end_ms must be provided together")
+			return
+		}
+		if err := s.store.UpdateSegmentTimes(c.Request.Context(), segmentID, *request.StartMs, *request.EndMs); err != nil {
+			respondError(c, stdhttp.StatusBadRequest, "patch_segment_times_failed", err.Error())
+			return
+		}
+		c.JSON(stdhttp.StatusOK, gin.H{"updated": true, "segment_id": segmentID})
+		return
 	}
 
 	if request.TargetText == "" {
@@ -1039,4 +1092,181 @@ func (s *Server) listFiles(c *gin.Context) {
 	}
 
 	c.JSON(stdhttp.StatusOK, gin.H{"dir": relDir, "entries": result})
+}
+
+// ── Segment review handlers ────────────────────────────────────────────────────
+
+func (s *Server) listSegmentSuggestions(c *gin.Context) {
+	jobID, err := parseID(c, "id")
+	if err != nil {
+		return
+	}
+	suggestions, err := s.store.ListSuggestions(c.Request.Context(), jobID)
+	if err != nil {
+		respondError(c, stdhttp.StatusInternalServerError, "list_suggestions_failed", err.Error())
+		return
+	}
+	c.JSON(stdhttp.StatusOK, gin.H{"suggestions": suggestions})
+}
+
+func (s *Server) acceptSegmentSuggestion(c *gin.Context) {
+	jobID, err := parseID(c, "id")
+	if err != nil {
+		return
+	}
+	sugID, err := parseID(c, "sid")
+	if err != nil {
+		return
+	}
+	ctx := c.Request.Context()
+
+	// Fetch the suggestion
+	sug, err := s.store.GetSuggestion(ctx, sugID)
+	if err != nil {
+		respondError(c, stdhttp.StatusNotFound, "suggestion_not_found", "suggestion not found")
+		return
+	}
+	if sug.JobID != jobID {
+		respondError(c, stdhttp.StatusNotFound, "suggestion_not_found", "suggestion not found")
+		return
+	}
+	if sug.Status != "pending" {
+		// Idempotent: already processed
+		c.JSON(stdhttp.StatusOK, gin.H{"suggestion": sug})
+		return
+	}
+
+	// Apply the action
+	if sug.Action == "merge" {
+		ids := make([]uint, len(sug.SegmentIDs))
+		for i, v := range sug.SegmentIDs {
+			ids[i] = v
+		}
+		if err := s.store.MergeSegments(ctx, jobID, ids); err != nil {
+			respondError(c, stdhttp.StatusBadRequest, "merge_failed", err.Error())
+			return
+		}
+	}
+	// Mark suggestion accepted
+	if err := s.store.UpdateSuggestionStatus(ctx, sugID, "accepted"); err != nil {
+		respondError(c, stdhttp.StatusInternalServerError, "update_suggestion_failed", err.Error())
+		return
+	}
+	c.JSON(stdhttp.StatusOK, gin.H{"ok": true})
+}
+
+func (s *Server) rejectSegmentSuggestion(c *gin.Context) {
+	jobID, err := parseID(c, "id")
+	if err != nil {
+		return
+	}
+	sugID, err := parseID(c, "sid")
+	if err != nil {
+		return
+	}
+	ctx := c.Request.Context()
+	sug, err := s.store.GetSuggestion(ctx, sugID)
+	if err != nil {
+		respondError(c, stdhttp.StatusNotFound, "suggestion_not_found", "suggestion not found")
+		return
+	}
+	if sug.JobID != jobID {
+		respondError(c, stdhttp.StatusNotFound, "suggestion_not_found", "suggestion not found")
+		return
+	}
+	if err := s.store.UpdateSuggestionStatus(ctx, sugID, "rejected"); err != nil {
+		respondError(c, stdhttp.StatusInternalServerError, "update_suggestion_failed", err.Error())
+		return
+	}
+	c.JSON(stdhttp.StatusOK, gin.H{"ok": true})
+}
+
+func (s *Server) mergeSegments(c *gin.Context) {
+	jobID, err := parseID(c, "id")
+	if err != nil {
+		return
+	}
+	var req struct {
+		SegmentIDs []uint `json:"segment_ids" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondError(c, stdhttp.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	if len(req.SegmentIDs) < 2 {
+		respondError(c, stdhttp.StatusBadRequest, "invalid_request", "at least 2 segment_ids required")
+		return
+	}
+	if err := s.store.MergeSegments(c.Request.Context(), jobID, req.SegmentIDs); err != nil {
+		respondError(c, stdhttp.StatusBadRequest, "merge_failed", err.Error())
+		return
+	}
+	c.JSON(stdhttp.StatusOK, gin.H{"ok": true})
+}
+
+func (s *Server) splitSegment(c *gin.Context) {
+	jobID, err := parseID(c, "id")
+	if err != nil {
+		return
+	}
+	segID, err := parseID(c, "segmentId")
+	if err != nil {
+		return
+	}
+	var req struct {
+		SplitCharIndex int `json:"split_char_index" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondError(c, stdhttp.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	if err := s.store.SplitSegment(c.Request.Context(), jobID, segID, req.SplitCharIndex); err != nil {
+		respondError(c, stdhttp.StatusBadRequest, "split_failed", err.Error())
+		return
+	}
+	c.JSON(stdhttp.StatusOK, gin.H{"ok": true})
+}
+
+func (s *Server) confirmSegmentation(c *gin.Context) {
+	jobID, err := parseID(c, "id")
+	if err != nil {
+		return
+	}
+	if err := s.pipeline.ConfirmSegmentation(c.Request.Context(), jobID, "user"); err != nil {
+		status := stdhttp.StatusInternalServerError
+		if strings.Contains(err.Error(), "not in awaiting_review") {
+			status = stdhttp.StatusConflict
+		}
+		respondError(c, status, "confirm_failed", err.Error())
+		return
+	}
+	c.JSON(stdhttp.StatusOK, gin.H{"ok": true})
+}
+
+func (s *Server) retryASR(c *gin.Context) {
+	jobID, err := parseID(c, "id")
+	if err != nil {
+		return
+	}
+	if err := s.pipeline.RetryASR(c.Request.Context(), jobID, "user"); err != nil {
+		status := stdhttp.StatusInternalServerError
+		if strings.Contains(err.Error(), "not in awaiting_review") {
+			status = stdhttp.StatusConflict
+		}
+		respondError(c, status, "retry_asr_failed", err.Error())
+		return
+	}
+	c.JSON(stdhttp.StatusOK, gin.H{"ok": true})
+}
+
+// parseID is a helper that reads a named URL parameter as uint, writes a 400
+// response and returns an error if parsing fails.
+func parseID(c *gin.Context, param string) (uint, error) {
+	raw := c.Param(param)
+	val, err := strconv.ParseUint(raw, 10, 64)
+	if err != nil {
+		respondError(c, stdhttp.StatusBadRequest, "invalid_id", param+" must be a positive integer")
+		return 0, err
+	}
+	return uint(val), nil
 }

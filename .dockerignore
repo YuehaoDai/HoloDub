@@ -1,11 +1,11 @@
 # Model caches — several GB, not needed inside the build container
 hf-cache/
 
-# Runtime data and job outputs
-data/jobs/
-data/tmp/
-data/cache/
-data/voices/
+# Runtime data (exclude whole tree — partial ignores still let huge files under data/ into context)
+data/
+
+# Frontend deps — not used by Go/ml Dockerfiles but bloats compose build context
+ui/node_modules/
 
 # Demo videos
 demo/
@@ -22,6 +22,10 @@ __pycache__/
 # Secrets
 .env
 token.txt
+
+# Cross-compiled Linux binaries (hot-update artifacts; not needed inside images)
+holodub-api-linux
+holodub-worker-linux
 
 # Local tooling
 query

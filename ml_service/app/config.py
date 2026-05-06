@@ -24,6 +24,13 @@ class Settings(BaseSettings):
     # beam_size=1 (greedy) uses ~5x less VRAM than the default beam_size=5.
     # Accuracy drops slightly but is usually acceptable for dubbing ASR.
     faster_whisper_beam_size: int = 1
+    # Whisper systematically underestimates the end timestamp of the last word in
+    # each segment (the trailing phonemes are often cut off by 200-400 ms).
+    # This padding is added to every segment's end_ms BEFORE the close-gap merge
+    # pass so that merging decisions reflect the true post-padding boundaries.
+    # Japanese trailing vowels (延長音) can extend 500+ ms; default is conservative.
+    asr_end_pad_ms: int = 500
+    asr_end_pad_min_gap_ms: int = 80
     pyannote_auth_token: str = ""
     pyannote_pipeline: str = "pyannote/speaker-diarization-3.1"
 

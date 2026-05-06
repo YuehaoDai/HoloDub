@@ -24,6 +24,7 @@ type Client struct {
 	retranslationModel       string
 	retranslationTemperature float64
 	thinkingModel            string
+	segmentReviewModel       string
 	thinkingHTTPClient       *http.Client
 	httpClient               *http.Client
 }
@@ -46,6 +47,7 @@ func New(cfg config.Config) *Client {
 		retranslationModel:       cfg.RetranslationModel,
 		retranslationTemperature: retranslationTemp,
 		thinkingModel:            cfg.RetranslationThinkingModel,
+		segmentReviewModel:       cfg.SegmentReviewModel,
 		thinkingHTTPClient: &http.Client{
 			Timeout: thinkingTimeout,
 		},
@@ -99,12 +101,14 @@ func (c *Client) TranslateText(ctx context.Context, sourceLanguage, targetLangua
 // embedded in the system prompt so the model targets the right character budget.
 // charsPerSecHint, when > 0, overrides the language-based default speaking rate
 // so the prompt reflects the actual voice profile's measured speed.
-func (c *Client) TranslateTextWithDuration(ctx context.Context, sourceLanguage, targetLanguage, text string, targetSec float64, charsPerSecHint float64) (string, error) {
+// contextBefore provides the immediately preceding translated segments for
+// terminology consistency; translationSummary is the episode-level reference card.
+func (c *Client) TranslateTextWithDuration(ctx context.Context, sourceLanguage, targetLanguage, text string, targetSec float64, charsPerSecHint float64, contextBefore []ContextSegment, translationSummary string) (string, error) {
 	switch c.provider {
 	case "", "mock":
 		return mockTranslate(targetLanguage, text), nil
 	case "openai_compatible", "openai-compatible":
-		return c.translateWithDurationViaOpenAI(ctx, sourceLanguage, targetLanguage, text, targetSec, charsPerSecHint)
+		return c.translateWithDurationViaOpenAI(ctx, sourceLanguage, targetLanguage, text, targetSec, charsPerSecHint, contextBefore, translationSummary)
 	default:
 		return "", fmt.Errorf("unsupported translation provider %q", c.provider)
 	}
@@ -498,7 +502,7 @@ func (c *Client) translateViaOpenAI(ctx context.Context, sourceLanguage, targetL
 	return c.doChat(ctx, requestPayload)
 }
 
-func (c *Client) translateWithDurationViaOpenAI(ctx context.Context, sourceLanguage, targetLanguage, text string, targetSec float64, charsPerSecHint float64) (string, error) {
+func (c *Client) translateWithDurationViaOpenAI(ctx context.Context, sourceLanguage, targetLanguage, text string, targetSec float64, charsPerSecHint float64, contextBefore []ContextSegment, translationSummary string) (string, error) {
 	if c.baseURL == "" || c.apiKey == "" || c.model == "" {
 		return "", errors.New("OPENAI_BASE_URL, OPENAI_API_KEY and OPENAI_MODEL are required for openai_compatible provider")
 	}
@@ -513,24 +517,50 @@ func (c *Client) translateWithDurationViaOpenAI(ctx context.Context, sourceLangu
 	}
 
 	systemPrompt := fmt.Sprintf(
-		"You translate subtitle segments for dubbing.\n\n"+
+		"You are a professional dubbing translator. Translate the given source segment accurately and concisely.\n\n"+
+			"[Constraints]\n"+
 			"Segment duration: %.1f seconds.\n"+
 			"Target language: %s.\n"+
-			"Maximum characters allowed: %d (speech rate ~%.1f chars/sec).\n\n"+
-			"Rules:\n"+
-			"1. Stay within %d characters — hard limit.\n"+
-			"2. Keep meaning accurate and natural.\n"+
-			"3. If meaning must be shortened to fit, prioritize key information.\n"+
-			"4. Respond with the translation only, no explanations.",
+			"Hard character limit: %d characters (speech rate ~%.1f chars/sec).\n\n"+
+			"[Rules — follow strictly]\n"+
+			"1. VERBATIM FIDELITY: Translate only what the speaker actually says. "+
+			"Do NOT add explanations, elaborations, summaries, or context that are not in the source. "+
+			"If the speaker is incomplete or informal, reflect that — do not 'complete' their thought.\n"+
+			"2. LENGTH: Stay within %d characters. Aim for natural spoken length — "+
+			"do NOT pad with filler phrases to fill the time slot.\n"+
+			"3. PROPER NOUNS & TECHNICAL TERMS: Do NOT translate algorithm names, protocol names, "+
+			"product names, or other proper nouns (e.g. 'Raft' stays 'Raft', 'MapReduce' stays 'MapReduce'). "+
+			"Use established translations for standard technical terms where they exist.\n"+
+			"4. CONSISTENCY: Use the same translation for the same term throughout. "+
+			"Follow any glossary or style guidance provided below.\n"+
+			"5. REGISTER: Match the speaker's tone and register (academic lecture → formal academic style).\n"+
+			"6. OUTPUT: Respond with the translation only. No explanations, no alternatives, no notes.",
 		targetSec, targetLanguage, limit, rate, limit,
 	)
+
+	// Inject episode-level reference card if available.
+	if translationSummary != "" {
+		systemPrompt += "\n\n[Episode reference — use this glossary and style guide]\n" + translationSummary + "\n[End of episode reference]"
+	}
+
+	// Inject preceding translated segments for local consistency.
+	var userMsg strings.Builder
+	if len(contextBefore) > 0 {
+		userMsg.WriteString("[Preceding segments — for terminology and style reference]\n")
+		for i, seg := range contextBefore {
+			label := fmt.Sprintf("-%d", len(contextBefore)-i)
+			userMsg.WriteString(fmt.Sprintf("(%s) %s: %s\n     %s: %s\n", label, sourceLanguage, seg.SrcText, targetLanguage, seg.TgtText))
+		}
+		userMsg.WriteString("\n[Segment to translate now]\n")
+	}
+	userMsg.WriteString(fmt.Sprintf("Source language: %s\nText: %s", sourceLanguage, text))
 
 	requestPayload := chatCompletionRequest{
 		Model:       c.model,
 		Temperature: c.temperature,
 		Messages: []map[string]string{
 			{"role": "system", "content": systemPrompt},
-			{"role": "user", "content": fmt.Sprintf("Source language: %s\nText: %s", sourceLanguage, text)},
+			{"role": "user", "content": userMsg.String()},
 		},
 	}
 
@@ -639,4 +669,161 @@ func (c *Client) doChatStream(ctx context.Context, payload chatCompletionRequest
 		return "", errors.New("thinking provider returned empty content")
 	}
 	return result, nil
+}
+
+// ── Segmentation review ────────────────────────────────────────────────────────
+
+// SegmentInfo is a compact representation of one ASR segment sent to the
+// LLM segmentation-review agent.
+type SegmentInfo struct {
+	Ordinal     int
+	Text        string
+	StartMs     int64
+	EndMs       int64
+	GapAfterMs  int64 // gap to the next segment (0 for the last segment)
+	SplitReason string
+}
+
+// SegmentReviewSuggestion is one merge recommendation returned by ReviewSegmentation.
+// Only "merge" actions are produced; splits require word-level timestamps and are
+// performed manually through the UI.
+type SegmentReviewSuggestion struct {
+	Action     string // always "merge"
+	SegmentIDs []uint // IDs of the segments to merge (must be consecutive)
+	Reason     string
+	Confidence float64 // 0–1
+}
+
+// ReviewSegmentation analyses the ASR-produced segments and returns a list of
+// merge suggestions.  It returns an empty slice (no error) when running in
+// mock/offline mode or when the LLM finds no problems.
+func (c *Client) ReviewSegmentation(
+	ctx context.Context,
+	sourceLanguage string,
+	segments []SegmentInfo,
+) ([]SegmentReviewSuggestion, error) {
+	if c.baseURL == "" || c.apiKey == "" {
+		return nil, nil // offline / mock mode — no suggestions
+	}
+	if len(segments) == 0 {
+		return nil, nil
+	}
+
+	// Build a compact JSON representation of all segments for the prompt.
+	type segJSON struct {
+		Ordinal     int    `json:"ordinal"`
+		ID          int    `json:"id"` // placeholder — actual DB IDs added by caller
+		Text        string `json:"text"`
+		DurationMs  int64  `json:"duration_ms"`
+		GapAfterMs  int64  `json:"gap_after_ms"`
+		SplitReason string `json:"split_reason"`
+	}
+	segList := make([]segJSON, len(segments))
+	for i, s := range segments {
+		segList[i] = segJSON{
+			Ordinal:     s.Ordinal,
+			ID:          s.Ordinal, // ordinal used as reference in suggestions
+			Text:        s.Text,
+			DurationMs:  s.EndMs - s.StartMs,
+			GapAfterMs:  s.GapAfterMs,
+			SplitReason: s.SplitReason,
+		}
+	}
+	segJSON2, err := json.Marshal(segList)
+	if err != nil {
+		return nil, err
+	}
+
+	systemPrompt := fmt.Sprintf(
+		"You are an expert ASR post-processing agent for a video dubbing pipeline.\n"+
+			"Source language: %s.\n\n"+
+			"You will receive a list of ASR segments.  Each segment has:\n"+
+			"  ordinal   – 0-based index (used to identify segments)\n"+
+			"  text      – transcribed speech\n"+
+			"  duration_ms – segment length in milliseconds\n"+
+			"  gap_after_ms – silence gap to the next segment\n"+
+			"  split_reason – why the ASR engine created this boundary\n\n"+
+			"Your task: identify adjacent segments that should be MERGED because they form\n"+
+			"a single natural utterance that was incorrectly split. Common cases:\n"+
+			"  - A sentence was split mid-clause due to a brief pause\n"+
+			"  - A conjunction or subordinator (but, and, so, because, …) starts the\n"+
+			"    following segment, making the split feel unnatural\n"+
+			"  - Two very short segments (<1 s each) that together form one coherent phrase\n\n"+
+			"Do NOT suggest merges when:\n"+
+			"  - There is a clear topic or sentence boundary\n"+
+			"  - The gap_after_ms is large (>2000 ms) indicating a deliberate pause\n"+
+			"  - The merged segment would exceed ~20 seconds\n\n"+
+			"Respond with a JSON array of suggestions.  Each element:\n"+
+			"  { \"ordinals\": [<ordinal_a>, <ordinal_b>], \"reason\": \"<short reason>\", \"confidence\": <0.0-1.0> }\n"+
+			"Only adjacent segments may be merged (consecutive ordinals).\n"+
+			"If there are no problems, return an empty array: []\n"+
+			"Return ONLY the JSON array, no other text.",
+		sourceLanguage,
+	)
+
+	model := c.segmentReviewModel
+	if model == "" {
+		model = c.retranslationModel
+	}
+	if model == "" {
+		model = c.model
+	}
+
+	payload := chatCompletionRequest{
+		Model:       model,
+		Temperature: 0.2,
+		Messages: []map[string]string{
+			{"role": "system", "content": systemPrompt},
+			{"role": "user", "content": string(segJSON2)},
+		},
+	}
+
+	raw, err := c.doChat(ctx, payload)
+	if err != nil {
+		return nil, fmt.Errorf("segment review LLM call: %w", err)
+	}
+
+	// Strip markdown code fences if the model wraps the JSON
+	raw = strings.TrimSpace(raw)
+	if strings.HasPrefix(raw, "```") {
+		lines := strings.SplitN(raw, "\n", 2)
+		if len(lines) == 2 {
+			raw = lines[1]
+		}
+		raw = strings.TrimSuffix(strings.TrimSpace(raw), "```")
+	}
+
+	type rawSuggestion struct {
+		Ordinals   []int   `json:"ordinals"`
+		Reason     string  `json:"reason"`
+		Confidence float64 `json:"confidence"`
+	}
+	var rawItems []rawSuggestion
+	if err := json.Unmarshal([]byte(raw), &rawItems); err != nil {
+		return nil, fmt.Errorf("parse segment review response: %w (raw: %.200s)", err, raw)
+	}
+
+	// Build an ordinal→ID map from the provided segments
+	ordinalToID := make(map[int]uint, len(segments))
+	for _, s := range segments {
+		ordinalToID[s.Ordinal] = uint(s.Ordinal) // placeholder; pipeline caller injects real IDs
+	}
+
+	suggestions := make([]SegmentReviewSuggestion, 0, len(rawItems))
+	for _, item := range rawItems {
+		if len(item.Ordinals) < 2 {
+			continue
+		}
+		ids := make([]uint, len(item.Ordinals))
+		for i, ord := range item.Ordinals {
+			ids[i] = ordinalToID[ord]
+		}
+		suggestions = append(suggestions, SegmentReviewSuggestion{
+			Action:     "merge",
+			SegmentIDs: ids,
+			Reason:     item.Reason,
+			Confidence: item.Confidence,
+		})
+	}
+	return suggestions, nil
 }
