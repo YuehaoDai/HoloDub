@@ -1,0 +1,97 @@
+# docker-compose.prod.yml — production overlay.
+#
+# Adds restart policies, resource limits, structured logging, and
+# secrets-driven Postgres credentials on top of the base docker-compose.yml.
+# Apply on top of the base file:
+#
+#     docker compose -f docker-compose.yml -f docker-compose.prod.yml \
+#                    --env-file .env.production up -d
+#
+# Required secrets (under ./secrets/):
+#   postgres_password.txt   - Postgres password for both the server and the API
+#   api_auth_token.txt      - HoloDub API_AUTH_TOKEN
+#
+# These files are mounted into the containers via the `secrets:` mechanism
+# below, never committed.
+
+secrets:
+  postgres_password:
+    file: ./secrets/postgres_password.txt
+  api_auth_token:
+    file: ./secrets/api_auth_token.txt
+
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+
+services:
+  postgres:
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: holodub
+      POSTGRES_USER: holodub
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets:
+      - postgres_password
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+          cpus: "1.0"
+    logging: *default-logging
+
+  redis:
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: "0.5"
+    logging: *default-logging
+
+  ml-service:
+    restart: unless-stopped
+    # GPU passthrough already declared in the base file. Memory is left
+    # unconstrained because IndexTTS2 may legitimately spike to 6+ GB.
+    deploy:
+      resources:
+        limits:
+          cpus: "8.0"
+    logging: *default-logging
+
+  api:
+    restart: unless-stopped
+    environment:
+      APP_ENV: production
+      LOG_FORMAT: json
+      AUTO_MIGRATE_ON_START: "false"
+    secrets:
+      - api_auth_token
+    healthcheck:
+      test: ["CMD-SHELL", "wget --quiet --spider http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: "1.0"
+    logging: *default-logging
+
+  worker:
+    restart: unless-stopped
+    environment:
+      APP_ENV: production
+      LOG_FORMAT: json
+      AUTO_MIGRATE_ON_START: "false"
+    secrets:
+      - api_auth_token
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+          cpus: "2.0"
+    logging: *default-logging

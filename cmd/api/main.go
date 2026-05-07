@@ -46,6 +46,14 @@ func main() {
 		pipeline.NewService(cfg, st, queue.New(cfg), ml.New(cfg.MLServiceURL), llm.New(cfg)),
 	)
 
+	if cfg.APIAuthToken == "" && !cfg.IsProduction() {
+		logger.Warn(
+			"API_AUTH_TOKEN is not set; protected routes are open to all clients. "+
+				"This is allowed only because APP_ENV is not 'production'.",
+			"environment", cfg.Environment,
+		)
+	}
+
 	slog.Info("starting api", "addr", cfg.HTTPAddr, "env", cfg.Environment)
 	if err := router.Run(cfg.HTTPAddr); err != nil {
 		logger.Error("run api failed", "error", err)

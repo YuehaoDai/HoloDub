@@ -95,7 +95,7 @@ func NewRouter(cfg config.Config, st *store.Store, pipelineSvc *pipeline.Service
 		metricsMiddleware(),
 		loggingMiddleware(),
 		gin.Recovery(),
-		apiKeyAuthMiddleware(cfg.APIAuthToken),
+		apiKeyAuthMiddleware(cfg.APIAuthToken, cfg.Environment),
 		rateLimitMiddleware(cfg.RequestRateLimitRPS, cfg.RequestRateLimitBurst),
 	)
 
@@ -104,6 +104,7 @@ func NewRouter(cfg config.Config, st *store.Store, pipelineSvc *pipeline.Service
 	router.GET("/ui/*filepath", server.serveUI)
 
 	router.GET("/healthz", server.handleHealth)
+	router.GET("/readyz", server.handleReady)
 	router.GET("/ml-health", server.handleMLHealth)
 	if cfg.EnableMetrics {
 		router.GET("/metrics", gin.WrapH(observability.MetricsHandler()))
@@ -184,14 +185,70 @@ func (s *Server) serveUI(c *gin.Context) {
 	c.FileFromFS(path, stdhttp.FS(ui.FS()))
 }
 
+// handleHealth is the liveness probe. It must stay cheap and never depend
+// on downstream services so a transient DB/Redis/ML outage does not cause
+// the orchestrator to kill the process.
 func (s *Server) handleHealth(c *gin.Context) {
 	c.JSON(stdhttp.StatusOK, gin.H{
-		"status":             "ok",
-		"environment":        s.cfg.Environment,
-		"metrics_enabled":    s.cfg.EnableMetrics,
-		"default_tenant_key": s.cfg.DefaultTenantKey,
-		"timestamp":          time.Now().UTC(),
+		"status":      "ok",
+		"environment": s.cfg.Environment,
+		"timestamp":   time.Now().UTC(),
 	})
+}
+
+// handleReady is the readiness probe. It returns 503 unless every downstream
+// dependency that the API needs to serve traffic is healthy:
+//
+//   - PostgreSQL reachable (`SELECT 1` succeeds)
+//   - Redis reachable (PING)
+//   - ml-service `/healthz` reachable AND TTS warmup status is not "loading"/"error"
+//
+// Each component reports its individual status in the JSON body so that
+// dashboards can surface which dependency is degraded.
+func (s *Server) handleReady(c *gin.Context) {
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+	defer cancel()
+
+	checks := gin.H{}
+	allReady := true
+
+	if err := s.store.Ping(ctx); err != nil {
+		checks["database"] = gin.H{"ready": false, "error": err.Error()}
+		allReady = false
+	} else {
+		checks["database"] = gin.H{"ready": true}
+	}
+
+	if err := s.pipeline.PingQueue(ctx); err != nil {
+		checks["redis"] = gin.H{"ready": false, "error": err.Error()}
+		allReady = false
+	} else {
+		checks["redis"] = gin.H{"ready": true}
+	}
+
+	mlPayload, mlReady, err := s.pipeline.MLReadiness(ctx)
+	switch {
+	case err != nil:
+		checks["ml_service"] = gin.H{"ready": false, "error": err.Error()}
+		allReady = false
+	case !mlReady:
+		checks["ml_service"] = gin.H{"ready": false, "details": mlPayload}
+		allReady = false
+	default:
+		checks["ml_service"] = gin.H{"ready": true, "details": mlPayload}
+	}
+
+	body := gin.H{
+		"status":    "ready",
+		"checks":    checks,
+		"timestamp": time.Now().UTC(),
+	}
+	if !allReady {
+		body["status"] = "not_ready"
+		c.JSON(stdhttp.StatusServiceUnavailable, body)
+		return
+	}
+	c.JSON(stdhttp.StatusOK, body)
 }
 
 func (s *Server) handleMLHealth(c *gin.Context) {
@@ -728,7 +785,11 @@ func (s *Server) serveSegmentAudio(c *gin.Context) {
 		respondError(c, stdhttp.StatusNotFound, "audio_not_found", "audio file not found")
 		return
 	}
-	audioPath := filepath.Join(s.cfg.DataRoot, relPath)
+	audioPath, err := storage.SecureJoinUnderRoot(s.cfg.DataRoot, relPath)
+	if err != nil {
+		respondError(c, stdhttp.StatusBadRequest, "invalid_path", "audio path is outside data root")
+		return
+	}
 	if _, err := os.Stat(audioPath); err != nil {
 		respondError(c, stdhttp.StatusNotFound, "audio_not_found", "audio file not found")
 		return
@@ -769,7 +830,11 @@ func (s *Server) serveOriginalAudio(c *gin.Context) {
 	if vocalsRelPath == "" {
 		vocalsRelPath = filepath.Join("jobs", strconv.Itoa(int(job.ID)), "separate", "vocals.wav")
 	}
-	vocalsPath := storage.ResolveDataPath(s.cfg.DataRoot, filepath.ToSlash(vocalsRelPath))
+	vocalsPath, err := storage.SecureJoinUnderRoot(s.cfg.DataRoot, filepath.ToSlash(vocalsRelPath))
+	if err != nil {
+		respondError(c, stdhttp.StatusBadRequest, "invalid_path", "vocals path is outside data root")
+		return
+	}
 	if _, err := os.Stat(vocalsPath); err != nil {
 		respondError(c, stdhttp.StatusNotFound, "vocals_not_found", "vocals file not found")
 		return
@@ -876,7 +941,7 @@ func (s *Server) patchSegment(c *gin.Context) {
 	segment := models.Segment{
 		ID:         segmentID,
 		TargetText: request.TargetText,
-		Status:     "translated",
+		Status:     models.SegmentStatusTranslated,
 	}
 
 	if request.Rerun {
@@ -994,7 +1059,12 @@ func (s *Server) servePreviewAudio(c *gin.Context) {
 		return
 	}
 	jobID, _ := parseUintParam(c, "id")
-	audioPath := filepath.Join(s.cfg.DataRoot, "preview", fmt.Sprintf("job_%d_seg_%d_vp_%s.wav", jobID, segmentID, vpID))
+	previewRel := fmt.Sprintf("preview/job_%d_seg_%d_vp_%s.wav", jobID, segmentID, vpID)
+	audioPath, err := storage.SecureJoinUnderRoot(s.cfg.DataRoot, previewRel)
+	if err != nil {
+		respondError(c, stdhttp.StatusBadRequest, "invalid_path", "preview path is outside data root")
+		return
+	}
 	if _, err := os.Stat(audioPath); err != nil {
 		respondError(c, stdhttp.StatusNotFound, "preview_not_found", "preview audio not found; run preview-voice first")
 		return
@@ -1033,10 +1103,8 @@ func (s *Server) listFiles(c *gin.Context) {
 	}
 	filter := c.Query("filter")
 
-	// Security: prevent path traversal outside DATA_ROOT
-	absDir := filepath.Join(s.cfg.DataRoot, filepath.FromSlash(relDir))
-	if !strings.HasPrefix(absDir+string(filepath.Separator), s.cfg.DataRoot+string(filepath.Separator)) &&
-		absDir != s.cfg.DataRoot {
+	absDir, err := storage.SecureJoinUnderRoot(s.cfg.DataRoot, relDir)
+	if err != nil {
 		respondError(c, stdhttp.StatusBadRequest, "invalid_path", "path outside data root")
 		return
 	}
@@ -1095,169 +1163,6 @@ func (s *Server) listFiles(c *gin.Context) {
 }
 
 // ── Segment review handlers ────────────────────────────────────────────────────
-
-func (s *Server) listSegmentSuggestions(c *gin.Context) {
-	jobID, err := parseID(c, "id")
-	if err != nil {
-		return
-	}
-	suggestions, err := s.store.ListSuggestions(c.Request.Context(), jobID)
-	if err != nil {
-		respondError(c, stdhttp.StatusInternalServerError, "list_suggestions_failed", err.Error())
-		return
-	}
-	c.JSON(stdhttp.StatusOK, gin.H{"suggestions": suggestions})
-}
-
-func (s *Server) acceptSegmentSuggestion(c *gin.Context) {
-	jobID, err := parseID(c, "id")
-	if err != nil {
-		return
-	}
-	sugID, err := parseID(c, "sid")
-	if err != nil {
-		return
-	}
-	ctx := c.Request.Context()
-
-	// Fetch the suggestion
-	sug, err := s.store.GetSuggestion(ctx, sugID)
-	if err != nil {
-		respondError(c, stdhttp.StatusNotFound, "suggestion_not_found", "suggestion not found")
-		return
-	}
-	if sug.JobID != jobID {
-		respondError(c, stdhttp.StatusNotFound, "suggestion_not_found", "suggestion not found")
-		return
-	}
-	if sug.Status != "pending" {
-		// Idempotent: already processed
-		c.JSON(stdhttp.StatusOK, gin.H{"suggestion": sug})
-		return
-	}
-
-	// Apply the action
-	if sug.Action == "merge" {
-		ids := make([]uint, len(sug.SegmentIDs))
-		for i, v := range sug.SegmentIDs {
-			ids[i] = v
-		}
-		if err := s.store.MergeSegments(ctx, jobID, ids); err != nil {
-			respondError(c, stdhttp.StatusBadRequest, "merge_failed", err.Error())
-			return
-		}
-	}
-	// Mark suggestion accepted
-	if err := s.store.UpdateSuggestionStatus(ctx, sugID, "accepted"); err != nil {
-		respondError(c, stdhttp.StatusInternalServerError, "update_suggestion_failed", err.Error())
-		return
-	}
-	c.JSON(stdhttp.StatusOK, gin.H{"ok": true})
-}
-
-func (s *Server) rejectSegmentSuggestion(c *gin.Context) {
-	jobID, err := parseID(c, "id")
-	if err != nil {
-		return
-	}
-	sugID, err := parseID(c, "sid")
-	if err != nil {
-		return
-	}
-	ctx := c.Request.Context()
-	sug, err := s.store.GetSuggestion(ctx, sugID)
-	if err != nil {
-		respondError(c, stdhttp.StatusNotFound, "suggestion_not_found", "suggestion not found")
-		return
-	}
-	if sug.JobID != jobID {
-		respondError(c, stdhttp.StatusNotFound, "suggestion_not_found", "suggestion not found")
-		return
-	}
-	if err := s.store.UpdateSuggestionStatus(ctx, sugID, "rejected"); err != nil {
-		respondError(c, stdhttp.StatusInternalServerError, "update_suggestion_failed", err.Error())
-		return
-	}
-	c.JSON(stdhttp.StatusOK, gin.H{"ok": true})
-}
-
-func (s *Server) mergeSegments(c *gin.Context) {
-	jobID, err := parseID(c, "id")
-	if err != nil {
-		return
-	}
-	var req struct {
-		SegmentIDs []uint `json:"segment_ids" binding:"required"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		respondError(c, stdhttp.StatusBadRequest, "invalid_request", err.Error())
-		return
-	}
-	if len(req.SegmentIDs) < 2 {
-		respondError(c, stdhttp.StatusBadRequest, "invalid_request", "at least 2 segment_ids required")
-		return
-	}
-	if err := s.store.MergeSegments(c.Request.Context(), jobID, req.SegmentIDs); err != nil {
-		respondError(c, stdhttp.StatusBadRequest, "merge_failed", err.Error())
-		return
-	}
-	c.JSON(stdhttp.StatusOK, gin.H{"ok": true})
-}
-
-func (s *Server) splitSegment(c *gin.Context) {
-	jobID, err := parseID(c, "id")
-	if err != nil {
-		return
-	}
-	segID, err := parseID(c, "segmentId")
-	if err != nil {
-		return
-	}
-	var req struct {
-		SplitCharIndex int `json:"split_char_index" binding:"required"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		respondError(c, stdhttp.StatusBadRequest, "invalid_request", err.Error())
-		return
-	}
-	if err := s.store.SplitSegment(c.Request.Context(), jobID, segID, req.SplitCharIndex); err != nil {
-		respondError(c, stdhttp.StatusBadRequest, "split_failed", err.Error())
-		return
-	}
-	c.JSON(stdhttp.StatusOK, gin.H{"ok": true})
-}
-
-func (s *Server) confirmSegmentation(c *gin.Context) {
-	jobID, err := parseID(c, "id")
-	if err != nil {
-		return
-	}
-	if err := s.pipeline.ConfirmSegmentation(c.Request.Context(), jobID, "user"); err != nil {
-		status := stdhttp.StatusInternalServerError
-		if strings.Contains(err.Error(), "not in awaiting_review") {
-			status = stdhttp.StatusConflict
-		}
-		respondError(c, status, "confirm_failed", err.Error())
-		return
-	}
-	c.JSON(stdhttp.StatusOK, gin.H{"ok": true})
-}
-
-func (s *Server) retryASR(c *gin.Context) {
-	jobID, err := parseID(c, "id")
-	if err != nil {
-		return
-	}
-	if err := s.pipeline.RetryASR(c.Request.Context(), jobID, "user"); err != nil {
-		status := stdhttp.StatusInternalServerError
-		if strings.Contains(err.Error(), "not in awaiting_review") {
-			status = stdhttp.StatusConflict
-		}
-		respondError(c, status, "retry_asr_failed", err.Error())
-		return
-	}
-	c.JSON(stdhttp.StatusOK, gin.H{"ok": true})
-}
 
 // parseID is a helper that reads a named URL parameter as uint, writes a 400
 // response and returns an error if parsing fails.

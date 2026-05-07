@@ -1,3 +1,6 @@
+// API key state lives here so it is the single source of truth for both
+// the typed JSON client (lib/api-client.ts) and the legacy callers in
+// components that still build URLs by hand (audio playback URLs).
 let _apiKey = "";
 
 export function setApiKey(key: string) {
@@ -12,23 +15,14 @@ export function getApiKey(): string {
   return _apiKey;
 }
 
-function apiHeaders(): Record<string, string> {
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-  const key = getApiKey();
-  if (key) headers["X-API-Key"] = key;
-  return headers;
-}
+import { httpJson, ApiError } from "./lib/api-client";
+export { ApiError };
 
+// Thin shim that preserves the historical `apiFetch<T>(path, init)` shape so
+// each call site does not need to be rewritten in this PR. New code should
+// import httpJson directly from ./lib/api-client.
 async function apiFetch<T = unknown>(path: string, options: RequestInit = {}): Promise<T> {
-  const response = await fetch(path, {
-    ...options,
-    headers: { ...apiHeaders(), ...(options.headers as Record<string, string> || {}) },
-  });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error((payload as { message?: string; error?: string }).message || (payload as { error?: string }).error || `Request failed: ${response.status}`);
-  }
-  return payload as T;
+  return httpJson<T>(path, options as Parameters<typeof httpJson>[1]);
 }
 
 export interface Job {

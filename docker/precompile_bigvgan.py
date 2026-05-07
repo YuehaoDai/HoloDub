@@ -1,55 +1,100 @@
+"""Pre-compile BigVGAN's anti-alias activation CUDA kernel during ml.Dockerfile build.
+
+Why this script must align with IndexTTS' runtime loader
+--------------------------------------------------------
+IndexTTS' upstream loader at
+``indextts/s2mel/modules/bigvgan/alias_free_activation/cuda/load.py``
+hard-codes ``build_directory = srcpath / 'build'`` (under site-packages),
+NOT the PyTorch default ``~/.cache/torch_extensions/``. Any precompile
+that targets the latter is silently wasted because the runtime loader
+never reads from there.
+
+In addition, IndexTTS' loader computes ``cc_flags`` from the runtime
+GPU's compute capability:
+
+    arch=compute_<MAJOR><MINOR>,code=sm_<MAJOR><MINOR>
+
+We therefore must emit IDENTICAL ``cc_flags`` here so that PyTorch's
+``cpp_extension.load`` cache validity check (which hashes ``build.ninja``)
+matches at runtime and skips the JIT compile entirely.
+
+Strategy
+--------
+1. Monkey-patch ``torch.cuda`` so that, even though no GPU is visible
+   inside the docker build sandbox, ``torch.cuda.is_available()`` claims
+   True and ``torch.cuda.get_device_capability(0)`` returns the target
+   compute capability (default sm_120, override via ``BIGVGAN_TARGET_SM``).
+2. Call IndexTTS' own ``load.load()`` so build_directory and every
+   other compile flag is contributed by IndexTTS itself.
+3. Result: the .so is dropped into
+   ``<site-packages>/indextts/.../cuda/build/anti_alias_activation_cuda.so``
+   and the matching ``build.ninja`` exactly mirrors what runtime would
+   recompute, so runtime PyTorch reports "ninja: no work to do" and
+   ``dlopen``s in <5 s.
+
+If the precompile fails (no nvcc, etc.) we exit non-zero so the docker
+build line can `|| echo "..."` it as non-fatal but visible in the log.
 """
-Pre-compile BigVGAN's anti-alias activation CUDA kernel during Docker build.
 
-This runs as part of the ml.Dockerfile build so the compiled .so is baked
-into the image layer.  Every container start then loads the cached extension
-directly, eliminating the ~2-minute JIT compilation that otherwise happens
-on the first TTS inference call.
+from __future__ import annotations
 
-Set TORCH_CUDA_ARCH_LIST before running, e.g.:
-    TORCH_CUDA_ARCH_LIST="7.5;8.0;8.6;8.9+PTX;12.0" python3 precompile_bigvgan.py
-"""
-
-import glob
 import os
 import sys
 import time
 
-os.environ.setdefault("TORCH_CUDA_ARCH_LIST", "7.5;8.0;8.6;8.9+PTX;12.0")
+TARGET_SM = os.environ.get("BIGVGAN_TARGET_SM", "120")
 
-try:
-    import indextts
-except ImportError:
-    print("indextts not installed — skipping BigVGAN pre-compilation")
+if not (TARGET_SM.isdigit() and len(TARGET_SM) in (2, 3)):
+    print(f"BIGVGAN_TARGET_SM={TARGET_SM!r} is not a valid compute capability "
+          "(expected e.g. '70', '80', '86', '89', '120'). Skipping.")
     sys.exit(0)
 
-base = os.path.join(
-    os.path.dirname(indextts.__file__),
-    "s2mel", "modules", "bigvgan", "alias_free_activation", "cuda",
+if len(TARGET_SM) == 2:
+    target_major, target_minor = int(TARGET_SM[0]), int(TARGET_SM[1])
+else:
+    target_major, target_minor = int(TARGET_SM[:-1]), int(TARGET_SM[-1])
+
+print(f"[precompile_bigvgan] target compute capability sm_{TARGET_SM} "
+      f"({target_major}.{target_minor})")
+
+try:
+    import torch
+except ImportError:
+    print("[precompile_bigvgan] torch not installed -- skipping")
+    sys.exit(0)
+
+try:
+    import indextts  # noqa: F401
+except ImportError:
+    print("[precompile_bigvgan] indextts not installed -- skipping")
+    sys.exit(0)
+
+# Monkey-patch torch.cuda so IndexTTS' load.load() generates cc_flags
+# for the deployment GPU even though the build container has no GPU.
+torch.cuda.is_available = lambda: True  # type: ignore[assignment]
+torch.cuda.device_count = lambda: 1  # type: ignore[assignment]
+torch.cuda.get_device_capability = (  # type: ignore[assignment]
+    lambda _idx=0: (target_major, target_minor)
 )
 
-cpp_sources = sorted(glob.glob(os.path.join(base, "*.cpp")))
-cu_sources  = sorted(glob.glob(os.path.join(base, "*.cu")))
+# torch.utils.cpp_extension also probes ``torch.version.cuda`` and
+# ``CUDA_HOME``; the devel base image already provides a real CUDA
+# toolkit so those work as-is.
 
-if not cu_sources:
-    print("No CUDA sources found under", base, "— skipping")
-    sys.exit(0)
-
-print(f"Compiling BigVGAN CUDA kernel ({len(cpp_sources)} .cpp, {len(cu_sources)} .cu) …")
-print(f"Architectures: {os.environ.get('TORCH_CUDA_ARCH_LIST')}")
-
+# Trigger IndexTTS' own loader. This compiles to the IDENTICAL build
+# directory and with the IDENTICAL flags that runtime will compute.
+print("[precompile_bigvgan] invoking IndexTTS' own load.load() ...")
 t0 = time.time()
 try:
-    from torch.utils.cpp_extension import load
-    ext = load(
-        name="anti_alias_activation_cuda",
-        sources=cpp_sources + cu_sources,
-        extra_cuda_cflags=["-O3", "--use_fast_math"],
-        verbose=True,
+    from indextts.s2mel.modules.bigvgan.alias_free_activation.cuda.load import (
+        load as bigvgan_load,
     )
+    ext = bigvgan_load()
     elapsed = time.time() - t0
-    print(f"BigVGAN CUDA kernel compiled successfully in {elapsed:.1f}s")
-    print(f"Extension: {ext}")
-except Exception as exc:
-    print(f"Pre-compilation failed ({exc}); kernel will be compiled at first runtime use")
+    print(f"[precompile_bigvgan] OK in {elapsed:.1f}s; extension={ext}")
+except Exception as exc:  # noqa: BLE001
+    elapsed = time.time() - t0
+    print(f"[precompile_bigvgan] FAILED after {elapsed:.1f}s: {exc!r}")
+    print("[precompile_bigvgan] falling back: kernel will be JIT-compiled at "
+          "first runtime use (set INDEXTTS2_USE_CUDA_KERNEL=false to disable).")
     sys.exit(1)

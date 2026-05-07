@@ -11,6 +11,7 @@ requires-python = ">=3.10"
 dependencies = [
   "fastapi",
   "httpx",
+  "prometheus-client>=0.20.0",
   "pydantic",
   "pydantic-settings",
   "uvicorn",
@@ -33,6 +34,10 @@ real = [
 dev = [
   "pytest",
   "pytest-asyncio",
+  "ruff>=0.6.0",
+  "mypy>=1.10",
+  "pip-audit>=2.7.0",
+  "types-requests",
 ]
 
 [tool.setuptools.packages.find]
@@ -41,3 +46,49 @@ include = ["app*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+extend-exclude = ["build", "dist", ".venv", ".pytest_cache"]
+
+[tool.ruff.lint]
+select = [
+  "E",    # pycodestyle errors
+  "W",    # pycodestyle warnings
+  "F",    # pyflakes
+  "I",    # isort
+  "B",    # flake8-bugbear
+  "UP",   # pyupgrade
+  "SIM",  # flake8-simplify
+  "RUF",  # ruff-specific
+  "C4",   # flake8-comprehensions
+  "PIE",  # flake8-pie
+  "PT",   # pytest style
+  "RET",  # flake8-return
+]
+ignore = [
+  "E501",   # line length (handled by formatter)
+  "B008",   # mutable default args (FastAPI Depends pattern)
+  "SIM108", # ternary if (readability sometimes worse)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "PT011"]
+
+[tool.mypy]
+python_version = "3.10"
+files = ["app"]
+ignore_missing_imports = true
+strict_optional = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+no_implicit_optional = true
+check_untyped_defs = true
+disallow_untyped_decorators = false
+follow_imports = "silent"
+
+[[tool.mypy.overrides]]
+module = "indextts.*"
+ignore_missing_imports = true
+

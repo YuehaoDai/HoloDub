@@ -1,0 +1,161 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "graphTooltip": 0,
+  "panels": [
+    {
+      "type": "stat",
+      "title": "API requests / sec",
+      "id": 1,
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum(rate(holodub_http_requests_total[5m]))",
+          "legendFormat": "rps"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "API error rate (5xx + 429)",
+      "id": 2,
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.01 },
+              { "color": "red", "value": 0.05 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(holodub_http_requests_total{status=~\"5..|429\"}[5m])) / clamp_min(sum(rate(holodub_http_requests_total[5m])), 1e-9)",
+          "legendFormat": "error rate"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Dead-letter increment (15m)",
+      "id": 3,
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          }
+        }
+      },
+      "targets": [{ "expr": "increase(holodub_dead_letters_total[15m])" }]
+    },
+    {
+      "type": "stat",
+      "title": "TTS warmup status",
+      "id": 4,
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "idle" } } },
+            { "type": "value", "options": { "1": { "text": "loading" } } },
+            { "type": "value", "options": { "2": { "text": "ready" } } },
+            { "type": "value", "options": { "3": { "text": "error" } } }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "yellow", "value": null },
+              { "color": "green", "value": 2 },
+              { "color": "red", "value": 3 }
+            ]
+          }
+        }
+      },
+      "targets": [{ "expr": "holodub_ml_tts_warmup_status" }]
+    },
+    {
+      "type": "timeseries",
+      "title": "Stage runs / 5min",
+      "id": 5,
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "targets": [
+        {
+          "expr": "sum by (stage, status) (rate(holodub_stage_runs_total[5m]))",
+          "legendFormat": "{{stage}} {{status}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Stage duration p50/p95",
+      "id": 6,
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.5, sum by (le, stage) (rate(holodub_stage_run_duration_seconds_bucket[5m])))",
+          "legendFormat": "p50 {{stage}}"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, stage) (rate(holodub_stage_run_duration_seconds_bucket[5m])))",
+          "legendFormat": "p95 {{stage}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "External call result mix (LLM/ML)",
+      "id": 7,
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "targets": [
+        {
+          "expr": "sum by (service, result) (rate(holodub_external_calls_total[5m]))",
+          "legendFormat": "{{service}} {{result}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "ml-service inference p95 by stage",
+      "id": 8,
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, stage) (rate(holodub_ml_inference_duration_seconds_bucket[5m])))",
+          "legendFormat": "p95 {{stage}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "ml-service GPU wait time (p95)",
+      "id": 9,
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 20 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, stage) (rate(holodub_ml_gpu_wait_seconds_bucket[5m])))",
+          "legendFormat": "p95 {{stage}}"
+        }
+      ]
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 38,
+  "style": "dark",
+  "tags": ["holodub"],
+  "templating": { "list": [] },
+  "time": { "from": "now-3h", "to": "now" },
+  "timepicker": {},
+  "timezone": "",
+  "title": "HoloDub Overview",
+  "version": 1
+}

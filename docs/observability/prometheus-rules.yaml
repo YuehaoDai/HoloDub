@@ -1,0 +1,95 @@
+# Prometheus alert rules for HoloDub.
+#
+# Suggested location on the Prometheus server:
+#   /etc/prometheus/rules/holodub.yaml
+# Then reference it from prometheus.yml:
+#   rule_files:
+#     - /etc/prometheus/rules/holodub.yaml
+
+groups:
+  - name: holodub.api
+    interval: 30s
+    rules:
+      - alert: HoloDubAPIDown
+        expr: up{job="holodub-api"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "HoloDub API instance is down ({{ $labels.instance }})"
+          description: "Prometheus has not been able to scrape the API for 2 minutes."
+
+      - alert: HoloDubHighErrorRate
+        expr: |
+          sum by (path) (
+            rate(holodub_http_requests_total{status=~"5..|429"}[5m])
+          )
+            /
+          sum by (path) (
+            rate(holodub_http_requests_total[5m])
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "API error rate >5% on {{ $labels.path }}"
+
+      - alert: HoloDubDeadLettersGrowing
+        expr: increase(holodub_dead_letters_total[15m]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "Tasks are landing in the dead-letter queue"
+          description: "Inspect Redis ZRANGE 0 -1 holodub:tasks:dead and the worker logs."
+
+  - name: holodub.pipeline
+    interval: 30s
+    rules:
+      - alert: HoloDubStageFailureSpike
+        expr: |
+          sum by (stage) (
+            increase(holodub_stage_runs_total{status="failed"}[10m])
+          ) > 3
+        labels:
+          severity: warning
+        annotations:
+          summary: "Stage {{ $labels.stage }} failed >3 times in 10 minutes"
+
+      - alert: HoloDubExternalDependencyDegraded
+        expr: |
+          sum by (service) (
+            rate(holodub_external_calls_total{result="permanent"}[5m])
+          ) > 0.1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "External dependency {{ $labels.service }} returning persistent errors"
+
+  - name: holodub.ml
+    interval: 30s
+    rules:
+      - alert: HoloDubMLServiceDown
+        expr: up{job="holodub-ml"} == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "ml-service has been unreachable for 5 minutes"
+
+      - alert: HoloDubTTSWarmupFailed
+        expr: holodub_ml_tts_warmup_status == 3
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "IndexTTS2 inline warm-up reports error"
+
+      - alert: HoloDubGPUWaitHigh
+        expr: histogram_quantile(0.95, sum by (le, stage) (rate(holodub_ml_gpu_wait_seconds_bucket[5m]))) > 5
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "p95 GPU wait time on {{ $labels.stage }} >5s"
+          description: "Consider raising GPU_CONCURRENCY or scaling out ml-service."

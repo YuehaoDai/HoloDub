@@ -2,47 +2,162 @@ name: CI
 
 on:
   push:
+    branches: [main, dev-win]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
-  test:
+  go-lint:
+    name: Go Lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+          cache: true
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v1.64
+          args: --timeout=5m
 
+  go-test:
+    name: Go Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
       - name: Run Go tests
-        run: go test ./...
+        run: go test -race -coverprofile=coverage.out ./...
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: go-coverage
+          path: coverage.out
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+  go-vuln:
+    name: Go Vulnerability Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+      - name: Run govulncheck
+        run: govulncheck ./...
+
+  python-lint:
+    name: Python Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-
-      - name: Install ML service test dependencies
+          cache: pip
+      - name: Install dev dependencies
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e ./ml_service[dev]
+      - name: Run ruff
+        run: ruff check ml_service/app ml_service/tests
+      - name: Run mypy
+        run: mypy ml_service/app
+        continue-on-error: true
 
-      - name: Run Python tests
-        run: python -m pytest ml_service/tests
+  python-test:
+    name: Python Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ./ml_service[dev]
+      - name: Run pytest
+        run: python -m pytest ml_service/tests -v
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
+  python-audit:
+    name: Python Dependency Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install pip-audit
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pip-audit
+      - name: Run pip-audit
+        run: pip-audit --strict --requirement <(python -c "import tomllib;d=tomllib.load(open('ml_service/pyproject.toml','rb'));print('\n'.join(d['project']['dependencies']))")
+        continue-on-error: true
+
+  ui:
+    name: UI (lint + typecheck + build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: "20"
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - name: Install dependencies
+        working-directory: ui
+        run: npm ci
+      - name: Typecheck
+        working-directory: ui
+        run: npm run typecheck
+      - name: Lint
+        working-directory: ui
+        run: npm run lint
+        continue-on-error: true
+      - name: Format check
+        working-directory: ui
+        run: npm run format:check
+        continue-on-error: true
+      - name: Build
+        working-directory: ui
+        run: npm run build
+      - name: Audit
+        working-directory: ui
+        run: npm audit --audit-level=high
+        continue-on-error: true
 
-      - name: Build frontend
-        run: |
-          cd ui
-          npm install
-          npm run build
-
+  compose:
+    name: Validate Compose
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
       - name: Validate compose config
         run: |
           cp .env.example .env
           docker compose config > /tmp/compose.txt
+
+  openapi:
+    name: OpenAPI Spec
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install Redocly CLI
+        run: npm install -g @redocly/cli@latest
+      - name: Lint OpenAPI spec
+        run: redocly lint docs/openapi.yaml

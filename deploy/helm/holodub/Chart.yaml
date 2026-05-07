@@ -1,0 +1,15 @@
+apiVersion: v2
+name: holodub
+description: HoloDub video translation & dubbing platform (api + worker + ml-service).
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://github.com/YuehaoDai/HoloDub
+keywords:
+  - dubbing
+  - translation
+  - tts
+  - asr
+maintainers:
+  - name: HoloDub Maintainers
+    email: noreply@example.com

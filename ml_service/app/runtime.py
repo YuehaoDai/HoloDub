@@ -10,7 +10,7 @@ from app.services.model_registry import ModelRegistry
 
 class ServiceContainer:
     def __init__(self, settings: Settings) -> None:
-        registry = ModelRegistry()
+        registry = ModelRegistry(max_models=settings.model_registry_max_models or None)
         self.settings = settings
         self.registry = registry
         self.gpu_guard = GPUGuard(settings.gpu_concurrency)

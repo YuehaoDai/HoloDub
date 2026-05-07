@@ -1,6 +1,7 @@
 package media
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -209,10 +210,26 @@ func buildVoiceMix(filterParts []string, voiceLabels []string) (string, []string
 	return voiceOut, filterParts
 }
 
-// runCmd runs an external command and wraps any error with its combined stdout+stderr output.
+// runCmd runs an external command and wraps any error with its combined
+// stdout+stderr output. It is the legacy variant kept for callers that have
+// not been threaded with a context yet; new code should prefer runCmdCtx.
 func runCmd(name string, args ...string) error {
-	out, err := exec.Command(name, args...).CombinedOutput()
+	return runCmdCtx(context.Background(), name, args...)
+}
+
+// runCmdCtx is the cancellable variant of runCmd. When ctx is cancelled the
+// underlying ffmpeg/ffprobe process is sent SIGKILL and the call returns
+// ctx.Err() (so callers can distinguish cancellation from real failures).
+func runCmdCtx(ctx context.Context, name string, args ...string) error {
+	out, err := exec.CommandContext(ctx, name, args...).CombinedOutput()
 	if err != nil {
+		// Surface context cancellation transparently: when ctx fires while
+		// ffmpeg is running, exec.CommandContext returns "signal: killed"
+		// which is not actionable. Return ctx.Err() instead so the worker
+		// can shut down cleanly without spurious "task failed" alerts.
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
 		if len(out) > 0 {
 			return fmt.Errorf("%w\n%s", err, string(out))
 		}

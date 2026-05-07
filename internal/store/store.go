@@ -50,6 +50,17 @@ func (s *Store) DB() *gorm.DB {
 	return s.db
 }
 
+// Ping verifies database connectivity. Used by /readyz so orchestrators can
+// distinguish between "the process is alive" (liveness) and "the process can
+// actually serve requests" (readiness).
+func (s *Store) Ping(ctx context.Context) error {
+	sqlDB, err := s.db.DB()
+	if err != nil {
+		return fmt.Errorf("get sql.DB: %w", err)
+	}
+	return sqlDB.PingContext(ctx)
+}
+
 func (s *Store) AutoMigrate() error {
 	return s.db.AutoMigrate(
 		&models.Job{},
@@ -268,7 +279,7 @@ func (s *Store) ReplaceSegments(ctx context.Context, jobID uint, drafts []models
 			OriginalDurationMs: draft.EndMs - draft.StartMs,
 			SourceText:         draft.Text,
 			SplitReason:        draft.SplitReason,
-			Status:             "pending",
+			Status:             models.SegmentStatusPending,
 		}
 			segments = append(segments, segment)
 		}
@@ -599,7 +610,7 @@ func (s *Store) UpdateSegmentTranslationAndReset(ctx context.Context, segmentID 
 		if err := tx.Model(&models.Segment{}).Where("id = ?", segmentID).
 			Updates(map[string]any{
 				"target_text": targetText,
-				"status":      "translated",
+				"status":      string(models.SegmentStatusTranslated),
 				"updated_at":  now,
 			}).Error; err != nil {
 			return err
@@ -834,7 +845,7 @@ func (s *Store) SplitSegment(ctx context.Context, jobID uint, segmentID uint, sp
 			OriginalDurationMs: seg.EndMs - splitMs,
 			SourceText:         textB,
 			SplitReason:        "manual_split",
-			Status:             "pending",
+			Status:             models.SegmentStatusPending,
 		}
 
 		// Make room: shift ordinals of segments after the split point by 1

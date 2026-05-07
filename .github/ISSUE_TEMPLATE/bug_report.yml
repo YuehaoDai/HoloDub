@@ -1,0 +1,68 @@
+name: Bug report
+description: Report a problem with HoloDub
+title: "[bug] "
+labels: ["type:bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug report! Please fill in the
+        sections below so we can reproduce and fix the issue quickly.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear and concise description of the bug.
+      placeholder: When I run a job with target_language=zh, the merge stage fails with...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+      placeholder: The merge stage should produce final.mp4 under data/jobs/<id>/output/.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction steps
+      description: Minimal commands or job config that reproduces the bug.
+      render: bash
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Relevant logs from `docker compose logs api` / `worker` / `ml-service`.
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: HoloDub version / commit
+    validations:
+      required: true
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: Deployment
+      options:
+        - Docker Compose (Linux)
+        - Docker Desktop (Windows + WSL2)
+        - Docker Desktop (macOS)
+        - Bare metal / other
+      default: 0
+    validations:
+      required: true
+  - type: input
+    id: gpu
+    attributes:
+      label: GPU (if applicable)
+      placeholder: NVIDIA RTX 5080 (16 GB), driver 560.xx, CUDA 12.8
+  - type: textarea
+    id: env
+    attributes:
+      label: Relevant .env settings
+      description: Sanitised excerpt — never paste API keys.
+      render: dotenv

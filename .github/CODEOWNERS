@@ -1,0 +1,24 @@
+# HoloDub CODEOWNERS
+# https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+#
+# These owners are requested for review automatically when a PR touches the
+# matching paths. Replace placeholders with real GitHub handles before enabling.
+
+* @YuehaoDai
+
+# Go control plane
+/cmd/                       @YuehaoDai
+/internal/                  @YuehaoDai
+/migrations/                @YuehaoDai
+
+# Python ML service
+/ml_service/                @YuehaoDai
+/docker/ml.Dockerfile       @YuehaoDai
+
+# Frontend
+/ui/                        @YuehaoDai
+
+# DevOps / CI
+/.github/                   @YuehaoDai
+/docker/                    @YuehaoDai
+/docker-compose*.yml        @YuehaoDai

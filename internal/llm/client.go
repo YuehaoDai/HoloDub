@@ -7,12 +7,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"net/http"
 	"strings"
 	"time"
 
 	"holodub/internal/config"
+	"holodub/internal/httpx"
+	"holodub/internal/observability"
 )
 
 type Client struct {
@@ -567,8 +570,46 @@ func (c *Client) translateWithDurationViaOpenAI(ctx context.Context, sourceLangu
 	return c.doChat(ctx, requestPayload)
 }
 
-// doChat sends a chat completion request and returns the first choice's text.
+// llmRetryConfig is the default policy for LLM chat calls. Translation
+// providers (DeepSeek, Qwen, Kimi) frequently return 429 / 502 under load —
+// budget for that without giving up too quickly.
+var llmRetryConfig = httpx.RetryConfig{
+	MaxAttempts:    4,
+	BaseBackoff:    500 * time.Millisecond,
+	MaxBackoff:     4 * time.Second,
+	JitterFraction: 0.25,
+}
+
+func classifyResult(err error) string {
+	if err == nil {
+		return "ok"
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return "cancelled"
+	}
+	if httpx.IsRetryable(err) {
+		return "retryable"
+	}
+	return "permanent"
+}
+
+// doChat sends a chat completion request and returns the first choice's
+// text. Retries are applied automatically for transient failures (429/5xx,
+// network errors). Permanent errors (e.g. 400 invalid request) abort
+// immediately.
 func (c *Client) doChat(ctx context.Context, payload chatCompletionRequest) (string, error) {
+	started := time.Now()
+	var content string
+	err := httpx.Do(ctx, llmRetryConfig, func(ctx context.Context, attempt int) error {
+		var inner error
+		content, inner = c.doChatOnce(ctx, payload)
+		return inner
+	})
+	observability.ObserveExternalCall("llm", "chat.completions", classifyResult(err), time.Since(started))
+	return content, err
+}
+
+func (c *Client) doChatOnce(ctx context.Context, payload chatCompletionRequest) (string, error) {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return "", fmt.Errorf("marshal request: %w", err)
@@ -583,12 +624,13 @@ func (c *Client) doChat(ctx context.Context, payload chatCompletionRequest) (str
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("call translation provider: %w", err)
+		return "", httpx.Wrap("llm", "chat.completions", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= http.StatusBadRequest {
-		return "", fmt.Errorf("translation provider returned status %d", resp.StatusCode)
+		raw, _ := io.ReadAll(resp.Body)
+		return "", httpx.FromHTTPStatus("llm", "chat.completions", resp.StatusCode, raw)
 	}
 
 	var result chatCompletionResponse
@@ -624,12 +666,13 @@ func (c *Client) doChatStream(ctx context.Context, payload chatCompletionRequest
 
 	resp, err := c.thinkingHTTPClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("call thinking provider: %w", err)
+		return "", httpx.Wrap("llm", "chat.completions.stream", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= http.StatusBadRequest {
-		return "", fmt.Errorf("thinking provider returned status %d", resp.StatusCode)
+		raw, _ := io.ReadAll(resp.Body)
+		return "", httpx.FromHTTPStatus("llm", "chat.completions.stream", resp.StatusCode, raw)
 	}
 
 	// Parse SSE: each line is either "data: {json}" or "data: [DONE]".

@@ -50,14 +50,27 @@ RUN if [ -n "$PYTHON_EXTRAS" ]; then \
     && echo "BigVGAN CUDA sources patched"; \
     fi
 
-# Pre-compile BigVGAN's CUDA kernel at build time so every container start loads
-# the cached .so directly instead of compiling on first TTS inference call (~2 min).
-# Targets: 7.5=Turing, 8.0=A100, 8.6=RTX3080, 8.9=RTX4090, 12.0=RTX5080(Blackwell)
+# Pre-compile BigVGAN's anti-alias-activation CUDA kernel at build time and
+# write the .so into the EXACT directory that indextts' upstream loader uses
+# (``<site-packages>/indextts/s2mel/modules/bigvgan/alias_free_activation/cuda/build/``).
+# This matters because that loader hard-codes its own build_directory, so any
+# .so left under PyTorch's default cache (``~/.cache/torch_extensions``) is
+# silently ignored at runtime, forcing a 1-3 minute JIT recompile on every
+# fresh container --- which has been observed to deadlock indefinitely on
+# RTX 50-class (sm_120) GPUs when the recompile is initiated from a FastAPI
+# lifespan worker thread.
+#
+# BIGVGAN_TARGET_SM picks the deployment GPU's compute capability so the
+# generated build.ninja matches what runtime IndexTTS will recompute, letting
+# PyTorch's cache validity check skip the JIT path altogether.
+#   70=V100, 75=Turing, 80=A100, 86=RTX3080, 89=RTX4090, 120=RTX5080(Blackwell)
+ARG BIGVGAN_TARGET_SM=120
+ENV BIGVGAN_TARGET_SM=${BIGVGAN_TARGET_SM}
 COPY docker/precompile_bigvgan.py /tmp/precompile_bigvgan.py
 RUN if [ -n "$PYTHON_EXTRAS" ]; then \
-        TORCH_CUDA_ARCH_LIST="7.5;8.0;8.6;8.9+PTX;12.0" \
         python3 /tmp/precompile_bigvgan.py \
-        || echo "BigVGAN pre-compilation warning (non-fatal; will compile at first run)"; \
+        && ls -la /usr/local/lib/python3.11/dist-packages/indextts/s2mel/modules/bigvgan/alias_free_activation/cuda/build/anti_alias_activation_cuda.so \
+        || echo "BigVGAN pre-compilation warning (non-fatal; will compile at first run, may hang on sm_120)"; \
     fi
 
 WORKDIR /app/ml_service

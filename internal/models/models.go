@@ -1,6 +1,7 @@
 package models
 
 import (
+	"fmt"
 	"time"
 
 	"gorm.io/datatypes"
@@ -123,6 +124,49 @@ type SpeakerVoiceBinding struct {
 	VoiceProfile   VoiceProfile `json:"voice_profile,omitempty"`
 }
 
+// SegmentStatus is the typed lifecycle state of a Segment row.
+//
+// State machine (see Transition for the full rule set):
+//
+//	"" / pending  --(translate stage writes target_text)-->  translated
+//	translated    --(tts stage writes audio path)----------> synthesized
+//	synthesized   --(retry / edit clears tts result)--------> pending
+//	translated    --(retry of asr stage)------------------->  pending
+//
+// Any other transition is a programming error and is logged via
+// SegmentStatus.Transition.
+type SegmentStatus string
+
+const (
+	SegmentStatusPending     SegmentStatus = "pending"
+	SegmentStatusTranslated  SegmentStatus = "translated"
+	SegmentStatusSynthesized SegmentStatus = "synthesized"
+)
+
+// Transition validates a segment status change. It returns the next state
+// when the transition is allowed, or an error describing the invalid
+// transition. The function is a pure look-up; callers typically still
+// persist the new status themselves once Transition succeeds.
+func (s SegmentStatus) Transition(to SegmentStatus) (SegmentStatus, error) {
+	allowed := map[SegmentStatus]map[SegmentStatus]bool{
+		"":                       {SegmentStatusPending: true, SegmentStatusTranslated: true},
+		SegmentStatusPending:     {SegmentStatusPending: true, SegmentStatusTranslated: true},
+		SegmentStatusTranslated:  {SegmentStatusPending: true, SegmentStatusTranslated: true, SegmentStatusSynthesized: true},
+		SegmentStatusSynthesized: {SegmentStatusPending: true, SegmentStatusSynthesized: true, SegmentStatusTranslated: true},
+	}
+	next, ok := allowed[s]
+	if !ok || !next[to] {
+		return s, fmt.Errorf("invalid segment status transition: %q -> %q", s, to)
+	}
+	return to, nil
+}
+
+// IsTerminal reports whether no further automatic stage will modify the
+// segment. Used by reset/retry helpers.
+func (s SegmentStatus) IsTerminal() bool {
+	return s == SegmentStatusSynthesized
+}
+
 type Segment struct {
 	ID                 uint              `json:"id" gorm:"primaryKey"`
 	JobID              uint              `json:"job_id" gorm:"index"`
@@ -140,7 +184,7 @@ type Segment struct {
 	SplitReason        string            `json:"split_reason" gorm:"size:64"`
 	TTSAudioRelPath    string            `json:"tts_audio_path"`
 	TTSDurationMs      int64             `json:"tts_duration_ms"`
-	Status             string            `json:"status" gorm:"size:32"`
+	Status             SegmentStatus     `json:"status" gorm:"size:32;index:idx_segment_status"`
 	Meta               datatypes.JSONMap `json:"meta" gorm:"type:jsonb"`
 	CreatedAt          time.Time         `json:"created_at"`
 	UpdatedAt          time.Time         `json:"updated_at"`

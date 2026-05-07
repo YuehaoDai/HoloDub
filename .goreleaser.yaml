@@ -1,0 +1,90 @@
+version: 2
+
+project_name: holodub
+
+before:
+  hooks:
+    - go mod download
+
+builds:
+  - id: api
+    main: ./cmd/api
+    binary: holodub-api
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}}
+
+  - id: worker
+    main: ./cmd/worker
+    binary: holodub-worker
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}}
+
+archives:
+  - id: default
+    formats: [tar.gz]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    files:
+      - LICENSE
+      - README.md
+      - CHANGELOG.md
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  use: github
+  sort: asc
+  groups:
+    - title: Features
+      regexp: "^.*feat(\\([\\w]+\\))?!?:.+$"
+      order: 0
+    - title: Bug fixes
+      regexp: "^.*fix(\\([\\w]+\\))?!?:.+$"
+      order: 1
+    - title: Refactor
+      regexp: "^.*refactor(\\([\\w]+\\))?!?:.+$"
+      order: 2
+    - title: Other
+      order: 999
+  filters:
+    exclude:
+      - "^chore:"
+      - "^docs:"
+      - "^test:"
+      - Merge pull request
+
+release:
+  draft: false
+  prerelease: auto
+  github:
+    owner: YuehaoDai
+    name: HoloDub
+
+source:
+  enabled: true
+  name_template: "{{ .ProjectName }}_{{ .Version }}_source"

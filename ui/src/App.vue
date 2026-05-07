@@ -97,6 +97,9 @@
       filter="video"
       @select="onFilePickerSelect"
     />
+
+    <!-- 全局 toast 容器 -->
+    <ToastContainer />
   </div>
 </template>
 
@@ -104,8 +107,10 @@
 import { ref, onMounted, onUnmounted } from "vue";
 import { useRouter } from "vue-router";
 import { api, getApiKey, setApiKey } from "./api";
+import { toast } from "./lib/toast";
 import JobSidebar from "./components/JobSidebar.vue";
 import FilePicker from "./components/FilePicker.vue";
+import ToastContainer from "./components/ToastContainer.vue";
 
 const router = useRouter();
 const apiKey = ref(getApiKey());
@@ -163,8 +168,10 @@ async function createJob() {
     newJob.value = { name: "", input_relpath: "", source_language: "en", target_language: "zh-CN", auto_start: true };
     selectedJobId.value = job.id;
     router.push(`/jobs/${job.id}`);
+    toast.success(`任务 #${job.id} 已创建`);
   } catch (e: unknown) {
     createError.value = e instanceof Error ? e.message : String(e);
+    toast.fromError(e, "创建任务失败");
   }
 }
 

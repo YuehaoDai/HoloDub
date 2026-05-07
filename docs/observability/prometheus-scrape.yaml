@@ -1,0 +1,17 @@
+# Sample Prometheus scrape config for HoloDub. Drop into prometheus.yml:
+#
+# scrape_configs:
+#   <-- paste the entries below -->
+
+scrape_configs:
+  - job_name: holodub-api
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - holodub-api:8080
+
+  - job_name: holodub-ml
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - holodub-ml-service:8000

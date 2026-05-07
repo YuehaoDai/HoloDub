@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import shlex
 import struct
 import subprocess
+import threading
 import wave
 from pathlib import Path
+from typing import Any
 
 import httpx
 
@@ -15,52 +18,210 @@ from app.config import Settings
 from app.models import TTSRequest, TTSResponse
 from app.storage import ensure_parent, resolve_data_path
 
+logger = logging.getLogger(__name__)
+
+
+class UnsupportedTTSBackendError(RuntimeError):
+    """Raised when ml_tts_backend is set to a value the adapter does not support.
+
+    The previous behaviour silently fell back to generating silent WAV files,
+    which masked configuration mistakes (a worker would persist 'successful'
+    silent segments). Now we surface the error so operators can fix the env.
+    """
+
+    def __init__(self, backend: str, supported: tuple[str, ...]) -> None:
+        self.backend = backend
+        self.supported = supported
+        super().__init__(
+            f"unsupported ML_TTS_BACKEND={backend!r}; "
+            f"expected one of {list(supported)}"
+        )
+
+
+_INDEXTTS2_LOAD_WAIT_TIMEOUT_SEC = 30 * 60.0
+"""Maximum number of seconds a non-loader caller will wait for the in-flight
+IndexTTS2 load before giving up with ``TimeoutError``.
+
+This caps the worst-case latency of a synthesis request that arrives during
+warm-up: instead of blocking forever (and bottlenecking the entire worker),
+the request fails fast with a 503-mappable error. The watchdog in
+``app.main`` will independently flip the warm-up status to ``error`` if the
+loader thread vanishes, so subsequent requests will fail fast as well.
+"""
+
 
 class TTSAdapter:
+    """Thin facade over the configured TTS backend.
+
+    Concurrency model for IndexTTS2 inline mode:
+        - The state machine has four states: ``idle -> loading -> ready``
+          or ``idle -> loading -> error``. Transitions are protected by a
+          short critical section (``_state_lock``); the GPU-heavy
+          ``IndexTTS2(...)`` construction itself runs *outside* any lock
+          so a crash, segfault, or external SIGKILL of the loader thread
+          can never leak a permanently-held mutex.
+        - The first caller to observe ``status == idle`` becomes the
+          *loader* and atomically flips it to ``loading``. Concurrent
+          callers become *waiters* and block on a ``threading.Event``
+          with a hard timeout (``_INDEXTTS2_LOAD_WAIT_TIMEOUT_SEC``).
+        - On success the loader publishes the model handle then sets
+          status to ``ready`` and signals the event. On failure it
+          records the exception, sets status to ``error``, and still
+          signals the event so waiters do not deadlock.
+        - After a terminal ``error`` callers are allowed to retry; the
+          next caller to acquire the state lock will reset the state
+          machine to ``loading`` and attempt the load again.
+    """
+
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
-        self._indextts2_warmup_status: str = "idle"  # idle | loading | ready | error
+        self._indextts2_warmup_status: str = "idle"
+        self._indextts2_model: Any | None = None
+        self._state_lock = threading.Lock()
+        self._load_done = threading.Event()
+        self._indextts2_load_error: Exception | None = None
 
     def backend_name(self) -> str:
         return self.settings.ml_tts_backend
 
     def get_indextts2_warmup_status(self) -> str:
         """Return 'idle'|'loading'|'ready'|'error' for IndexTTS2 inline mode."""
-        return getattr(self, "_indextts2_warmup_status", "idle")
+        return self._indextts2_warmup_status
+
+    def force_indextts2_load_error(self, reason: str) -> None:
+        """Mark IndexTTS2 warm-up as failed from outside the loader.
+
+        Used by the lifespan watchdog when it observes a vanished loader
+        thread or a hard timeout. The transition is no-op when the
+        status is already terminal (``ready`` / ``error``) so multiple
+        concurrent watchdogs cannot stomp on each other.
+        """
+        with self._state_lock:
+            if self._indextts2_warmup_status in ("ready", "error"):
+                return
+            self._indextts2_warmup_status = "error"
+            self._indextts2_load_error = RuntimeError(reason)
+        # Wake any waiters so they fail-fast instead of blocking until the
+        # ``_INDEXTTS2_LOAD_WAIT_TIMEOUT_SEC`` ceiling.
+        self._load_done.set()
+        logger.error("IndexTTS2 warm-up forced to error: %s", reason)
+
+    def is_indextts2_inline_enabled(self) -> bool:
+        return (
+            self.settings.ml_tts_backend == "indextts2"
+            and self.settings.indextts2_inline
+        )
 
     def warm_up_indextts2(self) -> None:
-        """Pre-load IndexTTS2 in a background thread. Call at startup when indextts2_inline=True."""
-        if self.settings.ml_tts_backend != "indextts2" or not self.settings.indextts2_inline:
-            return
-        if hasattr(self, "_indextts2_model"):
-            return
-        import threading
+        """Eagerly load IndexTTS2 (synchronously). No-op if not in inline mode.
 
-        def _load() -> None:
+        Intended to be called from FastAPI lifespan in a background
+        thread; the loader itself blocks until the model is ready or an
+        error is raised. Exceptions are logged but never propagated so a
+        broken environment does not crash the FastAPI startup sequence
+        — ``/readyz`` will surface the failure instead.
+        """
+        if not self.is_indextts2_inline_enabled():
+            return
+        try:
+            self.ensure_indextts2_loaded()
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("IndexTTS2 warm-up failed: %s", exc)
+
+    def ensure_indextts2_loaded(
+        self, wait_timeout_sec: float = _INDEXTTS2_LOAD_WAIT_TIMEOUT_SEC
+    ) -> Any:
+        """Load IndexTTS2 once (or wait for an in-flight load) and return it.
+
+        The fast path (model already cached) returns without touching any
+        lock. Concurrent first-time callers cooperate via a state machine
+        so the model is never instantiated twice; non-loader callers
+        wait on an event with a hard timeout so a vanished loader thread
+        cannot wedge the whole service.
+        """
+        if self._indextts2_model is not None:
+            return self._indextts2_model
+
+        with self._state_lock:
+            if self._indextts2_model is not None:
+                return self._indextts2_model
+
+            if self._indextts2_warmup_status == "loading":
+                role = "waiter"
+            else:
+                # ``idle`` (first ever call) or ``error`` (previous attempt
+                # failed and a caller is retrying) — either way, we become
+                # the loader and reset the event so waiters block again.
+                self._indextts2_warmup_status = "loading"
+                self._indextts2_load_error = None
+                self._load_done.clear()
+                role = "loader"
+
+        if role == "waiter":
+            if not self._load_done.wait(timeout=wait_timeout_sec):
+                raise TimeoutError(
+                    f"timed out after {wait_timeout_sec:.0f}s waiting for "
+                    "IndexTTS2 load to finish"
+                )
+            if self._indextts2_model is None:
+                err = self._indextts2_load_error
+                msg = (
+                    f"IndexTTS2 load failed: status={self._indextts2_warmup_status}"
+                )
+                if err is not None:
+                    raise RuntimeError(msg) from err
+                raise RuntimeError(msg)
+            return self._indextts2_model
+
+        # We are the loader. Heavy work below runs *outside* any lock so
+        # an abrupt thread death cannot strand the service.
+        try:
             try:
                 from indextts import IndexTTS2  # type: ignore[import]
-            except ImportError:
-                self._indextts2_warmup_status = "error"
-                return
-            self._indextts2_warmup_status = "loading"
-            try:
-                init_kwargs: dict = {"use_fp16": True}
-                if self.settings.indextts2_model_dir:
-                    init_kwargs["model_dir"] = self.settings.indextts2_model_dir
-                if self.settings.indextts2_attn_backend:
-                    init_kwargs["attn_backend"] = self.settings.indextts2_attn_backend
-                self._indextts2_model = IndexTTS2(**init_kwargs)  # type: ignore[assignment]
-                self._indextts2_warmup_status = "ready"
-            except Exception:
-                self._indextts2_warmup_status = "error"
-                raise
+            except ImportError as exc:
+                raise RuntimeError(
+                    "indextts2-inference is not installed; "
+                    "add it to pyproject.toml[real] or install manually"
+                ) from exc
 
-        t = threading.Thread(target=_load, daemon=True)
-        t.start()
+            init_kwargs: dict[str, Any] = {
+                "use_fp16": True,
+                # See settings.indextts2_use_cuda_kernel for context: default
+                # False because the BigVGAN fused-CUDA-kernel JIT path hangs
+                # on sm_120 inside the FastAPI lifespan worker thread.
+                "use_cuda_kernel": self.settings.indextts2_use_cuda_kernel,
+            }
+            if self.settings.indextts2_model_dir:
+                init_kwargs["model_dir"] = self.settings.indextts2_model_dir
+            if self.settings.indextts2_attn_backend:
+                init_kwargs["attn_backend"] = self.settings.indextts2_attn_backend
+            logger.info(
+                "loading IndexTTS2 (model_dir=%s, attn=%s, fp16=True, cuda_kernel=%s)",
+                self.settings.indextts2_model_dir or "<auto>",
+                self.settings.indextts2_attn_backend or "<sdpa>",
+                self.settings.indextts2_use_cuda_kernel,
+            )
+            model = IndexTTS2(**init_kwargs)
+        except BaseException as exc:
+            with self._state_lock:
+                self._indextts2_warmup_status = "error"
+                self._indextts2_load_error = (
+                    exc if isinstance(exc, Exception) else None
+                )
+            self._load_done.set()
+            logger.exception("IndexTTS2 load raised: %s", exc)
+            raise
+        else:
+            with self._state_lock:
+                self._indextts2_model = model
+                self._indextts2_warmup_status = "ready"
+            self._load_done.set()
+            logger.info("IndexTTS2 loaded; warmup_status=ready")
+            return model
 
     def synthesize(self, request: TTSRequest) -> TTSResponse:
-        # If the text is empty or contains only whitespace/punctuation, generate
-        # silence instead of calling a TTS model.  This avoids models producing
+        # Empty / punctuation-only text always returns silence, regardless of
+        # the configured backend. This avoids real TTS models generating
         # unexpectedly long audio for degenerate inputs like lone periods.
         _printable = request.text.translate(
             str.maketrans("", "", " \t\n\r.,!?。！？，、；：…—–")
@@ -68,11 +229,21 @@ class TTSAdapter:
         if not _printable:
             return self._run_silence(request)
 
-        if self.settings.ml_tts_backend == "indextts2":
+        backend = self.settings.ml_tts_backend
+        if backend == "indextts2":
             if self.settings.indextts2_inline:
                 return self._run_indextts2_inline(request)
             return self._run_indextts2(request)
-        return self._run_silence(request)
+        if backend == "silence":
+            return self._run_silence(request)
+
+        # Unknown / misconfigured backend: refuse loudly instead of silently
+        # producing a silent WAV (which downstream worker would persist as a
+        # successful synthesis result, masking the misconfiguration).
+        raise UnsupportedTTSBackendError(
+            backend=backend,
+            supported=("indextts2", "silence"),
+        )
 
     def _run_silence(self, request: TTSRequest) -> TTSResponse:
         output_path = resolve_data_path(self.settings.data_root, request.output_relpath)
@@ -90,35 +261,12 @@ class TTSAdapter:
         )
 
     def _run_indextts2_inline(self, request: TTSRequest) -> TTSResponse:
-        try:
-            from indextts import IndexTTS2  # type: ignore[import]
-        except ImportError as exc:
-            raise RuntimeError(
-                "indextts2-inference is not installed; add it to pyproject.toml[real] or install manually"
-            ) from exc
-
         output_path = resolve_data_path(self.settings.data_root, request.output_relpath)
         ensure_parent(output_path)
 
-        # Lazy-load the model as a singleton on this adapter instance so it is only
-        # initialised once per worker process (model weights stay in GPU VRAM).
-        if not hasattr(self, "_indextts2_model"):
-            self._indextts2_warmup_status = "loading"
-            try:
-                init_kwargs: dict = {
-                    "use_fp16": True,
-                }
-                if self.settings.indextts2_model_dir:
-                    init_kwargs["model_dir"] = self.settings.indextts2_model_dir
-                if self.settings.indextts2_attn_backend:
-                    init_kwargs["attn_backend"] = self.settings.indextts2_attn_backend
-                self._indextts2_model = IndexTTS2(**init_kwargs)  # type: ignore[assignment]
-                self._indextts2_warmup_status = "ready"
-            except Exception:
-                self._indextts2_warmup_status = "error"
-                raise
-
-        tts = self._indextts2_model
+        # Single load path: blocks once on the first concurrent request,
+        # then becomes O(1) for the remainder of the process lifetime.
+        tts = self.ensure_indextts2_loaded()
 
         # Resolve spk_audio_prompt from voice_config, then fall back to global default.
         spk_audio: str | None = None

@@ -1,0 +1,625 @@
+openapi: 3.0.3
+info:
+  title: HoloDub Control Plane API
+  description: |
+    HoloDub control plane HTTP API. Drives the dubbing pipeline
+    (`media → separate → asr_smart → translate → tts_duration → merge`),
+    serves the embedded Vue UI at `/ui/`, and exposes Prometheus metrics
+    at `/metrics`.
+
+    All protected routes require the `X-API-Key: <token>` header (or
+    `?api_key=<token>` query parameter). When `APP_ENV=production` is
+    set without an `API_AUTH_TOKEN` configured, the API refuses to start;
+    in development the middleware logs a warning and lets requests through.
+
+    Errors are returned as JSON with a stable shape:
+
+    ```json
+    {
+      "error": "invalid_path",
+      "message": "audio path is outside data root"
+    }
+    ```
+  version: "0.1.0"
+  license:
+    name: Apache-2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0
+  contact:
+    name: HoloDub maintainers
+    url: https://github.com/YuehaoDai/HoloDub
+
+servers:
+  - url: http://localhost:8080
+    description: Local docker compose
+
+tags:
+  - name: health
+    description: Liveness / readiness / dependency status.
+  - name: jobs
+    description: Job lifecycle, segments, artifacts.
+  - name: voice-profiles
+    description: Voice profile CRUD and validation.
+  - name: segment-review
+    description: LLM-suggested segment merges/splits.
+  - name: files
+    description: Browse `DATA_ROOT` for inputs and outputs.
+
+components:
+  securitySchemes:
+    apiKeyHeader:
+      type: apiKey
+      in: header
+      name: X-API-Key
+    apiKeyQuery:
+      type: apiKey
+      in: query
+      name: api_key
+
+  schemas:
+    Error:
+      type: object
+      required: [error, message]
+      properties:
+        error:
+          type: string
+          description: Machine-readable error code.
+          example: invalid_path
+        message:
+          type: string
+          description: Human-readable error description.
+
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: ok
+        environment:
+          type: string
+          example: development
+        timestamp:
+          type: string
+          format: date-time
+
+    ReadyResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [ready, not_ready]
+        checks:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              ready:
+                type: boolean
+              error:
+                type: string
+              details:
+                type: object
+        timestamp:
+          type: string
+          format: date-time
+
+    Job:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        tenant_key: { type: string }
+        external_id: { type: string }
+        name: { type: string }
+        status:
+          type: string
+          enum:
+            [
+              pending,
+              queued,
+              running,
+              awaiting_review,
+              failed,
+              completed,
+              timed_out,
+              cancel_requested,
+              cancelled,
+            ]
+        current_stage:
+          type: string
+          enum: [media, separate, asr_smart, segment_review, translate, tts_duration, merge]
+        source_language: { type: string, example: en }
+        target_language: { type: string, example: zh-CN }
+        input_relpath: { type: string }
+        vocals_relpath: { type: string }
+        bgm_relpath: { type: string }
+        output_relpath: { type: string }
+        config: { type: object }
+        error_message: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    Segment:
+      type: object
+      properties:
+        id: { type: integer }
+        job_id: { type: integer }
+        speaker_id: { type: integer, nullable: true }
+        speaker_label: { type: string }
+        voice_profile_id: { type: integer, nullable: true }
+        ordinal: { type: integer }
+        start_ms: { type: integer, format: int64 }
+        end_ms: { type: integer, format: int64 }
+        original_duration_ms: { type: integer, format: int64 }
+        src_text: { type: string }
+        tgt_text: { type: string }
+        split_reason: { type: string }
+        tts_audio_path: { type: string }
+        tts_duration_ms: { type: integer, format: int64 }
+        status:
+          type: string
+          enum: [pending, translated, synthesized]
+        meta: { type: object }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    SegmentSuggestion:
+      type: object
+      properties:
+        id: { type: integer }
+        job_id: { type: integer }
+        ordinal: { type: integer }
+        action: { type: string, enum: [merge, split] }
+        segment_ids:
+          type: array
+          items: { type: integer }
+        split_char_index: { type: integer }
+        reason: { type: string }
+        confidence: { type: number, format: float }
+        status: { type: string, enum: [pending, accepted, rejected] }
+
+    VoiceProfile:
+      type: object
+      properties:
+        id: { type: integer }
+        tenant_key: { type: string }
+        name: { type: string }
+        mode: { type: string, enum: [sample, checkpoint] }
+        provider: { type: string }
+        language: { type: string }
+        sample_relpaths:
+          type: array
+          items: { type: string }
+        checkpoint_relpath: { type: string }
+        index_relpath: { type: string }
+        config_relpath: { type: string }
+        internal_speaker_id: { type: string }
+        validation_status: { type: string }
+        est_chars_per_sec: { type: number, format: float, nullable: true }
+
+    CreateJobRequest:
+      type: object
+      required: [input_relpath, target_language]
+      properties:
+        name: { type: string }
+        external_id: { type: string }
+        tenant_key: { type: string }
+        input_relpath: { type: string }
+        source_language: { type: string }
+        target_language: { type: string }
+        webhook_url: { type: string }
+        max_retries: { type: integer }
+        deadline_at: { type: string, format: date-time }
+        config: { type: object }
+        auto_start: { type: boolean }
+
+    RetryJobRequest:
+      type: object
+      properties:
+        stage: { $ref: "#/components/schemas/JobStage" }
+        segment_ids:
+          type: array
+          items: { type: integer }
+
+    JobStage:
+      type: string
+      enum: [media, separate, asr_smart, segment_review, translate, tts_duration, merge]
+
+    PatchSegmentRequest:
+      type: object
+      properties:
+        target_text: { type: string }
+        rerun: { type: boolean }
+        voice_profile_id:
+          type: integer
+          nullable: true
+        start_ms: { type: integer, format: int64 }
+        end_ms: { type: integer, format: int64 }
+
+  responses:
+    BadRequest:
+      description: Invalid request payload or parameters.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Unauthorized:
+      description: Missing or invalid API key.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    NotFound:
+      description: Resource not found.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    InternalError:
+      description: Server-side error.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    ServiceUnavailable:
+      description: A dependency (DB / Redis / ML) is not ready.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+
+security:
+  - apiKeyHeader: []
+  - apiKeyQuery: []
+
+paths:
+  /healthz:
+    get:
+      tags: [health]
+      summary: Liveness probe (always 200 once the process is up).
+      security: []
+      responses:
+        "200":
+          description: Liveness check passed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HealthResponse" }
+
+  /readyz:
+    get:
+      tags: [health]
+      summary: Readiness probe (DB + Redis + ML).
+      security: []
+      responses:
+        "200":
+          description: All dependencies ready.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReadyResponse" }
+        "503":
+          description: One or more dependencies are degraded.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReadyResponse" }
+
+  /ml-health:
+    get:
+      tags: [health]
+      summary: Pass-through to ml-service `/healthz`.
+      security: []
+      responses:
+        "200":
+          description: ml-service health payload.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+
+  /metrics:
+    get:
+      tags: [health]
+      summary: Prometheus metrics in text exposition format.
+      security: []
+      responses:
+        "200":
+          description: Prometheus text exposition.
+          content:
+            text/plain:
+              schema: { type: string }
+
+  /jobs:
+    get:
+      tags: [jobs]
+      summary: List all jobs.
+      responses:
+        "200":
+          description: Job list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  jobs:
+                    type: array
+                    items: { $ref: "#/components/schemas/Job" }
+    post:
+      tags: [jobs]
+      summary: Create a job.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateJobRequest" }
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Job" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+
+  /jobs/{id}:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: integer }
+    get:
+      tags: [jobs]
+      summary: Fetch a job with its segments / speakers / stage runs.
+      responses:
+        "200":
+          description: Job detail.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Job" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /jobs/{id}/start:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: integer }
+    post:
+      tags: [jobs]
+      summary: Move a pending job into the queue.
+      responses:
+        "200":
+          description: Started.
+        "409": { $ref: "#/components/responses/BadRequest" }
+
+  /jobs/{id}/retry:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: integer }
+    post:
+      tags: [jobs]
+      summary: Re-enqueue a stage (optionally for specific segments).
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RetryJobRequest" }
+      responses:
+        "200": { description: Re-queued. }
+
+  /jobs/{id}/cancel:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: integer }
+    post:
+      tags: [jobs]
+      summary: Request cooperative cancellation.
+      responses:
+        "200": { description: Cancellation requested. }
+
+  /jobs/{id}/segments:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: integer }
+    get:
+      tags: [jobs]
+      summary: List segments for a job.
+      responses:
+        "200":
+          description: Segments.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  segments:
+                    type: array
+                    items: { $ref: "#/components/schemas/Segment" }
+
+  /jobs/{id}/segments/{segmentId}:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: integer }
+      - in: path
+        name: segmentId
+        required: true
+        schema: { type: integer }
+    patch:
+      tags: [jobs]
+      summary: Edit a segment's translation, voice or timing.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PatchSegmentRequest" }
+      responses:
+        "200": { description: Updated. }
+
+  /jobs/{id}/tts/{ordinal}:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: integer }
+      - in: path
+        name: ordinal
+        required: true
+        schema: { type: integer }
+    get:
+      tags: [jobs]
+      summary: Stream the synthesized WAV for a segment.
+      responses:
+        "200":
+          description: WAV bytes.
+          content:
+            audio/wav:
+              schema: { type: string, format: binary }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /jobs/{id}/audio/{ordinal}:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: integer }
+      - in: path
+        name: ordinal
+        required: true
+        schema: { type: integer }
+    get:
+      tags: [jobs]
+      summary: Stream a clip of the original vocals for a segment.
+      parameters:
+        - in: query
+          name: start_ms
+          schema: { type: integer, format: int64 }
+        - in: query
+          name: end_ms
+          schema: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: WAV bytes.
+          content:
+            audio/wav:
+              schema: { type: string, format: binary }
+
+  /voice-profiles:
+    get:
+      tags: [voice-profiles]
+      summary: List voice profiles for the calling tenant.
+      responses:
+        "200":
+          description: Profiles.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  voice_profiles:
+                    type: array
+                    items: { $ref: "#/components/schemas/VoiceProfile" }
+    post:
+      tags: [voice-profiles]
+      summary: Create a voice profile.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/VoiceProfile" }
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/VoiceProfile" }
+
+  /voice-profiles/{id}:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: integer }
+    get:
+      tags: [voice-profiles]
+      responses:
+        "200":
+          description: Profile.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/VoiceProfile" }
+    patch:
+      tags: [voice-profiles]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/VoiceProfile" }
+      responses:
+        "200": { description: Updated. }
+    delete:
+      tags: [voice-profiles]
+      responses:
+        "204": { description: Deleted. }
+
+  /jobs/{id}/segment-suggestions:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: integer }
+    get:
+      tags: [segment-review]
+      summary: List LLM-generated merge/split suggestions for the segment_review stage.
+      responses:
+        "200":
+          description: Suggestions.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  suggestions:
+                    type: array
+                    items: { $ref: "#/components/schemas/SegmentSuggestion" }
+
+  /jobs/{id}/confirm-segmentation:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: integer }
+    post:
+      tags: [segment-review]
+      summary: Confirm segmentation and advance to translate.
+      responses:
+        "200": { description: Advanced. }
+        "409": { $ref: "#/components/responses/BadRequest" }
+
+  /files:
+    get:
+      tags: [files]
+      summary: List entries under DATA_ROOT.
+      parameters:
+        - in: query
+          name: dir
+          schema: { type: string }
+        - in: query
+          name: filter
+          schema: { type: string, enum: [video, audio, all] }
+      responses:
+        "200":
+          description: Listing.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  dir: { type: string }
+                  entries:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name: { type: string }
+                        is_dir: { type: boolean }
+                        relpath: { type: string }
+                        size_bytes: { type: integer, format: int64 }
+                        modified_at: { type: string, format: date-time }
+        "400": { $ref: "#/components/responses/BadRequest" }

@@ -1,0 +1,33 @@
+name: Feature request
+description: Suggest a new feature or improvement
+title: "[feature] "
+labels: ["type:feature", "needs-triage"]
+body:
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Motivation
+      description: What problem does this feature solve? Who benefits?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: Describe the feature and how it should behave.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: checkboxes
+    id: areas
+    attributes:
+      label: Affected areas
+      options:
+        - label: Go control plane (api / worker)
+        - label: Python ml-service (ASR / TTS / VAD / Separator)
+        - label: Web UI
+        - label: Docs / DevOps
+        - label: New ML model integration

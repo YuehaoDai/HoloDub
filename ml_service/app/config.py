@@ -49,10 +49,24 @@ class Settings(BaseSettings):
     indextts2_use_emo_text: bool = True
     # fallback spk_audio_prompt when no VoiceProfile is bound to the speaker
     indextts2_default_voice_relpath: str = ""
+    # BigVGAN fused-anti-alias-activation custom CUDA kernel.
+    # Disabled by default because the inline JIT compilation path
+    # (``cpp_extension.load`` invoked from inside the warm-up thread)
+    # has been observed to hang indefinitely on RTX-50-class (sm_120)
+    # GPUs with PyTorch 2.x + CUDA 12.8, even though the same nvcc
+    # command runs to completion when invoked from a plain shell. The
+    # PyTorch fallback path (use_cuda_kernel=False) produces identical
+    # audio with only a small inference-time speed cost.
+    indextts2_use_cuda_kernel: bool = False
 
     default_sample_rate: int = 24000
     default_channels: int = 1
     model_manifest_path: Path = Path("/app/config/model-manifest.example.json")
+
+    # 0 = unlimited (matches historical behaviour). Set to a positive
+    # integer to cap how many heavy models stay resident at once; the
+    # least-recently-used entry is evicted when the cap is reached.
+    model_registry_max_models: int = 0
 
 
 @lru_cache

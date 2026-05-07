@@ -217,6 +217,7 @@
 import { ref, computed, watch, onMounted, onUnmounted } from "vue";
 import { useRoute } from "vue-router";
 import { api, type Job, type Segment, type StageRun, type Artifact, type Binding, type VoiceProfile } from "../api";
+import { toast } from "../lib/toast";
 import SegmentTable from "./SegmentTable.vue";
 import SegmentFilter from "./SegmentFilter.vue";
 import VoiceProfileManager from "./VoiceProfileManager.vue";
@@ -334,16 +335,28 @@ async function lightRefresh() {
 
 async function startJob() {
   actionLoading.value = true;
-  try { await api.startJob(jobId.value); await refresh(); }
-  catch (e: unknown) { alert(e instanceof Error ? e.message : String(e)); }
-  finally { actionLoading.value = false; }
+  try {
+    await api.startJob(jobId.value);
+    await refresh();
+    toast.success("任务已开始");
+  } catch (e: unknown) {
+    toast.fromError(e, "开始任务失败");
+  } finally {
+    actionLoading.value = false;
+  }
 }
 
 async function cancelJob() {
   actionLoading.value = true;
-  try { await api.cancelJob(jobId.value); await refresh(); }
-  catch (e: unknown) { alert(e instanceof Error ? e.message : String(e)); }
-  finally { actionLoading.value = false; }
+  try {
+    await api.cancelJob(jobId.value);
+    await refresh();
+    toast.info("已请求取消，等待 Worker 中断当前阶段");
+  } catch (e: unknown) {
+    toast.fromError(e, "取消任务失败");
+  } finally {
+    actionLoading.value = false;
+  }
 }
 
 async function retryMerge() {
@@ -351,8 +364,9 @@ async function retryMerge() {
   try {
     await api.retryJob(jobId.value, "merge");
     await refresh();
+    toast.success("已重新触发 merge 阶段");
   } catch (e: unknown) {
-    alert(e instanceof Error ? e.message : String(e));
+    toast.fromError(e, "merge 重试失败");
   } finally {
     actionLoading.value = false;
   }
@@ -422,8 +436,9 @@ async function applyBulkVoice() {
   try {
     await api.bulkSetVoice(jobId.value, bulkVoiceId.value);
     await lightRefresh();
+    toast.success("已批量应用音色");
   } catch (e: unknown) {
-    alert(e instanceof Error ? e.message : String(e));
+    toast.fromError(e, "批量应用音色失败");
   } finally {
     bulkApplying.value = false;
   }
@@ -439,8 +454,9 @@ async function resetAndRetryTTS() {
   try {
     await api.resetAndRetryTTS(jobId.value);
     await refresh();
+    toast.warning("已清除合成结果并重新排队");
   } catch (e: unknown) {
-    alert(e instanceof Error ? e.message : String(e));
+    toast.fromError(e, "重置 TTS 失败");
   } finally {
     resetRetrying.value = false;
   }

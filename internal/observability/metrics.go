@@ -37,7 +37,29 @@ var (
 		Name: "holodub_dead_letters_total",
 		Help: "Number of tasks moved into the dead letter queue.",
 	})
+
+	externalCallsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "holodub_external_calls_total",
+		Help: "Outbound calls to external services (llm, ml) by classification.",
+	}, []string{"service", "operation", "result"})
+
+	externalCallDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "holodub_external_call_duration_seconds",
+		Help:    "Outbound external call latency in seconds.",
+		Buckets: prometheus.DefBuckets,
+	}, []string{"service", "operation"})
 )
+
+// ObserveExternalCall records the outcome of an outbound HTTP call to a
+// dependency (LLM provider, ml-service, …). result is one of:
+//   - "ok"           — call succeeded
+//   - "retryable"    — failed but classified as retryable (429/5xx/network)
+//   - "permanent"    — failed and not retryable (4xx other than 429)
+//   - "cancelled"    — context cancelled / deadline exceeded
+func ObserveExternalCall(service, operation, result string, duration time.Duration) {
+	externalCallsTotal.WithLabelValues(service, operation, result).Inc()
+	externalCallDuration.WithLabelValues(service, operation).Observe(duration.Seconds())
+}
 
 func ObserveHTTPRequest(method, path string, statusCode int, duration time.Duration) {
 	status := strconv.Itoa(statusCode)

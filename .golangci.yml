@@ -1,0 +1,64 @@
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+  modules-download-mode: readonly
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - gosec
+    - gocyclo
+    - misspell
+    - unparam
+    - unconvert
+    - bodyclose
+    - rowserrcheck
+    - sqlclosecheck
+    - nilerr
+    - prealloc
+  settings:
+    gocyclo:
+      min-complexity: 20
+    gosec:
+      excludes:
+        - G104
+        - G304
+        - G404
+    govet:
+      enable:
+        - shadow
+    staticcheck:
+      checks:
+        - all
+        - "-ST1000"
+        - "-ST1003"
+        - "-ST1020"
+        - "-ST1021"
+        - "-ST1022"
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters:
+          - errcheck
+          - gosec
+          - gocyclo
+          - unparam
+      - path: cmd/
+        linters:
+          - gocyclo
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

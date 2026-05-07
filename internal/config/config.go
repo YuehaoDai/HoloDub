@@ -279,7 +279,42 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("parse AUTO_MIGRATE_ON_START: %w", err)
 	}
 
+	if err := cfg.Validate(); err != nil {
+		return Config{}, err
+	}
+
 	return cfg, nil
+}
+
+// IsProduction reports whether the loaded environment is production-like
+// (APP_ENV=production or APP_ENV=prod, case-insensitive).
+func (c Config) IsProduction() bool {
+	switch strings.ToLower(strings.TrimSpace(c.Environment)) {
+	case "production", "prod":
+		return true
+	default:
+		return false
+	}
+}
+
+// Validate enforces invariants that must hold before any service starts.
+// Production deployments without an API token are refused outright so we
+// never silently accept unauthenticated traffic on the public Internet.
+func (c Config) Validate() error {
+	if c.IsProduction() && strings.TrimSpace(c.APIAuthToken) == "" {
+		return fmt.Errorf(
+			"APP_ENV=%s requires API_AUTH_TOKEN to be set; "+
+				"generate one with `openssl rand -hex 32` and place it in .env",
+			c.Environment,
+		)
+	}
+	if c.DataRoot == "" {
+		return fmt.Errorf("DATA_ROOT must not be empty")
+	}
+	if c.MaxJobRetries < 0 {
+		return fmt.Errorf("MAX_JOB_RETRIES must be >= 0, got %d", c.MaxJobRetries)
+	}
+	return nil
 }
 
 func getEnv(key, fallback string) string {

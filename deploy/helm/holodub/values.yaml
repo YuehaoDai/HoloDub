@@ -1,0 +1,83 @@
+# Default values for the holodub chart. Override per-environment with
+# --values production.yaml or --set image.api.tag=v0.2.0.
+
+image:
+  registry: ghcr.io
+  repository: yuehaodai
+  pullPolicy: IfNotPresent
+  api:
+    name: holodub-api
+    tag: latest
+  worker:
+    name: holodub-worker
+    tag: latest
+  ml:
+    name: holodub-ml-service
+    tag: latest
+
+api:
+  replicaCount: 1
+  service:
+    type: ClusterIP
+    port: 8080
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 512Mi
+
+worker:
+  replicaCount: 1
+  resources:
+    requests:
+      cpu: 500m
+      memory: 512Mi
+    limits:
+      cpu: 2000m
+      memory: 1Gi
+
+ml:
+  replicaCount: 1
+  service:
+    port: 8000
+  # ml-service requires an NVIDIA GPU. Leave empty to disable scheduling.
+  gpu:
+    enabled: true
+    count: 1
+  resources:
+    requests:
+      cpu: 2000m
+      memory: 8Gi
+    limits:
+      cpu: 8000m
+      memory: 24Gi
+
+postgres:
+  enabled: true
+  image: postgres:16-alpine
+  persistence:
+    size: 20Gi
+
+redis:
+  enabled: true
+  image: redis:7-alpine
+
+storage:
+  # PVC for the shared /data volume. Required.
+  size: 200Gi
+  storageClassName: ""
+
+config:
+  appEnv: production
+  logFormat: json
+  ttsConcurrency: 2
+  gpuConcurrency: 2
+
+# Required secrets (set via --set-string or external-secrets / sealed-secrets).
+secrets:
+  apiAuthToken: ""
+  postgresPassword: "change-me"
+  openaiApiKey: ""
+  pyannoteAuthToken: ""

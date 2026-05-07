@@ -2,7 +2,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"holodub/internal/config"
@@ -48,19 +51,40 @@ func main() {
 	}
 
 	service := pipeline.NewService(cfg, st, taskQueue, ml.New(cfg.MLServiceURL), llm.New(cfg))
+
+	// Root context cancelled on SIGINT/SIGTERM. Every Redis call and every
+	// pipeline stage executes with a context derived from this root, so a
+	// single Ctrl+C / `docker compose stop` cleanly drains in-flight work
+	// and exits the loop instead of being killed mid-stage.
+	rootCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
 	slog.Info("worker started",
 		"worker_id", cfg.WorkerID,
 		"poll_interval", cfg.WorkerPollInterval.String(),
 	)
 
 	for {
-		if err := taskQueue.PromoteDueDelayed(context.Background(), 100); err != nil {
+		if rootCtx.Err() != nil {
+			slog.Info("worker shutting down", "reason", "signal received")
+			return
+		}
+
+		if err := taskQueue.PromoteDueDelayed(rootCtx, 100); err != nil && !errors.Is(err, context.Canceled) {
 			slog.Warn("promote delayed tasks failed", "error", err)
 		}
-		task, err := taskQueue.PopBlocking(context.Background(), cfg.WorkerPollInterval)
+		task, err := taskQueue.PopBlocking(rootCtx, cfg.WorkerPollInterval)
 		if err != nil {
+			if errors.Is(err, context.Canceled) {
+				slog.Info("worker shutting down", "reason", "redis pop cancelled")
+				return
+			}
 			slog.Warn("pop task failed", "error", err)
-			time.Sleep(2 * time.Second)
+			select {
+			case <-rootCtx.Done():
+				return
+			case <-time.After(2 * time.Second):
+			}
 			continue
 		}
 		if task == nil {
@@ -72,7 +96,7 @@ func main() {
 			"attempt", task.Attempt,
 			"worker_id", cfg.WorkerID,
 		)
-		if err := service.HandleTask(context.Background(), *task); err != nil {
+		if err := service.HandleTask(rootCtx, *task); err != nil {
 			slog.Error("task failed",
 				"job_id", task.JobID,
 				"stage", task.Stage,

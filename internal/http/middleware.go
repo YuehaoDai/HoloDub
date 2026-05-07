@@ -4,6 +4,7 @@ import (
 	"crypto/subtle"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -77,14 +78,52 @@ func tenantMiddleware(defaultTenant string) gin.HandlerFunc {
 	}
 }
 
-func apiKeyAuthMiddleware(token string) gin.HandlerFunc {
+// publicRoutes are paths that bypass API key authentication regardless of the
+// configured token. Liveness/readiness/metrics/UI must always be reachable so
+// that orchestrators can probe the service.
+var publicRoutes = map[string]struct{}{
+	"/":              {},
+	"/ui":            {},
+	"/ui/*filepath":  {},
+	"/healthz":       {},
+	"/readyz":        {},
+	"/ml-health":     {},
+	"/metrics":       {},
+}
+
+func isPublicRoute(path string) bool {
+	_, ok := publicRoutes[path]
+	return ok
+}
+
+// apiKeyAuthMiddleware enforces X-API-Key authentication on protected routes.
+//
+// Behaviour when token is empty:
+//   - production: every protected request is refused with 503. We refuse to
+//     stay open without authentication, even if the operator forgot to set
+//     API_AUTH_TOKEN.
+//   - non-production: requests are allowed but a warning is logged once at
+//     startup (in cmd/api). This keeps smoke tests friction-free while still
+//     making the misconfiguration impossible to miss in production.
+func apiKeyAuthMiddleware(token, environment string) gin.HandlerFunc {
+	productionEnv := isProductionEnv(environment)
 	if token == "" {
+		if productionEnv {
+			return func(c *gin.Context) {
+				if isPublicRoute(c.FullPath()) {
+					c.Next()
+					return
+				}
+				respondError(c, http.StatusServiceUnavailable, "auth_not_configured",
+					"API_AUTH_TOKEN is required when APP_ENV=production")
+				c.Abort()
+			}
+		}
 		return func(c *gin.Context) { c.Next() }
 	}
 
 	return func(c *gin.Context) {
-		switch c.FullPath() {
-		case "/", "/ui", "/ui/*filepath", "/healthz", "/ml-health", "/metrics":
+		if isPublicRoute(c.FullPath()) {
 			c.Next()
 			return
 		}
@@ -102,14 +141,22 @@ func apiKeyAuthMiddleware(token string) gin.HandlerFunc {
 	}
 }
 
+func isProductionEnv(environment string) bool {
+	switch strings.ToLower(strings.TrimSpace(environment)) {
+	case "production", "prod":
+		return true
+	default:
+		return false
+	}
+}
+
 func rateLimitMiddleware(rps float64, burst int) gin.HandlerFunc {
 	if rps <= 0 || burst <= 0 {
 		return func(c *gin.Context) { c.Next() }
 	}
 	store := newRateLimiterStore()
 	return func(c *gin.Context) {
-		switch c.FullPath() {
-		case "/", "/ui", "/ui/*filepath", "/healthz", "/ml-health", "/metrics":
+		if isPublicRoute(c.FullPath()) {
 			c.Next()
 			return
 		}

@@ -4,10 +4,15 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
+
+	"holodub/internal/httpx"
+	"holodub/internal/observability"
 )
 
 type Client struct {
@@ -113,7 +118,42 @@ func (c *Client) RunTTS(ctx context.Context, request TTSRequest) (*TTSResponse, 
 	return &response, nil
 }
 
+// retryConfig is the default retry policy for ML calls. ML inference is
+// long-running on GPUs, so retrying transient 5xx blindly would cost minutes
+// — keep the budget tight (3 attempts, ≤2s spacing).
+var retryConfig = httpx.RetryConfig{
+	MaxAttempts:    3,
+	BaseBackoff:    500 * time.Millisecond,
+	MaxBackoff:     2 * time.Second,
+	JitterFraction: 0.2,
+}
+
+// classifyResult maps an error returned by doJSONOnce to a metric label.
+func classifyResult(err error) string {
+	if err == nil {
+		return "ok"
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return "cancelled"
+	}
+	if httpx.IsRetryable(err) {
+		return "retryable"
+	}
+	return "permanent"
+}
+
 func (c *Client) doJSON(ctx context.Context, method, path string, requestBody any, responseBody any) error {
+	op := strings.TrimPrefix(path, "/")
+	started := time.Now()
+	err := httpx.Do(ctx, retryConfig, func(ctx context.Context, attempt int) error {
+		return c.doJSONOnce(ctx, method, path, requestBody, responseBody)
+	})
+	observability.ObserveExternalCall("ml", op, classifyResult(err), time.Since(started))
+	return err
+}
+
+func (c *Client) doJSONOnce(ctx context.Context, method, path string, requestBody any, responseBody any) error {
+	op := strings.TrimPrefix(path, "/")
 	var body bytes.Buffer
 	if requestBody != nil {
 		if err := json.NewEncoder(&body).Encode(requestBody); err != nil {
@@ -129,21 +169,20 @@ func (c *Client) doJSON(ctx context.Context, method, path string, requestBody an
 
 	response, err := c.httpClient.Do(request)
 	if err != nil {
-		return fmt.Errorf("%s %s: %w", method, path, err)
+		return httpx.Wrap("ml", op, err)
 	}
 	defer response.Body.Close()
 
 	if response.StatusCode >= http.StatusBadRequest {
-		var payload map[string]any
-		_ = json.NewDecoder(response.Body).Decode(&payload)
-		return fmt.Errorf("%s %s failed with %d: %v", method, path, response.StatusCode, payload)
+		raw, _ := io.ReadAll(response.Body)
+		return httpx.FromHTTPStatus("ml", op, response.StatusCode, raw)
 	}
 
 	if responseBody == nil {
 		return nil
 	}
 	if err := json.NewDecoder(response.Body).Decode(responseBody); err != nil {
-		return fmt.Errorf("decode response: %w", err)
+		return fmt.Errorf("decode response from %s: %w", path, err)
 	}
 	return nil
 }
