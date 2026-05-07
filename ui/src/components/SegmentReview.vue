@@ -214,7 +214,39 @@
                     </button>
                   </div>
                 </div>
-                <p v-else class="text-[#c5d4e8] leading-relaxed">{{ seg.src_text }}</p>
+                <div v-else-if="transcriptEditId === seg.id" class="flex flex-col gap-1.5">
+                  <div class="text-[10px] text-[#9db0c9] mb-0.5">编辑 ASR 原文（不影响时间轴）：</div>
+                  <textarea
+                    v-model="transcriptDraft"
+                    rows="3"
+                    class="w-full bg-[#131720] border border-[#273246] rounded px-2 py-1.5 text-xs text-[#c5d4e8] focus:outline-none focus:border-blue-500 leading-relaxed resize-y"
+                  />
+                  <div class="flex items-center gap-2 text-[10px]">
+                    <span :class="transcriptDraftBytes > 8192 ? 'text-red-400' : 'text-[#6b7f99]'">
+                      {{ transcriptDraftBytes }} / 8192 字节
+                    </span>
+                    <span class="ml-auto flex gap-1.5">
+                      <button
+                        class="px-2.5 py-1 rounded bg-blue-700 hover:bg-blue-600 text-white text-[11px] font-medium disabled:opacity-50"
+                        :disabled="actionLoading['asr_' + seg.id] || !transcriptDraft.trim() || transcriptDraftBytes > 8192"
+                        @click="saveTranscript(seg)"
+                      >
+                        {{ actionLoading['asr_' + seg.id] ? '保存中…' : '✓ 保存' }}
+                      </button>
+                      <button
+                        class="px-2 py-1 rounded bg-[#273246] hover:bg-[#37465f] text-[#9db0c9] text-[11px]"
+                        @click="cancelTranscriptEdit"
+                      >✕</button>
+                    </span>
+                  </div>
+                </div>
+                <div v-else class="flex flex-col gap-1">
+                  <p class="text-[#c5d4e8] leading-relaxed">{{ seg.src_text }}</p>
+                  <button
+                    class="self-start px-1.5 py-0 rounded text-[9px] bg-[#1e2535] hover:bg-[#273246] text-[#6b7f99] hover:text-[#9db0c9]"
+                    @click="openTranscriptEdit(seg)"
+                  >✏ 编辑原文</button>
+                </div>
               </td>
 
               <!-- Speaker -->
@@ -327,6 +359,14 @@ const timingPreviewId = ref<number | null>(null)
 const timingPreviewVersion = ref(0)  // incremented on each explicit "试听" click
 const editStartSec = ref(0)
 const editEndSec = ref(0)
+// transcriptEditId / transcriptDraft drive the inline ASR-text editor.  They
+// are mutually exclusive with editingId (split) and timingEditId so the UI
+// never has two pending edits competing for the same row.
+const transcriptEditId = ref<number | null>(null)
+const transcriptDraft = ref('')
+const transcriptDraftBytes = computed(() =>
+  new TextEncoder().encode(transcriptDraft.value).length
+)
 
 const segmentMap = computed<Record<number, Segment>>(() => {
   const m: Record<number, Segment> = {}
@@ -444,6 +484,9 @@ function openSplit(seg: Segment) {
     editingId.value = null
     return
   }
+  // Close other inline editors so the row only has one mutating control open.
+  transcriptEditId.value = null
+  timingEditId.value = null
   editingId.value = seg.id
   splitCharIndex.value = Math.floor(seg.src_text.length / 2)
 }
@@ -475,10 +518,59 @@ async function doSplit(seg: Segment) {
 }
 
 function openTimingEdit(seg: Segment) {
+  // Close other inline editors so the row only has one mutating control open.
+  editingId.value = null
+  transcriptEditId.value = null
   timingEditId.value = seg.id
   timingPreviewId.value = null
   editStartSec.value = Math.round(seg.start_ms) / 1000
   editEndSec.value = Math.round(seg.end_ms) / 1000
+}
+
+function openTranscriptEdit(seg: Segment) {
+  if (transcriptEditId.value === seg.id) {
+    transcriptEditId.value = null
+    return
+  }
+  // Close other inline editors so the row only has one mutating control open.
+  editingId.value = null
+  timingEditId.value = null
+  transcriptEditId.value = seg.id
+  transcriptDraft.value = seg.src_text
+}
+
+function cancelTranscriptEdit() {
+  transcriptEditId.value = null
+  transcriptDraft.value = ''
+}
+
+async function saveTranscript(seg: Segment) {
+  const trimmed = transcriptDraft.value.trim()
+  if (!trimmed) {
+    errorMsg.value = '原文不能为空'
+    return
+  }
+  if (new TextEncoder().encode(trimmed).length > 8192) {
+    errorMsg.value = '原文超过 8KB 上限'
+    return
+  }
+  if (trimmed === seg.src_text) {
+    transcriptEditId.value = null
+    return
+  }
+  const key = 'asr_' + seg.id
+  actionLoading.value[key] = true
+  errorMsg.value = ''
+  try {
+    await api.patchSegmentSrcText(props.jobId, seg.id, trimmed)
+    transcriptEditId.value = null
+    await loadData()
+    emit('segments-changed')
+  } catch (e: unknown) {
+    errorMsg.value = (e as Error).message
+  } finally {
+    actionLoading.value[key] = false
+  }
 }
 
 async function saveSegmentTimes(seg: Segment) {

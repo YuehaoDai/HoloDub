@@ -50,6 +50,14 @@ func (s *Store) DB() *gorm.DB {
 	return s.db
 }
 
+// NewWithDB wraps an existing *gorm.DB in a *Store.  It is a thin test seam
+// so that handler-level tests in sibling packages can drive the store
+// against an in-memory sqlite database without going through New() and its
+// config/DSN plumbing.  Production code MUST continue to use New().
+func NewWithDB(db *gorm.DB) *Store {
+	return &Store{db: db}
+}
+
 // Ping verifies database connectivity. Used by /readyz so orchestrators can
 // distinguish between "the process is alive" (liveness) and "the process can
 // actually serve requests" (readiness).
@@ -861,6 +869,37 @@ func (s *Store) SplitSegment(ctx context.Context, jobID uint, segmentID uint, sp
 
 		return renumberSegmentOrdinals(tx, jobID)
 	})
+}
+
+// UpdateSegmentSourceText replaces the ASR transcript (source_text) of a
+// single segment without touching its timing, status or any downstream
+// fields (translation / TTS / meta).  This is the shared write path used by
+// both the manual "edit ASR transcript" UI control and the per-segment ASR
+// re-transcription endpoint during the awaiting_review stage.
+//
+// Caller must already have validated that:
+//   - the parent job is in JobStatusAwaitingReview
+//   - the new text is non-empty after trimming
+//   - the new text fits the configured length budget
+//
+// jobID is supplied as a defence-in-depth check so that a leaked segment ID
+// from a different job cannot be mutated through this code path.  When the
+// (jobID, segmentID) tuple does not match any row, gorm.ErrRecordNotFound is
+// returned so handlers can map it to a 404.
+func (s *Store) UpdateSegmentSourceText(ctx context.Context, jobID uint, segmentID uint, sourceText string) error {
+	result := s.db.WithContext(ctx).Model(&models.Segment{}).
+		Where("id = ? AND job_id = ?", segmentID, jobID).
+		Updates(map[string]any{
+			"source_text": sourceText,
+			"updated_at":  time.Now().UTC(),
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
 }
 
 // UpdateSegmentTimes adjusts the start/end timestamps of a single segment.

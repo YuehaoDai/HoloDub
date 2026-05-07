@@ -879,11 +879,18 @@ func (s *Server) serveOriginalAudio(c *gin.Context) {
 }
 
 type patchSegmentRequest struct {
-	TargetText     string `json:"target_text"`
-	Rerun          bool   `json:"rerun"`
-	VoiceProfileID *uint  `json:"voice_profile_id"`
-	StartMs        *int64 `json:"start_ms"`
-	EndMs          *int64 `json:"end_ms"`
+	// SrcText is set when the user manually corrects the ASR transcript
+	// from the segment-review UI. When non-nil this branch takes priority
+	// over every other field: it is the only one validated against the
+	// awaiting_review job state and only writes source_text — it never
+	// touches start_ms/end_ms/status/target_text/tts_*.  See
+	// store.UpdateSegmentSourceText for the persistence contract.
+	SrcText        *string `json:"src_text,omitempty"`
+	TargetText     string  `json:"target_text"`
+	Rerun          bool    `json:"rerun"`
+	VoiceProfileID *uint   `json:"voice_profile_id"`
+	StartMs        *int64  `json:"start_ms"`
+	EndMs          *int64  `json:"end_ms"`
 }
 
 func (s *Server) patchSegment(c *gin.Context) {
@@ -899,6 +906,46 @@ func (s *Server) patchSegment(c *gin.Context) {
 	var request patchSegmentRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
 		respondError(c, stdhttp.StatusBadRequest, "invalid_patch_request", err.Error())
+		return
+	}
+
+	// ── Manual ASR transcript correction ────────────────────────────────
+	// Mutually exclusive with the voice / time / target_text branches: a
+	// request that sets src_text is accepted only when no other mutating
+	// field is set, so the UI cannot accidentally combine "edit ASR" with
+	// "trigger TTS rerun" in the same call.
+	if request.SrcText != nil {
+		if request.TargetText != "" || request.VoiceProfileID != nil ||
+			request.StartMs != nil || request.EndMs != nil || request.Rerun {
+			respondError(c, stdhttp.StatusBadRequest, "invalid_request",
+				"src_text patch must be sent on its own without target_text/voice/time/rerun fields")
+			return
+		}
+		if job.Status != models.JobStatusAwaitingReview {
+			respondError(c, stdhttp.StatusConflict, "job_not_in_awaiting_review",
+				"ASR transcript can only be edited while the job is in awaiting_review")
+			return
+		}
+		trimmed := strings.TrimSpace(*request.SrcText)
+		if trimmed == "" {
+			respondError(c, stdhttp.StatusBadRequest, "invalid_request",
+				"src_text must be non-empty after trimming")
+			return
+		}
+		if len(trimmed) > maxSegmentSourceTextBytes {
+			respondError(c, stdhttp.StatusBadRequest, "invalid_request",
+				fmt.Sprintf("src_text exceeds %d bytes", maxSegmentSourceTextBytes))
+			return
+		}
+		if err := s.store.UpdateSegmentSourceText(c.Request.Context(), job.ID, segmentID, trimmed); err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				respondError(c, stdhttp.StatusNotFound, "segment_not_found", "segment not found in this job")
+				return
+			}
+			respondError(c, stdhttp.StatusInternalServerError, "patch_src_text_failed", err.Error())
+			return
+		}
+		c.JSON(stdhttp.StatusOK, gin.H{"updated": true, "segment_id": segmentID, "src_text": trimmed})
 		return
 	}
 

@@ -12,6 +12,12 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// maxSegmentSourceTextBytes caps the manually edited ASR transcript size to
+// guard against runaway payloads.  8 KiB comfortably covers any realistic
+// single-segment utterance (typically <1 KiB) without being so large that a
+// hostile client can pin database or LLM prompt budgets.
+const maxSegmentSourceTextBytes = 8 * 1024
+
 func (s *Server) listSegmentSuggestions(c *gin.Context) {
 	jobID, err := parseID(c, "id")
 	if err != nil {

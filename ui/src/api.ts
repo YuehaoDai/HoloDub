@@ -159,6 +159,20 @@ export const api = {
       body: JSON.stringify({ start_ms: startMs, end_ms: endMs }),
     }),
 
+  // patchSegmentSrcText updates the ASR transcript of a single segment
+  // during the awaiting_review stage.  The backend rejects it with 409 if
+  // the parent job is not in awaiting_review, and 400 if the trimmed text
+  // is empty or larger than 8 KiB.  It only writes source_text — timing,
+  // status, target_text and tts_* fields are untouched.
+  patchSegmentSrcText: (jobId: number, segmentId: number, srcText: string) =>
+    apiFetch<{ updated: boolean; segment_id: number; src_text: string }>(
+      `/jobs/${jobId}/segments/${segmentId}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({ src_text: srcText }),
+      }
+    ),
+
   rerunSegment: (jobId: number, segmentId: number) =>
     apiFetch(`/jobs/${jobId}/segments/${segmentId}/rerun`, { method: "POST" }),
 
