@@ -173,6 +173,22 @@ export const api = {
       }
     ),
 
+  // retrySegmentASR clips the segment's time window out of the job's
+  // vocals (or input) audio and re-runs faster-whisper, then writes the
+  // result back into source_text.  Only allowed in awaiting_review.
+  // Response shapes (200 in both cases):
+  //   { updated: true,  segment_id, src_text }
+  //   { updated: false, segment_id, warning: "empty_transcription", message }
+  // Failures map to 409 / 404 / 502 / 500 with the standard error envelope.
+  retrySegmentASR: (jobId: number, segmentId: number) =>
+    apiFetch<{
+      updated: boolean
+      segment_id: number
+      src_text?: string
+      warning?: string
+      message?: string
+    }>(`/jobs/${jobId}/segments/${segmentId}/retry-asr`, { method: "POST" }),
+
   rerunSegment: (jobId: number, segmentId: number) =>
     apiFetch(`/jobs/${jobId}/segments/${segmentId}/rerun`, { method: "POST" }),
 

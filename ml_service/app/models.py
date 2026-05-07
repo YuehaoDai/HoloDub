@@ -58,6 +58,29 @@ class SmartSplitResponse(BaseModel):
     diagnostics: list[str] = Field(default_factory=list)
 
 
+class TranscribeSegmentRequest(BaseModel):
+    """Re-transcribe a single time window of an existing audio file.
+
+    Used by the segment-review UI to fix Whisper recognition errors on a
+    per-segment basis without rerunning smart_split for the whole job.
+
+    The window boundaries (start_ms, end_ms) are taken from the segment
+    row that the user wants corrected; the caller is responsible for
+    passing the same vocals_relpath that the original asr_smart stage
+    used so the new transcript stays comparable.
+    """
+
+    audio_relpath: str
+    source_language: str = ""
+    start_ms: int
+    end_ms: int
+
+
+class TranscribeSegmentResponse(BaseModel):
+    text: str
+    diagnostics: list[str] = Field(default_factory=list)
+
+
 class TTSRequest(BaseModel):
     text: str
     target_duration_sec: float

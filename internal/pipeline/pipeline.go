@@ -172,6 +172,87 @@ func (s *Service) RetryASR(ctx context.Context, jobID uint, requestedBy string) 
 	})
 }
 
+// ErrSegmentTranscriptionEmpty is returned by RetrySegmentASR when the
+// ml-service successfully ran ASR over the requested window but produced
+// no text (e.g. the window is pure silence or noise).  Callers should
+// surface this to the user as a hint to edit the transcript manually
+// rather than treating it as a hard failure.
+var ErrSegmentTranscriptionEmpty = errors.New("segment transcription returned empty text")
+
+// RetrySegmentASR re-runs ASR on a single segment without disturbing the
+// rest of the job.  Unlike RetryASR (job-level), this preserves all
+// existing segments, suggestions, manual merges and split decisions.
+//
+// Preconditions enforced:
+//   - the parent job is in JobStatusAwaitingReview
+//   - the segment exists AND belongs to that job
+//
+// On success the segment's source_text is replaced via
+// store.UpdateSegmentSourceText (timing / status / target_text untouched).
+// On empty transcription the function returns ErrSegmentTranscriptionEmpty
+// without writing anything to the database, so the caller can prompt the
+// user to edit manually.
+func (s *Service) RetrySegmentASR(ctx context.Context, jobID uint, segmentID uint, requestedBy string) (string, error) {
+	job, err := s.store.GetJob(ctx, jobID)
+	if err != nil {
+		return "", err
+	}
+	if job.Status != models.JobStatusAwaitingReview {
+		return "", fmt.Errorf("job %d is not in awaiting_review state (current: %s)", jobID, job.Status)
+	}
+	seg, err := s.store.GetSegment(ctx, segmentID)
+	if err != nil {
+		return "", err
+	}
+	if seg.JobID != jobID {
+		return "", fmt.Errorf("segment %d does not belong to job %d", segmentID, jobID)
+	}
+	if seg.EndMs <= seg.StartMs {
+		return "", fmt.Errorf("segment %d has invalid time range %d..%d", segmentID, seg.StartMs, seg.EndMs)
+	}
+
+	audioRelPath := job.VocalsRelPath
+	if audioRelPath == "" {
+		audioRelPath = job.InputRelPath
+	}
+	if audioRelPath == "" {
+		return "", fmt.Errorf("job %d has no audio path (vocals or input)", jobID)
+	}
+
+	slog.Info("retry_segment_asr starting",
+		"job_id", jobID,
+		"segment_id", segmentID,
+		"audio_relpath", audioRelPath,
+		"start_ms", seg.StartMs,
+		"end_ms", seg.EndMs,
+		"requested_by", requestedBy,
+	)
+	resp, err := s.ml.TranscribeSegment(ctx, ml.TranscribeSegmentRequest{
+		AudioRelPath:   audioRelPath,
+		SourceLanguage: job.SourceLanguage,
+		StartMs:        seg.StartMs,
+		EndMs:          seg.EndMs,
+	})
+	if err != nil {
+		return "", fmt.Errorf("ml transcribe_segment: %w", err)
+	}
+
+	text := strings.TrimSpace(resp.Text)
+	if text == "" {
+		slog.Warn("retry_segment_asr returned empty transcript",
+			"job_id", jobID, "segment_id", segmentID,
+			"diagnostics", resp.Diagnostics)
+		return "", ErrSegmentTranscriptionEmpty
+	}
+
+	if err := s.store.UpdateSegmentSourceText(ctx, jobID, segmentID, text); err != nil {
+		return "", fmt.Errorf("persist source_text: %w", err)
+	}
+	slog.Info("retry_segment_asr completed",
+		"job_id", jobID, "segment_id", segmentID, "text_chars", len(text))
+	return text, nil
+}
+
 func (s *Service) HandleTask(ctx context.Context, task models.TaskPayload) error {
 	job, err := s.store.GetJob(ctx, task.JobID)
 	if err != nil {

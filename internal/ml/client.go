@@ -63,6 +63,23 @@ type SmartSplitResponse struct {
 	Diagnostics []string       `json:"diagnostics,omitempty"`
 }
 
+// TranscribeSegmentRequest re-runs ASR on a single time window of an
+// existing audio file. Used by the per-segment "↻ 重新识别" control in
+// the segment-review UI.  Unlike SmartSplitRequest this call does not
+// run VAD or boundary detection — the boundaries (start_ms, end_ms)
+// come straight from the segment row whose transcript we are correcting.
+type TranscribeSegmentRequest struct {
+	AudioRelPath   string `json:"audio_relpath"`
+	SourceLanguage string `json:"source_language,omitempty"`
+	StartMs        int64  `json:"start_ms"`
+	EndMs          int64  `json:"end_ms"`
+}
+
+type TranscribeSegmentResponse struct {
+	Text        string   `json:"text"`
+	Diagnostics []string `json:"diagnostics,omitempty"`
+}
+
 type TTSRequest struct {
 	Text              string         `json:"text"`
 	TargetDurationSec float64        `json:"target_duration_sec"`
@@ -105,6 +122,17 @@ func (c *Client) Separate(ctx context.Context, request SeparateRequest) (*Separa
 func (c *Client) SmartSplit(ctx context.Context, request SmartSplitRequest) (*SmartSplitResponse, error) {
 	var response SmartSplitResponse
 	if err := c.doJSON(ctx, http.MethodPost, "/asr/smart_split", request, &response); err != nil {
+		return nil, err
+	}
+	return &response, nil
+}
+
+// TranscribeSegment re-runs ASR on a single time window of an existing
+// audio file and returns the punctuated text.  See TranscribeSegmentRequest
+// for the calling convention.
+func (c *Client) TranscribeSegment(ctx context.Context, request TranscribeSegmentRequest) (*TranscribeSegmentResponse, error) {
+	var response TranscribeSegmentResponse
+	if err := c.doJSON(ctx, http.MethodPost, "/asr/transcribe_segment", request, &response); err != nil {
 		return nil, err
 	}
 	return &response, nil

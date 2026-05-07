@@ -291,6 +291,15 @@
                   >
                     ✂ 拆分
                   </button>
+
+                  <!-- Per-segment ASR re-transcription (Wave 2) -->
+                  <button
+                    class="px-2 py-0.5 rounded text-[10px] bg-[#1e2535] hover:bg-blue-700/40 text-[#9db0c9] hover:text-blue-300 disabled:opacity-50"
+                    :disabled="actionLoading['asr_' + seg.id] || !!retrySegmentLoadingId"
+                    @click="doRetrySegmentASR(seg)"
+                  >
+                    {{ retrySegmentLoadingId === seg.id ? '识别中…' : '↻ 重新识别' }}
+                  </button>
                 </div>
               </td>
             </tr>
@@ -367,6 +376,11 @@ const transcriptDraft = ref('')
 const transcriptDraftBytes = computed(() =>
   new TextEncoder().encode(transcriptDraft.value).length
 )
+// retrySegmentLoadingId holds the id of the segment currently waiting for
+// ml-service to re-run ASR.  At most one re-transcription runs at a time so
+// the GPU is never queued behind multiple concurrent requests; other rows'
+// "↻ 重新识别" buttons are disabled while this is non-null.
+const retrySegmentLoadingId = ref<number | null>(null)
 
 const segmentMap = computed<Record<number, Segment>>(() => {
   const m: Record<number, Segment> = {}
@@ -628,6 +642,37 @@ async function doRetryASR() {
     errorMsg.value = (e as Error).message
   } finally {
     retryLoading.value = false
+  }
+}
+
+async function doRetrySegmentASR(seg: Segment) {
+  if (retrySegmentLoadingId.value !== null) return
+  if (!confirm(`重新识别第 ${seg.ordinal + 1} 段语音将覆盖当前原文，确定继续？`)) return
+  // Discard any in-flight inline edits for this row so the new ASR result
+  // is the authoritative source after the request finishes.
+  if (transcriptEditId.value === seg.id) {
+    transcriptEditId.value = null
+    transcriptDraft.value = ''
+  }
+  if (editingId.value === seg.id) editingId.value = null
+  if (timingEditId.value === seg.id) timingEditId.value = null
+
+  retrySegmentLoadingId.value = seg.id
+  errorMsg.value = ''
+  try {
+    const resp = await api.retrySegmentASR(props.jobId, seg.id)
+    if (resp.updated && resp.src_text) {
+      // Patch the local row in place so the user sees the new transcript
+      // without waiting for a full reload.
+      seg.src_text = resp.src_text
+    } else if (resp.warning === 'empty_transcription') {
+      errorMsg.value = resp.message ||
+        'ASR 未识别到文本，请使用 ✏ 编辑原文 手动输入。'
+    }
+  } catch (e: unknown) {
+    errorMsg.value = (e as Error).message
+  } finally {
+    retrySegmentLoadingId.value = null
   }
 }
 

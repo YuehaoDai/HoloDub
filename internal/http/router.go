@@ -147,6 +147,7 @@ func NewRouter(cfg config.Config, st *store.Store, pipelineSvc *pipeline.Service
 	router.POST("/jobs/:id/segments/:segmentId/split", server.splitSegment)
 	router.POST("/jobs/:id/confirm-segmentation", server.confirmSegmentation)
 	router.POST("/jobs/:id/retry-asr", server.retryASR)
+	router.POST("/jobs/:id/segments/:segmentId/retry-asr", server.retrySegmentASR)
 
 	return router
 }

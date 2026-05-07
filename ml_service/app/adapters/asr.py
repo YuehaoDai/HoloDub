@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
+import tempfile
 from pathlib import Path
 
 from app.adapters.media import probe_duration
@@ -63,6 +65,108 @@ class ASRAdapter:
 
     def align_sentences(self, audio_path: Path, text: str, language: str = "zh") -> None:
         raise NotImplementedError("align_sentences removed in rollback")
+
+    def transcribe_window(
+        self,
+        audio_path: Path,
+        source_language: str,
+        start_ms: int,
+        end_ms: int,
+    ) -> tuple[str, list[str]]:
+        """Re-transcribe the audio between [start_ms, end_ms] as a single
+        sentence and return the punctuated text.
+
+        Implemented by clipping the window into a temporary wav with ffmpeg
+        and feeding it through faster-whisper.  We deliberately avoid the
+        smart_split / VAD / boundary-merge pipeline because the caller has
+        already chosen the boundaries — running VAD again could trim audible
+        edges, and the min_segment_sec=2.0 default of smart_split would
+        reject very short utterances.
+
+        For non-faster-whisper backends we fall back to render_text on the
+        word stream so the caller still gets a deterministic best-effort
+        transcript (mainly useful in tests via the mock adapter).
+        """
+        if end_ms <= start_ms:
+            raise ValueError(f"end_ms ({end_ms}) must be greater than start_ms ({start_ms})")
+
+        diagnostics: list[str] = [
+            f"asr backend={self.settings.ml_asr_backend} window={start_ms}..{end_ms}ms"
+        ]
+
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+            tmp_path = Path(tmp.name)
+        try:
+            start_sec = max(start_ms, 0) / 1000.0
+            dur_sec = (end_ms - start_ms) / 1000.0
+            subprocess.run(
+                [
+                    self.settings.ffmpeg_bin,
+                    "-y",
+                    "-ss",
+                    f"{start_sec:.3f}",
+                    "-i",
+                    str(audio_path),
+                    "-t",
+                    f"{dur_sec:.3f}",
+                    "-vn",
+                    "-ar",
+                    str(self.settings.default_sample_rate),
+                    "-ac",
+                    str(self.settings.default_channels),
+                    str(tmp_path),
+                ],
+                check=True,
+                capture_output=True,
+            )
+
+            if self.settings.ml_asr_backend == "faster_whisper":
+                text = self._transcribe_full_text(tmp_path, source_language)
+                diagnostics.append("transcribe path=faster_whisper")
+                return text, diagnostics
+
+            words, mock_diag = self._run_mock(tmp_path)
+            return render_text(words), diagnostics + mock_diag
+        finally:
+            try:
+                tmp_path.unlink()
+            except FileNotFoundError:
+                pass
+
+    def _transcribe_full_text(self, audio_path: Path, source_language: str) -> str:
+        """Run faster-whisper on a (typically short) clip and return the
+        concatenated punctuated text from all returned segments.
+
+        We disable word-timestamps because the caller does not need them —
+        the segment row keeps its original start_ms/end_ms — and we also
+        disable the VAD filter so that quiet leading/trailing phonemes
+        inside the chosen window are not trimmed away."""
+        try:
+            from faster_whisper import WhisperModel
+        except ImportError as exc:
+            raise RuntimeError("faster-whisper is not installed") from exc
+
+        def loader():
+            return WhisperModel(
+                self.settings.faster_whisper_model, device="auto", compute_type="auto"
+            )
+
+        model = self.registry.get_or_load(
+            f"faster_whisper:{self.settings.faster_whisper_model}", loader
+        )
+        segments, _ = model.transcribe(
+            str(audio_path),
+            word_timestamps=False,
+            language=source_language or None,
+            vad_filter=False,
+            beam_size=self.settings.faster_whisper_beam_size,
+        )
+        chunks: list[str] = []
+        for segment in segments:
+            text = (segment.text or "").strip()
+            if text:
+                chunks.append(text)
+        return " ".join(chunks).strip()
 
     def _run_mock(self, audio_path: Path) -> tuple[list[WordToken], list[str]]:
         candidates = [

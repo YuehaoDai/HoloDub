@@ -10,6 +10,31 @@ once we cut a tagged release.
 
 ### Added
 
+- **Segment-review per-segment ASR transcript correction**: each row in
+  the awaiting_review UI now carries an ``✏ 编辑原文`` control (manual
+  textarea edit, ≤ 8 KiB, awaiting_review-only) and a ``↻ 重新识别``
+  button (re-runs faster-whisper on just that segment's
+  ``[start_ms, end_ms]`` window of ``vocals.wav``).  Both paths share the
+  new ``store.UpdateSegmentSourceText`` writer that touches only
+  ``source_text + updated_at`` — start_ms / end_ms / status /
+  target_text / tts_* are guaranteed untouched, so the existing job-
+  level ``↻ 重试 ASR 分段`` "nuclear" button and any prior manual
+  merge / split / time edits remain intact.  Word-level Whisper
+  timestamps are still not persisted (``segment.Meta`` keeps no
+  ``word_timings`` key), so split's character-proportion algorithm is
+  unchanged: editing or re-recognising a transcript only shifts the
+  baseline characters that future splits will linearly interpolate
+  against.
+- **ml-service ``POST /asr/transcribe_segment``**: re-transcribes a
+  single time window without running the smart_split / VAD pipeline
+  (which would otherwise reject clips shorter than the
+  ``min_segment_sec`` floor).  ``ASRAdapter.transcribe_window`` clips
+  the requested window with ``ffmpeg -ss/-t``, runs faster-whisper with
+  ``word_timestamps=False`` and ``vad_filter=False``, joins
+  ``segments[].text`` into a single punctuated string, then deletes the
+  temp file.  Empty transcriptions return 200 with
+  ``{warning: "empty_transcription"}`` so the UI can prompt the user to
+  edit manually instead of treating it as a hard failure.
 - **CI quality gates**: `golangci-lint`, `ruff`, `mypy`, `eslint`,
   `prettier`, `vue-tsc` typecheck, `govulncheck`, `pip-audit`,
   `npm audit`, Trivy filesystem scan, gitleaks secret scan, Redocly

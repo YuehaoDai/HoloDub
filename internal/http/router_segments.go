@@ -6,8 +6,11 @@ package http
 // file under 1k lines.
 
 import (
+	"errors"
 	stdhttp "net/http"
 	"strings"
+
+	"holodub/internal/pipeline"
 
 	"github.com/gin-gonic/gin"
 )
@@ -179,5 +182,60 @@ func (s *Server) retryASR(c *gin.Context) {
 		return
 	}
 	c.JSON(stdhttp.StatusOK, gin.H{"ok": true})
+}
+
+// retrySegmentASR re-runs ASR on a single segment by clipping the chosen
+// time window out of the job's vocals (or input) audio and feeding it
+// through faster-whisper.  It is the per-segment counterpart of retryASR
+// and preserves all other segments / suggestions / manual edits.
+//
+// Response shapes:
+//   - 200 { updated: true, segment_id, src_text }      - persisted
+//   - 200 { updated: false, segment_id, warning: ... } - empty transcript
+//   - 404 segment_not_found / job_not_found             - missing data
+//   - 409 job_not_in_awaiting_review                    - wrong job state
+//   - 502 ml_transcribe_failed                          - upstream error
+func (s *Server) retrySegmentASR(c *gin.Context) {
+	jobID, err := parseID(c, "id")
+	if err != nil {
+		return
+	}
+	segmentID, ok := parseUintParam(c, "segmentId")
+	if !ok {
+		return
+	}
+
+	text, err := s.pipeline.RetrySegmentASR(c.Request.Context(), jobID, segmentID, "user")
+	if err == nil {
+		c.JSON(stdhttp.StatusOK, gin.H{
+			"updated":    true,
+			"segment_id": segmentID,
+			"src_text":   text,
+		})
+		return
+	}
+
+	if errors.Is(err, pipeline.ErrSegmentTranscriptionEmpty) {
+		c.JSON(stdhttp.StatusOK, gin.H{
+			"updated":    false,
+			"segment_id": segmentID,
+			"warning":    "empty_transcription",
+			"message":    "ASR returned no text for this window; please edit the transcript manually",
+		})
+		return
+	}
+
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "not in awaiting_review"):
+		respondError(c, stdhttp.StatusConflict, "job_not_in_awaiting_review", msg)
+	case strings.Contains(msg, "does not belong to job"),
+		strings.Contains(msg, "record not found"):
+		respondError(c, stdhttp.StatusNotFound, "segment_not_found", msg)
+	case strings.Contains(msg, "ml transcribe_segment"):
+		respondError(c, stdhttp.StatusBadGateway, "ml_transcribe_failed", msg)
+	default:
+		respondError(c, stdhttp.StatusInternalServerError, "retry_segment_asr_failed", msg)
+	}
 }
 
