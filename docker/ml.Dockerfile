@@ -3,7 +3,7 @@
 # The image is ~1 GB larger than the runtime variant but that is acceptable given
 # the overall image size (PyTorch + ML libraries).
 # For CPU-only environments switch to python:3.11-slim (remove --gpus flag too).
-FROM nvidia/cuda:12.8.0-devel-ubuntu22.04
+FROM nvidia/cuda:13.2.1-devel-ubuntu22.04
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
