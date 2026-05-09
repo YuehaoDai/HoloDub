@@ -121,7 +121,9 @@ HoloDub 的目标不是“翻完字幕 + 随便套一条 AI 配音”，
 - 使用 Go 1.25+、Gin、GORM。
 - 驱动任务在以下阶段流转：
 
-  `media` → `separate` → `asr_smart` → `translate` → `tts_duration` → `merge`
+  `media` → `separate` → `asr_smart` → `segment_review` → `translate` → `tts_duration` → `merge`
+
+  - `segment_review` **默认开启**：ASR 完成后任务进入 `awaiting_review`，操作员可在前端审查、合并、拆分、调整时间，并修正 ASR 文本，确认无误后再进入 `translate`。可设 `SEGMENT_REVIEW_ENABLED=false` 关闭，自动直通翻译。
 
 - 在 PostgreSQL 中维护：
   - `jobs`：每条视频一个 Job。
@@ -129,6 +131,7 @@ HoloDub 的目标不是“翻完字幕 + 随便套一条 AI 配音”，
   - `speakers`：任务内的逻辑说话人。
   - `speaker_voice_bindings`：说话人与音色绑定关系。
   - `segments`：切分片段（翻译 & TTS 的最小单位）。
+  - `segment_suggestions`：`segment_review` 阶段 LLM 生成的合并 / 拆分建议。
 
 - 基于 Redis 做任务队列：
   - Job 级阶段任务（如 `job:123:stage:asr_smart`）。
@@ -151,9 +154,13 @@ HoloDub 的目标不是“翻完字幕 + 随便套一条 AI 配音”，
   - `POST /asr/smart_split`：
     - 输入：`audio_path`（相对路径）、最小/最大片段时长。
     - 输出：包含 `start_ms` / `end_ms` / `text` / `speaker_label` / `split_reason` 的片段列表。
+  - `POST /asr/transcribe_segment`：
+    - 输入：音频相对路径 + `start_ms` / `end_ms`。
+    - 输出：该窗口对应的整段文本，供前端「↻ 重新识别」按钮调用。
   - `POST /tts/run`：
     - 输入：译文、`target_duration_sec`、`voice_config`、`output_relpath`。
     - 输出：音频保存路径 + 实际生成时长。
+  - `GET /healthz`（轻量存活探针）与 `GET /readyz`（就绪探针；IndexTTS2 预热未完成时返回 503）。
 
 ### 存储与路径约定
 
@@ -173,7 +180,14 @@ HoloDub 的目标不是“翻完字幕 + 随便套一条 AI 配音”，
   - 包含 `start_ms` / `end_ms` / `original_duration_ms`。
   - `src_text`（ASR 文本）与 `tgt_text`（翻译文本）。
   - `tts_audio_path` / `tts_duration_ms`。
-  - `split_reason`（通过标点、静音、最大时长等规则切分）。
+  - `voice_profile_id`（段级音色覆盖；为空时回退到说话人绑定）。
+  - `status`（强类型生命周期：`pending` → `translated` → `synthesized`，带显式状态机校验）。
+  - `meta` JSON（段级质量标签等）。
+  - `split_reason`：`punctuation` / `silence_gap` / `max_duration` / `speaker_change` / `manual_split` / `merged` / …
+- **segment_suggestions**：
+  - `segment_review` 阶段 LLM 产出的审查建议（当前仅 `merge`，`split` 已规划）。
+  - 每条指向一组现有 segment，附带 `confidence` 与 `reason`。
+  - 状态：`pending` → `accepted`（已应用到 `segments`）/ `rejected`（仅标记，不触发动作）。
 
 ---
 
@@ -186,7 +200,7 @@ HoloDub 的目标不是“翻完字幕 + 随便套一条 AI 配音”，
 - [x] 烟测模式端到端（mock / ffmpeg_stub / silence）
 - [x] **真实 ASR**：Faster-Whisper large-v3，GPU 加速，词级时间戳
 - [x] **真实翻译**：OpenAI 兼容接口（已测 qwen-turbo / DeepSeek）
-- [x] **真实 TTS（过渡方案）**：Edge-TTS（微软，免费，中文自然语音，含 atempo 时长对齐）
+- [x] **真实 TTS（兜底方案）**：Edge-TTS（微软，免费，中文自然语音）— 无 GPU 时可用，IndexTTS2 启用后即视为 fallback
 - [x] GPU 直通（NVIDIA Container Toolkit + Docker Compose `deploy.devices`）
 - [x] **IndexTTS2 内联集成**：`indextts2-inference` 集成进 `ml-service`，零样本声纹克隆
 - [x] **IndexTTS2 真实推理验证**：英语 → 中文，RTF 1.47x（RTX 5080）
@@ -202,8 +216,13 @@ HoloDub 的目标不是“翻完字幕 + 随便套一条 AI 配音”，
 - [x] **79 分钟完整视频验证**：626 段，英语 → 中文，完整流水线端到端跑通
 - [ ] 真实人声 / 伴奏分离（Demucs，需 `ML_PYTHON_EXTRAS=real`）
 - [ ] 说话人分离（Pyannote，需 HuggingFace token）
-- [x] **BigVGAN CUDA kernel 在 Blackwell / sm_120 上编译失败**：改用 devel 镜像 + 去掉未使用的 `#include <cuda_profiler_api.h>` + 构建时预编译 `.so` 烤进镜像层；RTX 5080 现已使用原生 CUDA kernel
-- [x] **IndexTTS2 启动时预加载模型**：当 `INDEXTTS2_INLINE=true` 时，ml-service 启动即后台加载，首次 TTS 不再卡 6 分钟
+- [x] **BigVGAN CUDA kernel 在 Blackwell / sm_120 上编译失败**：改用 devel 镜像 + 去掉未使用的 `#include <cuda_profiler_api.h>` + 通过 `docker/precompile_bigvgan.py` 在构建期模拟目标 GPU 编译，把 `.so` 直接烤进 IndexTTS 在 site-packages 的精确缓存目录；RTX 5080 启动时 < 5 秒加载，无需运行时 JIT
+- [x] **段落审查阶段（`segment_review`）**：LLM 自动产出合并 / 拆分建议；任务停在 `awaiting_review`，操作员可以采纳 / 否决建议、手动合并 / 拆分 / 调整时间，确认后通过 `POST /jobs/:id/confirm-segmentation` 进入翻译
+- [x] **段级 ASR 原文手动编辑（Wave 1）**：`PATCH /jobs/:id/segments/:segmentId` 接受 `src_text`，可在审查阶段修正 Whisper 识别错误（8 KiB 上限，仅 `awaiting_review` 阶段允许）；只更新 `source_text + updated_at`，不触碰时间轴和状态
+- [x] **段级 ASR 重新识别（Wave 2）**：`POST /jobs/:id/segments/:segmentId/retry-asr` 用 ffmpeg 切出该段在 `vocals.wav` 上的窗口，单独跑一遍 faster-whisper 替换 `source_text`；只针对一段，不影响其他段落、建议或手动编辑
+- [x] **`/readyz` 独立就绪探针 + IndexTTS2 预热看门狗**：`/readyz` 在 `tts_warmup_status` 为 `loading` / `error` 时返回 503；后台守护线程每 30s 心跳，加载线程消失（segfault / OOM kill）或超过 30 分钟硬超时立刻置为 `error` 并刷新日志
+- [x] **IndexTTS2 启动时预加载模型**：当 `INDEXTTS2_INLINE=true` 时，ml-service 启动即后台加载；用 event + state-machine 协议，重型构造在锁外运行，加载线程崩溃也不会让后续 TTS 请求被未释放的锁卡死
+- [x] **可观测性 + CI 加固**：`golangci-lint` / `ruff` / `mypy` / `eslint` 多语种代码质量门禁、`govulncheck` / `pip-audit` / Trivy / gitleaks 安全扫描、Dependabot、`docs/openapi.yaml`（Redocly 校验）、Prometheus 指标（`holodub_external_calls_total`、`holodub_ml_*`）、`docs/observability/` Grafana dashboard + Prometheus rules、Helm chart 骨架、多架构 goreleaser 配置
 - [ ] 使用中文参考音频改善韵律（当前默认使用英文片段，导致轻微语速不一致）
 
 欢迎一起参与开发、提 Issue / PR。
@@ -257,7 +276,14 @@ OPENAI_MODEL=deepseek-chat
 ML_PYTHON_EXTRAS=real
 ML_ASR_BACKEND=faster_whisper
 FASTER_WHISPER_MODEL=large-v3     # 推荐；显存 < 6GB 可用 medium
-ML_TTS_BACKEND=edge_tts           # 免费，无需 API key，支持多种中文音色
+
+# 默认推荐的 TTS 后端：IndexTTS2（零样本声纹克隆 + 时长感知，内联在 ml-service 中）
+ML_TTS_BACKEND=indextts2
+INDEXTTS2_INLINE=true
+
+# 没有 GPU 时的兜底方案：Edge-TTS（微软免费，无需 API key）
+# 所有说话人共用一个预设音色，不支持声纹克隆
+# ML_TTS_BACKEND=edge_tts
 ```
 
 重建 ml-service 镜像（首次约 10 分钟，主要是下载 PyTorch）：
@@ -301,10 +327,9 @@ docker compose down                       # 停止并移除容器
 docker compose --env-file .env up -d      # 显式指定 .env 重启（推荐）
 ```
 
-### Edge-TTS 音色选项（过渡方案）
+### Edge-TTS 音色选项（无 GPU 兜底）
 
-> Edge-TTS 是当前的**临时 TTS 方案**，目的是在 IndexTTS2 接入之前验证完整的流水线。  
-> 它不支持零样本声纹克隆，所有说话人都使用相同的预设音色。
+> Edge-TTS 是**无 CUDA GPU 环境下的兜底 TTS 后端**。它不支持零样本声纹克隆，所有说话人共用同一预设音色。要做实际配音建议直接使用 IndexTTS2（见下方专属章节）。
 
 默认音色为 `zh-CN-XiaoxiaoNeural`（女声）。可在 `.env` 中设置 `EDGE_TTS_VOICE` 更换：
 
@@ -732,34 +757,56 @@ with open("gpt.pth", "wb") as f:
 
 ### .env 配置说明
 
+#### 后端选择
+
 | 变量 | 烟测默认 | 真实后端 |
 |------|----------|----------|
 | `TRANSLATION_PROVIDER` | `mock` | `openai_compatible` |
 | `ML_ASR_BACKEND` | `mock` | `faster_whisper` |
-| `ML_TTS_BACKEND` | `silence` | `edge_tts` → `indextts2` |
+| `ML_TTS_BACKEND` | `silence` | `indextts2`（推荐）· `edge_tts`（无 GPU 兜底）|
 | `ML_VAD_BACKEND` | `none` | `pyannote`（可选）|
 | `ML_SEPARATOR_BACKEND` | `ffmpeg_stub` | `demucs`（可选）|
 | `ML_PYTHON_EXTRAS` | 空 | `real` |
-| `INDEXTTS2_INLINE` | `false` | `true`（当 `ML_TTS_BACKEND=indextts2` 时）|
-| `INDEXTTS2_MODEL_DIR` | 空（自动下载）| `/data/models/indextts2` |
-| `INDEXTTS2_USE_EMO_TEXT` | `false` | `true`（需 Qwen3 情感模型）|
-| `INDEXTTS2_DEFAULT_VOICE_RELPATH` | 空 | `voices/ref.wav`（**建议用中文音频**，效果更好）|
-| `RETRANSLATION_ENABLED` | `true` | `true` / `false` |
-| `RETRANSLATION_DRIFT_THRESHOLD` | `0.06` | 最大允许漂移（6%）；超出则触发再翻译 |
+
+#### IndexTTS2
+
+| 变量 | 默认 | 说明 |
+|------|------|------|
+| `INDEXTTS2_INLINE` | `false` | `ML_TTS_BACKEND=indextts2` 时设为 `true`，让模型在 ml-service 内联加载 |
+| `INDEXTTS2_MODEL_DIR` | 空（自动下载）| 设为 `/data/models/indextts2` 使用本地 checkpoint |
+| `INDEXTTS2_USE_EMO_TEXT` | `false` | `true` 启用 Qwen3 微调模型从译文文本推断 8 维情感向量 |
+| `INDEXTTS2_DEFAULT_VOICE_RELPATH` | 空 | `voices/ref.wav`（**建议用中文音频**，韵律更好）|
+| `INDEXTTS2_USE_CUDA_KERNEL` | `false` | 仅当镜像由 `docker/precompile_bigvgan.py` 烤过 BigVGAN `.so` 时设为 `true`；否则运行时回退到 PyTorch 原生路径（音频一致，约慢 10–15 %）|
+
+#### 段落审查 + ASR 切分参数
+
+| 变量 | 默认 | 说明 |
+|------|------|------|
+| `SEGMENT_REVIEW_ENABLED` | `true` | 设 `false` 跳过 LLM 合并建议阶段，`asr_smart` 完成后直接进入 `translate` |
+| `SEGMENT_REVIEW_MODEL` | 回退到 `RETRANSLATION_MODEL` → `OPENAI_MODEL` | 仅当希望用不同模型跑审查 prompt 时覆盖 |
+| `HARD_MAX_SEGMENT_SEC` | `45` | 后处理合并的硬上限——任何合并段不得超过该时长，对连讲场景同时是 close-gap merge 的硬刹车 |
+| `CLOSE_GAP_MS` | `800` | 相邻段 gap 阈值；从历史的 `1500 ms` 调小，避免合并过激 |
+| `ASR_END_PAD_MS` | `500` | 给每段 `end_ms` 补的尾部 padding，弥补 Whisper 词级时间戳低估的尾音 |
+
+#### 再翻译循环
+
+| 变量 | 默认 | 说明 |
+|------|------|------|
+| `RETRANSLATION_ENABLED` | `true` | 设 `false` 完全关掉漂移率驱动的再翻译反馈循环 |
+| `RETRANSLATION_MODEL` | `kimi-k2.5` | 同一 `OPENAI_BASE_URL` 上的任意模型 |
+| `RETRANSLATION_DRIFT_THRESHOLD` | `0.06` | 最大允许 `|实际 − 目标| / 目标`；超出则触发再翻译 |
 | `RETRANSLATION_MAX_ATTEMPTS` | `10` | 每段最多再翻译次数 |
+
+#### 并发、超时与安全
+
+| 变量 | 默认 | 说明 |
+|------|------|------|
 | `TTS_CONCURRENCY` | `2` | Worker 端 TTS 并发请求数 |
-| `GPU_CONCURRENCY` | `2` | ml-service 端 GPU 推理并发数（需约 16GB 显存）|
+| `GPU_CONCURRENCY` | `2` | ml-service 端 GPU 推理并发数（需约 16 GB 显存）|
+| `MODEL_REGISTRY_MAX_MODELS` | 空（不淘汰）| ml-service `ModelRegistry` 的可选 LRU 上限 |
 | `STAGE_TIMEOUT_SECONDS` | `14400` | 超长视频可适当调大 |
-
----
-
-## 🛠 技术栈
-
-- **控制面**：Go, Gin, GORM, Redis, PostgreSQL  
-- **数据面**：FastAPI, PyTorch, Demucs/UVR5, Faster-Whisper, Pyannote, IndexTTS2  
-- **编排**：Docker Compose  
-- **翻译**：Qwen / DeepSeek / 其他可插拔 LLM 提供方  
-- **Web UI**（一期）：Vue 3 + Vite + Tailwind CSS — 深色侧边栏，段落漂移审查，内联 TTS 编辑与重合成  
+| `API_AUTH_TOKEN` | 空 | **`APP_ENV=production` 时必填**——否则 API 拒绝启动；非生产环境只打一次警告然后保持开放 |
+| `TRUSTED_PROXIES` | 空 | 走 Nginx / Caddy 反代时设为 `127.0.0.1`（或实际代理 IP），让客户端 IP 从 `X-Forwarded-For` 读取 |
 
 ---
 
@@ -771,7 +818,7 @@ with open("gpt.pth", "wb") as f:
 
 *段落表格：漂移率徽章、内联编辑、高漂移筛选 — 逐段审查与精调译文。*
 
-### 一期功能（当前分支：`feature/ui-segment-review`）
+### 一期 — 译文精调（translate 之后）
 
 | 功能 | 说明 |
 |------|------|
@@ -782,6 +829,23 @@ with open("gpt.pth", "wb") as f:
 | **内联编辑** | 点击编辑 → 修改译文 → 仅保存 或 保存 + 重新合成 |
 | **筛选 / 排序** | 按 全部 / 高漂移 / 未合成 筛选 · 按序号或漂移率排序 |
 | **重新合并** | 编辑后触发 merge 阶段重试，重新生成 `final.mp4` |
+
+### 段落审查（translate 之前，`awaiting_review` 阶段）
+
+`asr_smart` 完成后（如启用 `segment_review` 阶段，则 LLM 先生成合并建议）任务进入 `awaiting_review`，前端会显示一个独立面板，让操作员先把切分和 ASR 错误处理掉再付翻译成本。
+
+| 控件 | 说明 |
+|------|------|
+| **AI 分段建议** 面板 | 列出每条 `segment_suggestion`（当前为 merge）：置信度、理由、涉及段落，每行可采纳 / 否决。 |
+| **🤖 ↻ 重试 ASR 分段** | Job 级「核选项」：清空所有段落和建议，重新入队 `asr_smart`。 |
+| **✂ 拆分** | 行内拆分 UI：点击文字或拖滑条选 `split_char_index`，后端按字符比例线性切分时间。 |
+| **⊕ 合并↓** | 与下一段合并。 |
+| **⏱ 调整时间** | 行内文本框 + ▶ 试听，对照 `vocals.wav` 微调 `start_ms` / `end_ms`。 |
+| **✏ 编辑原文** | Wave 1：内联 textarea + ✓ / ✕ 修正 Whisper 识别错误；只写 `source_text`，时间轴和状态保证不变。 |
+| **↻ 重新识别** | Wave 2：仅对该段窗口重跑一次 faster-whisper，结果就地替换 `source_text`；空文本会提示手动编辑而不是报错。 |
+| **✓ 确认分段，开始翻译** | 底部操作栏；调用 `POST /jobs/:id/confirm-segmentation` 入队 `translate`。 |
+
+行内的五个控件互斥——同一行同时只能打开一种编辑器（拆分 / 时间 / 编辑原文），点 ↻ 重新识别会自动关掉当前打开的那一个再发请求。
 
 ### 本地构建 UI
 

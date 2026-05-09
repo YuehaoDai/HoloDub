@@ -118,14 +118,17 @@ but if you want to hack on it, here’s the rough picture.
 - Go 1.25+, Gin, GORM.
 - Drives jobs through stages:
 
-  `media` → `separate` → `asr_smart` → `translate` → `tts_duration` → `merge`
+  `media` → `separate` → `asr_smart` → `segment_review` → `translate` → `tts_duration` → `merge`
+
+  - `segment_review` is **optional but enabled by default**: the job parks in `awaiting_review` after ASR so the operator can merge / split / edit segment boundaries (and now ASR transcripts) before translation starts. Disable with `SEGMENT_REVIEW_ENABLED=false` to auto-advance straight into `translate`.
 
 - Stores:
   - `jobs` (one per video),
   - `voice_profiles` (custom voices),
   - `speakers` (logical speakers per job),
   - `speaker_voice_bindings` (who uses which voice),
-  - `segments` (time-aligned pieces).
+  - `segments` (time-aligned pieces),
+  - `segment_suggestions` (LLM-generated merge / split hints surfaced in the review UI).
 
 - Uses Redis as task queue:
   - Job-level stage tasks (e.g. `job:123:stage:asr_smart`).
@@ -147,9 +150,12 @@ but if you want to hack on it, here’s the rough picture.
 - HTTP endpoints (examples):
   - `POST /asr/smart_split`  
     → segments with `start_ms`, `end_ms`, `text`, `speaker_label`, `split_reason`.
+  - `POST /asr/transcribe_segment`  
+    → re-runs Whisper on a single `[start_ms, end_ms]` window so the review UI can fix one segment without redoing the whole job.
   - `POST /tts/run`  
     → takes `text` + `target_duration_sec` + `voice_config` + `output_relpath`,  
     → returns saved audio path + actual duration.
+  - `GET /healthz` (liveness, cheap) and `GET /readyz` (readiness; returns 503 while IndexTTS2 is still warming up).
 
 ### Shared storage
 
@@ -186,7 +192,15 @@ but if you want to hack on it, here’s the rough picture.
     - `original_duration_ms` (generated column)
     - `src_text`, `tgt_text`
     - `tts_audio_path`, `tts_duration_ms`
-    - `split_reason` (by punctuation, silence, max-duration, …)
+    - `voice_profile_id` (per-segment override; falls back to speaker binding)
+    - `status` (typed lifecycle: `pending` → `translated` → `synthesized`, with explicit transition validation)
+    - `meta` JSON (segment-level quality tag etc.)
+    - `split_reason` (`punctuation` / `silence_gap` / `max_duration` / `speaker_change` / `manual_split` / `merged` / …)
+
+- **segment_suggestions**
+  - LLM-generated review hints emitted by the `segment_review` stage.
+  - Each row points at one or more existing segments and proposes a `merge` (or future `split`) action with a confidence score and a human-readable reason.
+  - Status transitions: `pending` → `accepted` (applied to `segments`) / `rejected` (left untouched).
 
 ---
 
@@ -215,8 +229,13 @@ but if you want to hack on it, here’s the rough picture.
 - [x] **Full 79-minute video validated**: 626 segments, English → Chinese, complete pipeline end-to-end
 - [ ] Real vocal / BGM separation (Demucs, requires `ML_PYTHON_EXTRAS=real`)
 - [ ] Speaker diarization (Pyannote, requires HuggingFace token)
-- [x] **BigVGAN CUDA kernel on Blackwell / sm_120**: switched to `nvidia/cuda:12.8.0-devel` image + patched unused `#include <cuda_profiler_api.h>` + pre-compiled `.so` baked into the image layer; RTX 5080 now uses the native CUDA kernel
-- [ ] IndexTTS2 eager model pre-loading at startup (cold-start ~6 min on RTX 5080; see Known Issues)
+- [x] **BigVGAN CUDA kernel on Blackwell / sm_120**: switched to `nvidia/cuda:12.8.0-devel` image + patched unused `#include <cuda_profiler_api.h>` + pre-compiled `.so` baked into the image layer via `docker/precompile_bigvgan.py` (monkey-patches `torch.cuda` so the build-time compile lands in IndexTTS' exact site-packages cache directory); RTX 5080 loads the cached kernel in <5 s instead of JIT-compiling at runtime
+- [x] **Segment-review stage (`segment_review`)**: LLM generates merge / split suggestions, job parks in `awaiting_review`; user can accept / reject suggestions, manually merge / split / re-time segments, and explicitly call `POST /jobs/:id/confirm-segmentation` to advance to `translate`
+- [x] **Per-segment ASR transcript editing (Wave 1)**: `PATCH /jobs/:id/segments/:segmentId` with `src_text` lets reviewers fix Whisper recognition errors on a single row (8 KiB cap, awaiting-review only); writes only `source_text + updated_at`, never touches timing or status
+- [x] **Per-segment ASR re-transcription (Wave 2)**: `POST /jobs/:id/segments/:segmentId/retry-asr` clips the segment's `[start_ms, end_ms]` window out of `vocals.wav` with ffmpeg and re-runs faster-whisper, so a single misrecognised segment can be fixed without rerunning the whole job-level retry-asr
+- [x] **Standalone `/readyz` probe + IndexTTS2 warm-up watchdog**: `/readyz` returns 503 while `tts_warmup_status` is `loading` or `error`; a watchdog daemon thread heartbeats every 30 s, marks warm-up `error` if the loader thread vanishes (segfault / OOM-kill) or exceeds a 30-min hard timeout, and proactively flushes logging handlers
+- [x] **IndexTTS2 eager model pre-loading at startup**: `INDEXTTS2_INLINE=true` triggers background warm-up during ml-service lifespan, fronted by an event-and-state-machine protocol so a crashing loader can never strand subsequent TTS requests with an unreleased mutex
+- [x] **Observability + CI hardening**: `golangci-lint` / `ruff` / `mypy` / `eslint` gates, `govulncheck` / `pip-audit` / Trivy / gitleaks security scans, Dependabot, `docs/openapi.yaml` (Redocly-linted), Prometheus metrics (`holodub_external_calls_total`, `holodub_ml_*`), Grafana dashboard + Prometheus rules under `docs/observability/`, Helm chart skeleton, multi-arch goreleaser config
 - [ ] Use a Chinese reference audio clip for better prosody alignment (current default uses English lecture audio)
 
 If you’re interested in hacking on it, PRs and discussions are very welcome.
@@ -266,7 +285,15 @@ OPENAI_MODEL=deepseek-chat
 ML_PYTHON_EXTRAS=real
 ML_ASR_BACKEND=faster_whisper
 FASTER_WHISPER_MODEL=large-v3   # recommended; use medium if VRAM < 6 GB
-ML_TTS_BACKEND=edge_tts         # free, no API key, multiple Chinese voices
+
+# Default and recommended TTS backend: IndexTTS2 (zero-shot voice cloning,
+# duration-aware, runs inline inside ml-service).
+ML_TTS_BACKEND=indextts2
+INDEXTTS2_INLINE=true
+
+# Fallback when no GPU is available: Edge-TTS (Microsoft, free, no API key).
+# All speakers share one preset voice, no zero-shot cloning.
+# ML_TTS_BACKEND=edge_tts
 ```
 
 Rebuild the ML service image (first time ~10 min, mostly PyTorch download):
@@ -310,10 +337,9 @@ docker compose down                       # stop and remove containers
 docker compose --env-file .env up -d      # restart with explicit env file (recommended)
 ```
 
-### Edge-TTS voice options (interim)
+### Edge-TTS voice options (no-GPU fallback)
 
-> Edge-TTS is a **temporary TTS solution** to validate the full pipeline before IndexTTS2 is wired in.  
-> It does not support zero-shot voice cloning; all speakers use the same preset voice.
+> Edge-TTS is the **fallback TTS backend** for environments without a CUDA GPU. It does not support zero-shot voice cloning; every speaker shares one preset voice. For real dubbing work you almost certainly want IndexTTS2 instead — see the dedicated section below.
 
 Default is `zh-CN-XiaoxiaoNeural` (female, conversational). Override with `EDGE_TTS_VOICE` in `.env`:
 
@@ -742,35 +768,56 @@ with open("gpt.pth", "wb") as f:
 
 ### .env quick reference
 
+#### Backend selection
+
 | Variable | Smoke default | Real backends |
 |----------|---------------|---------------|
 | `TRANSLATION_PROVIDER` | `mock` | `openai_compatible` |
 | `ML_ASR_BACKEND` | `mock` | `faster_whisper` |
-| `ML_TTS_BACKEND` | `silence` | `edge_tts` → `indextts2` |
+| `ML_TTS_BACKEND` | `silence` | `indextts2` (preferred) · `edge_tts` (no-GPU fallback) |
 | `ML_VAD_BACKEND` | `none` | `pyannote` (optional) |
 | `ML_SEPARATOR_BACKEND` | `ffmpeg_stub` | `demucs` (optional) |
 | `ML_PYTHON_EXTRAS` | _(empty)_ | `real` |
-| `INDEXTTS2_INLINE` | `false` | `true` (when `ML_TTS_BACKEND=indextts2`) |
-| `INDEXTTS2_MODEL_DIR` | _(empty, auto-download)_ | `/data/models/indextts2` |
-| `INDEXTTS2_USE_EMO_TEXT` | `false` | `true` (needs Qwen3 emo model) |
-| `INDEXTTS2_DEFAULT_VOICE_RELPATH` | _(empty)_ | `voices/ref.wav` — **use a Chinese clip** for best results |
-| `RETRANSLATION_ENABLED` | `true` | `true` / `false` |
-| `RETRANSLATION_MODEL` | `kimi-k2.5` | any model on same `OPENAI_BASE_URL` |
-| `RETRANSLATION_DRIFT_THRESHOLD` | `0.06` | max allowed drift (6%); triggers re-translation if exceeded |
-| `RETRANSLATION_MAX_ATTEMPTS` | `10` | max re-translation attempts per segment |
-| `TTS_CONCURRENCY` | `2` | parallel TTS requests from worker |
-| `GPU_CONCURRENCY` | `2` | parallel GPU inferences in ml-service (requires ~16 GB VRAM) |
-| `STAGE_TIMEOUT_SECONDS` | `14400` | raise for very long videos |
 
----
+#### IndexTTS2
 
-## 🛠 Tech stack
+| Variable | Default | Notes |
+|----------|---------|-------|
+| `INDEXTTS2_INLINE` | `false` | `true` when `ML_TTS_BACKEND=indextts2` so the model loads inside ml-service |
+| `INDEXTTS2_MODEL_DIR` | _(empty, auto-download)_ | `/data/models/indextts2` to use a local checkpoint |
+| `INDEXTTS2_USE_EMO_TEXT` | `false` | `true` enables the Qwen3-based 8-dim emotion vector inference from translated text |
+| `INDEXTTS2_DEFAULT_VOICE_RELPATH` | _(empty)_ | `voices/ref.wav` — **use a Chinese clip** for best prosody |
+| `INDEXTTS2_USE_CUDA_KERNEL` | `false` | `true` only with a freshly built image where `docker/precompile_bigvgan.py` baked the BigVGAN `.so` into site-packages; without it the runtime falls back to PyTorch native (identical audio, ~10–15 % slower) |
 
-- **Control plane**: Go, Gin, GORM, Redis, PostgreSQL  
-- **ML service**: FastAPI, PyTorch, Demucs/UVR5, Faster-Whisper, Pyannote, IndexTTS2  
-- **Orchestration**: Docker Compose  
-- **Translation**: Qwen / DeepSeek / pluggable LLM providers  
-- **Web UI** (Phase 1): Vue 3 + Vite + Tailwind CSS — dark sidebar, segment drift review, inline TTS edit & re-synthesize  
+#### Segment review + ASR splitter knobs
+
+| Variable | Default | Notes |
+|----------|---------|-------|
+| `SEGMENT_REVIEW_ENABLED` | `true` | `false` skips the LLM merge-suggestion stage and auto-advances `asr_smart → translate` |
+| `SEGMENT_REVIEW_MODEL` | _(falls back to `RETRANSLATION_MODEL`, then `OPENAI_MODEL`)_ | Override only if you want to use a different model just for the review prompts |
+| `HARD_MAX_SEGMENT_SEC` | `45` | Hard ceiling enforced by the post-merge passes (no merged segment may exceed this) — also caps `_merge_close_gap_segments` so connected speech is split here |
+| `CLOSE_GAP_MS` | `800` | Inter-segment gap threshold for the close-gap merge pass; lowered from the historic `1500 ms` to avoid over-aggressive chaining |
+| `ASR_END_PAD_MS` | `500` | Tail padding added to each segment's `end_ms` to recover Whisper's under-reported trailing phonemes |
+
+#### Re-translation loop
+
+| Variable | Default | Notes |
+|----------|---------|-------|
+| `RETRANSLATION_ENABLED` | `true` | Disable to skip the drift-based re-translation feedback loop entirely |
+| `RETRANSLATION_MODEL` | `kimi-k2.5` | Any model on the same `OPENAI_BASE_URL` |
+| `RETRANSLATION_DRIFT_THRESHOLD` | `0.06` | Max allowed `|actual − target| / target`; triggers re-translation if exceeded |
+| `RETRANSLATION_MAX_ATTEMPTS` | `10` | Max re-translation attempts per segment |
+
+#### Concurrency, timeouts and security
+
+| Variable | Default | Notes |
+|----------|---------|-------|
+| `TTS_CONCURRENCY` | `2` | Parallel TTS requests from worker |
+| `GPU_CONCURRENCY` | `2` | Parallel GPU inferences in ml-service (requires ~16 GB VRAM) |
+| `MODEL_REGISTRY_MAX_MODELS` | _(empty, no eviction)_ | Optional LRU cap on the ml-service `ModelRegistry` |
+| `STAGE_TIMEOUT_SECONDS` | `14400` | Raise for very long videos |
+| `API_AUTH_TOKEN` | _(empty)_ | **Required when `APP_ENV=production`** — the API refuses to start without it; non-production logs a single warning and continues open |
+| `TRUSTED_PROXIES` | _(empty)_ | Set to `127.0.0.1` (or the actual proxy IP) when fronting with Nginx / Caddy so client IPs are read from `X-Forwarded-For` |
 
 ---
 
@@ -782,17 +829,34 @@ The operator UI (`/ui/`) has been rebuilt as a Vue 3 SPA with an **Open WebUI-st
 
 *Segment table with drift badges, inline edit, and high-drift filter — review and refine translations per segment.*
 
-### Phase 1 features (current branch: `feature/ui-segment-review`)
+### Phase 1 — translation review (post-translate)
 
 | Feature | Description |
 |---------|-------------|
-| **Job sidebar** | Real-time job list with status badges, auto-refreshes every 10s |
+| **Job sidebar** | Real-time job list with status badges, auto-refreshes every 10 s |
 | **Segment table** | All segments with source text, translated text, and drift % badge |
 | **Drift badges** | Green < 5 % · Yellow 5–15 % · Red > 15 % |
 | **Audio playback** | Inline `<audio>` player per synthesized segment (lazy-loads blob) |
 | **Inline edit** | Click Edit → modify translated text → Save or Save + Re-synthesize |
 | **Filter / sort** | Filter by All / High-drift / Unsynthesized · Sort by ordinal or drift % |
 | **Re-merge** | Trigger merge stage retry after editing to regenerate `final.mp4` |
+
+### Segment review (pre-translate, `awaiting_review` stage)
+
+A separate dashboard appears while `job.status === 'awaiting_review'`. It is shown automatically right after `asr_smart` (and after the `segment_review` LLM stage if enabled) so reviewers can fix segmentation and ASR errors **before** translation costs are paid.
+
+| Control | Description |
+|---------|-------------|
+| **AI 分段建议** panel | Lists every `segment_suggestion` (currently merge proposals) with confidence, reason and the segments involved; per-row 采纳 / 否决 buttons. |
+| **🤖 ↻ 重试 ASR 分段** | Job-level "nuclear" reset: clears all segments + suggestions and re-queues the `asr_smart` stage. |
+| **✂ 拆分** | Per-row split UI: click the source-text characters or drag the slider to choose `split_char_index`; backend cuts the segment in two with linearly interpolated timing. |
+| **⊕ 合并↓** | Per-row "merge with next" button. |
+| **⏱ 调整时间** | Per-row textbox + ▶ 试听 to fine-tune `start_ms` / `end_ms` against the original `vocals.wav`. |
+| **✏ 编辑原文** | Wave 1: inline textarea + ✓ / ✕ to fix Whisper recognition errors; writes only `source_text` (start_ms, end_ms, status are guaranteed untouched). |
+| **↻ 重新识别** | Wave 2: re-runs faster-whisper just on this segment's window; the result replaces `source_text` in place. Empty transcripts surface a hint to edit manually instead of erroring. |
+| **✓ 确认分段，开始翻译** | Bottom action bar; calls `POST /jobs/:id/confirm-segmentation` to enqueue `translate`. |
+
+The five per-row controls are mutually exclusive — only one inline editor (split / timing / transcript edit) can be open per row at a time, and re-recognise auto-closes whichever is open before issuing the request.
 
 ### To build the UI locally
 
