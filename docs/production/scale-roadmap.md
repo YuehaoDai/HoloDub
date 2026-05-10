@@ -1,5 +1,9 @@
 # Scale Roadmap
 
+> The "Multi-tenant isolation" section below is the source of `OPT-303`
+> in [../roadmap/optimization-roadmap.md](../roadmap/optimization-roadmap.md).
+> Other sections are scale-out concerns tracked separately.
+
 ## P2 roadmap
 
 ### Multi-node execution

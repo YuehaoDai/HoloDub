@@ -8,7 +8,50 @@ once we cut a tagged release.
 
 ## [Unreleased]
 
+> Forward-looking optimization items (planned / in_progress) are tracked
+> separately in [docs/roadmap/optimization-roadmap.md](docs/roadmap/optimization-roadmap.md).
+> Items only land in this changelog after they ship and pass L4 rollout;
+> each entry below should reference its `(OPT-XXX)` ID when applicable.
+
 ### Added
+
+- **Per-operation LLM token observability (OPT-001)**: every LLM call now
+  emits `holodub_llm_input_tokens_total`, `holodub_llm_output_tokens_total`
+  and `holodub_llm_cached_tokens_total` with `{model, operation}` labels
+  (operations: `translate / retranslate / retranslate_thinking / summary /
+  review / judge`). The `chatCompletionResponse.Usage` parser accepts all
+  three known cache field shapes (`cached_tokens` / `prompt_cache_hit_tokens`
+  / nested `prompt_tokens_details.cached_tokens`) so DashScope, DeepSeek and
+  OpenAI-native providers all surface cache hits identically. The translation
+  system prompt is now byte-stable across segments within a single job
+  (assembled by the new pure `buildTranslateSystemPrompt`), satisfying the
+  prefix-match requirement of every provider's auto-cache. A new worker-side
+  `:8081/metrics` endpoint exposes the worker process' own counters separately
+  from the api process. See `tests/quality/baseline-post-p0.json` for the
+  validation snapshot.
+- **Function calling for segment_review (OPT-003)**: LLM-merged
+  segment-review suggestions now flow through a strict OpenAI-compatible
+  `tools` + `tool_choice` path (`emit_segment_suggestions(suggestions[...])`)
+  instead of the legacy "describe JSON in prompt + json.Unmarshal" route. A
+  failed tool call gracefully falls back to the legacy parser and bumps
+  `holodub_llm_strict_parse_failed_total{operation="review"}` so a sustained
+  regression is visible on a dashboard. Gated by
+  `SEGMENT_REVIEW_USE_TOOLS=false` (default off during gradual rollout).
+  The supporting `chatMessage / toolDef / functionDef / toolCall` named types
+  and `doChatTool` helper are reused by OPT-002.
+- **LLM-as-Judge in observe-only mode (OPT-002)**: every TTS segment now
+  receives an asynchronous fidelity / fluency / coherence score via
+  `JudgeFidelity` (strict tool-call schema). The verdict is recorded in the
+  new `segments.judge_score / judge_meta` columns and surfaced as an "AI 评分"
+  column in the segment table, but does NOT yet influence retry decisions —
+  that integration is reserved for OPT-201 (SegmentAgent ReAct refactor).
+  Gated by `JUDGE_MODEL=""` (default disabled). When enabled (e.g.
+  `JUDGE_MODEL=qwen-turbo`), the judge call uses a detached background
+  context so a worker SIGTERM mid-flight does not silently lose the verdict.
+  Validated end-to-end on the 60s test video: 5/5 segments judged, 1.8s
+  average judge latency, judge correctly identified a real semantic-loss
+  segment that the duration-only retry loop kept thrashing on (job 129
+  segment 4, "missing 'monitoring' translation" issue).
 
 - **Segment-review per-segment ASR transcript correction**: each row in
   the awaiting_review UI now carries an ``✏ 编辑原文`` control (manual
