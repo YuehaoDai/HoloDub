@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log/slog"
 
 	apihttp "holodub/internal/http"
@@ -34,6 +35,14 @@ func main() {
 	if cfg.AutoMigrateOnStart {
 		if err := st.AutoMigrate(); err != nil {
 			logger.Error("migrate database failed", "error", err)
+			panic(err)
+		}
+		// OPT-401: bring legacy databases up to the Episode/Chapter schema
+		// (no-op when every Job already has a non-zero episode_id). Runs
+		// inside a single transaction so partial failure leaves the DB
+		// untouched.
+		if err := st.RunBackfillIfNeeded(context.Background()); err != nil {
+			logger.Error("episode back-fill failed", "error", err)
 			panic(err)
 		}
 	} else {

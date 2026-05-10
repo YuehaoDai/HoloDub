@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"holodub/internal/models"
 
@@ -128,5 +129,282 @@ func TestUpdateSegmentSourceText_MissingSegmentReturnsNotFound(t *testing.T) {
 	err := st.UpdateSegmentSourceText(ctx, jobID, 999999, "文本")
 	if !errors.Is(err, gorm.ErrRecordNotFound) {
 		t.Fatalf("expected ErrRecordNotFound, got %v", err)
+	}
+}
+
+// ── Episode / Chapter (OPT-401) ──────────────────────────────────────────────
+
+// TestCreateJob_AutoCreatesEpisode covers the backwards-compatible default
+// path: callers that do not supply an episode_id get a 1-chapter Episode
+// transparently allocated and linked.
+func TestCreateJob_AutoCreatesEpisode(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+
+	job := &models.Job{
+		Name:           "auto-ep",
+		SourceLanguage: "ja",
+		TargetLanguage: "zh",
+		InputRelPath:   "uploads/x.mp4",
+	}
+	if err := st.CreateJob(ctx, job); err != nil {
+		t.Fatalf("create job: %v", err)
+	}
+	if job.EpisodeID == 0 {
+		t.Fatal("EpisodeID should be auto-assigned")
+	}
+	if job.ChapterOrdinal != 1 {
+		t.Fatalf("ChapterOrdinal expected 1 (1-chapter shortcut), got %d", job.ChapterOrdinal)
+	}
+
+	ep, err := st.GetEpisode(ctx, job.EpisodeID)
+	if err != nil {
+		t.Fatalf("get episode: %v", err)
+	}
+	if ep.TenantKey != "default" {
+		t.Fatalf("tenant_key expected 'default', got %q", ep.TenantKey)
+	}
+	if ep.SourceVideoRelPath != "uploads/x.mp4" {
+		t.Fatalf("source_video_rel_path mismatch: %q", ep.SourceVideoRelPath)
+	}
+	if ep.TotalChapters != 1 {
+		t.Fatalf("TotalChapters expected 1, got %d", ep.TotalChapters)
+	}
+	if ep.Status != models.EpisodeStatusPending {
+		t.Fatalf("Status expected pending, got %q", ep.Status)
+	}
+	if len(ep.Chapters) != 1 || ep.Chapters[0].ID != job.ID {
+		t.Fatalf("chapters preload broken: %+v", ep.Chapters)
+	}
+}
+
+// TestCreateJob_WithExistingEpisodeAssignsNextOrdinal covers the OPT-403
+// fan-out path (caller supplies episode_id; we auto-pick the next ordinal).
+func TestCreateJob_WithExistingEpisodeAssignsNextOrdinal(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+
+	ep := &models.Episode{
+		TenantKey:      "default",
+		Name:           "long",
+		SourceLanguage: "ja",
+		TargetLanguage: "zh",
+		TotalChapters:  3,
+		Status:         models.EpisodeStatusPending,
+	}
+	if err := st.CreateEpisode(ctx, ep); err != nil {
+		t.Fatalf("create episode: %v", err)
+	}
+
+	for i := 0; i < 3; i++ {
+		job := &models.Job{
+			Name:           "chapter",
+			SourceLanguage: "ja",
+			TargetLanguage: "zh",
+			InputRelPath:   "uploads/long.mp4",
+			EpisodeID:      ep.ID,
+		}
+		if err := st.CreateJob(ctx, job); err != nil {
+			t.Fatalf("create chapter job %d: %v", i, err)
+		}
+		if job.ChapterOrdinal != i+1 {
+			t.Fatalf("expected ChapterOrdinal=%d, got %d", i+1, job.ChapterOrdinal)
+		}
+	}
+
+	chapters, err := st.GetEpisodeChapters(ctx, ep.ID)
+	if err != nil {
+		t.Fatalf("get chapters: %v", err)
+	}
+	if len(chapters) != 3 {
+		t.Fatalf("expected 3 chapters, got %d", len(chapters))
+	}
+	for i, ch := range chapters {
+		if ch.ChapterOrdinal != i+1 {
+			t.Fatalf("chapter[%d] ordinal = %d, expected %d", i, ch.ChapterOrdinal, i+1)
+		}
+	}
+}
+
+// TestCreateJob_WithMissingEpisodeFails ensures we do not silently swallow
+// a stale or fabricated episode_id.
+func TestCreateJob_WithMissingEpisodeFails(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+
+	job := &models.Job{
+		Name:           "bad",
+		SourceLanguage: "ja",
+		TargetLanguage: "zh",
+		EpisodeID:      99999,
+	}
+	if err := st.CreateJob(ctx, job); err == nil {
+		t.Fatalf("expected error for missing episode")
+	}
+}
+
+// TestCreateJob_RejectsTerminalEpisode prevents racing a terminal episode
+// against a late-arriving fan-out request.
+func TestCreateJob_RejectsTerminalEpisode(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+
+	ep := &models.Episode{
+		TenantKey:      "default",
+		Name:           "done",
+		SourceLanguage: "ja",
+		TargetLanguage: "zh",
+		Status:         models.EpisodeStatusCompleted,
+	}
+	if err := st.CreateEpisode(ctx, ep); err != nil {
+		t.Fatalf("create episode: %v", err)
+	}
+
+	job := &models.Job{
+		Name:           "late",
+		SourceLanguage: "ja",
+		TargetLanguage: "zh",
+		EpisodeID:      ep.ID,
+	}
+	if err := st.CreateJob(ctx, job); err == nil {
+		t.Fatalf("expected error appending chapter to terminal episode")
+	}
+}
+
+// TestUpdateEpisodeStatus exercises both legal and illegal transitions
+// against the actual store wiring (DB row + state-machine validation).
+func TestUpdateEpisodeStatus(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+
+	ep := &models.Episode{
+		TenantKey:      "default",
+		Name:           "ep",
+		SourceLanguage: "ja",
+		TargetLanguage: "zh",
+		Status:         models.EpisodeStatusPending,
+	}
+	if err := st.CreateEpisode(ctx, ep); err != nil {
+		t.Fatalf("create episode: %v", err)
+	}
+
+	if err := st.UpdateEpisodeStatus(ctx, ep.ID, models.EpisodeStatusRunning, ""); err != nil {
+		t.Fatalf("pending -> running: %v", err)
+	}
+	if err := st.UpdateEpisodeStatus(ctx, ep.ID, models.EpisodeStatusCompleted, ""); err != nil {
+		t.Fatalf("running -> completed (1-chapter shortcut): %v", err)
+	}
+	got, err := st.GetEpisode(ctx, ep.ID)
+	if err != nil {
+		t.Fatalf("get episode: %v", err)
+	}
+	if got.Status != models.EpisodeStatusCompleted {
+		t.Fatalf("status not persisted: %q", got.Status)
+	}
+	if got.CompletedAt == nil {
+		t.Fatal("CompletedAt should be set when transitioning to completed")
+	}
+
+	if err := st.UpdateEpisodeStatus(ctx, ep.ID, models.EpisodeStatusRunning, ""); err == nil {
+		t.Fatal("expected error transitioning out of terminal completed")
+	}
+}
+
+// TestRunBackfillIfNeeded validates the legacy-schema rescue path: orphan
+// jobs (episode_id IS NULL / 0) get 1:1 Episodes whose ids equal the job
+// ids, and re-running the back-fill is a no-op.
+func TestRunBackfillIfNeeded(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+
+	// Insert two orphan jobs by bypassing CreateJob (simulates pre-OPT-401
+	// rows surviving an in-place schema upgrade).
+	now := time.Now().UTC()
+	completedAt := now.Add(-time.Hour)
+	orphans := []models.Job{
+		{
+			Name:           "legacy-completed",
+			TenantKey:      "default",
+			Status:         models.JobStatusCompleted,
+			CurrentStage:   models.StageMerge,
+			SourceLanguage: "ja",
+			TargetLanguage: "zh",
+			InputRelPath:   "uploads/legacy1.mp4",
+			OutputRelPath:  "jobs/1/final.mp4",
+			CreatedAt:      now.Add(-2 * time.Hour),
+			UpdatedAt:      now.Add(-time.Hour),
+			CompletedAt:    &completedAt,
+		},
+		{
+			Name:           "legacy-running",
+			TenantKey:      "tenantA",
+			Status:         models.JobStatusRunning,
+			CurrentStage:   models.StageTTSDuration,
+			SourceLanguage: "en",
+			TargetLanguage: "zh",
+			InputRelPath:   "uploads/legacy2.mp4",
+			CreatedAt:      now.Add(-30 * time.Minute),
+			UpdatedAt:      now.Add(-5 * time.Minute),
+		},
+	}
+	if err := st.db.Create(&orphans).Error; err != nil {
+		t.Fatalf("seed orphan jobs: %v", err)
+	}
+	// Force episode_id back to NULL — GORM AutoMigrate's default '1' would
+	// otherwise hide the test pre-condition. (sqlite stores NULL via Update.)
+	if err := st.db.Model(&models.Job{}).
+		Where("id IN ?", []uint{orphans[0].ID, orphans[1].ID}).
+		Update("episode_id", nil).Error; err != nil {
+		t.Fatalf("null-out episode_id: %v", err)
+	}
+
+	if err := st.RunBackfillIfNeeded(ctx); err != nil {
+		t.Fatalf("run backfill: %v", err)
+	}
+
+	for _, oj := range orphans {
+		ep, err := st.GetEpisode(ctx, oj.ID)
+		if err != nil {
+			t.Fatalf("get back-filled episode for job %d: %v", oj.ID, err)
+		}
+		if ep.ID != oj.ID {
+			t.Fatalf("episode id mismatch: expected %d, got %d", oj.ID, ep.ID)
+		}
+		if ep.TenantKey != oj.TenantKey {
+			t.Fatalf("tenant_key mismatch: %q vs %q", ep.TenantKey, oj.TenantKey)
+		}
+		if ep.SourceVideoRelPath != oj.InputRelPath {
+			t.Fatalf("source_video_rel_path mismatch: %q vs %q", ep.SourceVideoRelPath, oj.InputRelPath)
+		}
+		var refreshed models.Job
+		if err := st.db.First(&refreshed, oj.ID).Error; err != nil {
+			t.Fatalf("refresh job %d: %v", oj.ID, err)
+		}
+		if refreshed.EpisodeID != oj.ID {
+			t.Fatalf("job.episode_id not back-filled: got %d, expected %d", refreshed.EpisodeID, oj.ID)
+		}
+		if refreshed.ChapterOrdinal != 1 {
+			t.Fatalf("job.chapter_ordinal not back-filled: got %d", refreshed.ChapterOrdinal)
+		}
+	}
+
+	// Status mapping spot-checks.
+	ep1, _ := st.GetEpisode(ctx, orphans[0].ID)
+	if ep1.Status != models.EpisodeStatusCompleted {
+		t.Fatalf("legacy completed -> %q (want completed)", ep1.Status)
+	}
+	ep2, _ := st.GetEpisode(ctx, orphans[1].ID)
+	if ep2.Status != models.EpisodeStatusRunning {
+		t.Fatalf("legacy running -> %q (want running)", ep2.Status)
+	}
+
+	// Re-running back-fill must be a no-op.
+	before, _ := st.ListEpisodes(ctx)
+	if err := st.RunBackfillIfNeeded(ctx); err != nil {
+		t.Fatalf("idempotent run: %v", err)
+	}
+	after, _ := st.ListEpisodes(ctx)
+	if len(after) != len(before) {
+		t.Fatalf("re-run created episodes: before=%d after=%d", len(before), len(after))
 	}
 }

@@ -71,6 +71,7 @@ func (s *Store) Ping(ctx context.Context) error {
 
 func (s *Store) AutoMigrate() error {
 	return s.db.AutoMigrate(
+		&models.Episode{},
 		&models.Job{},
 		&models.VoiceProfile{},
 		&models.Speaker{},
@@ -82,6 +83,21 @@ func (s *Store) AutoMigrate() error {
 	)
 }
 
+// CreateJob inserts a Job row, transparently allocating its enclosing
+// Episode when the caller did not supply one.
+//
+// OPT-401 contract:
+//   - When job.EpisodeID == 0 we open a transaction, create a 1-chapter
+//     pending Episode (carrying the same TenantKey / Name / language pair
+//     and SourceVideoRelPath = job.InputRelPath), set job.EpisodeID to the
+//     fresh episode, force ChapterOrdinal = 1, then insert the job.
+//   - When job.EpisodeID != 0 we validate that the episode exists, belongs
+//     to the same tenant, is still active (not in a terminal state), and
+//     auto-pick the next ChapterOrdinal when zero. This branch is reserved
+//     for OPT-403 fan-out and is fully covered by store_test.go.
+//
+// In both branches the entire write happens in a single GORM transaction so
+// a failure leaves no orphan episodes or jobs behind.
 func (s *Store) CreateJob(ctx context.Context, job *models.Job) error {
 	if job.Status == "" {
 		job.Status = models.JobStatusPending
@@ -92,7 +108,51 @@ func (s *Store) CreateJob(ctx context.Context, job *models.Job) error {
 	if job.TenantKey == "" {
 		job.TenantKey = "default"
 	}
-	return s.db.WithContext(ctx).Create(job).Error
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if job.EpisodeID == 0 {
+			ep := models.Episode{
+				TenantKey:          job.TenantKey,
+				Name:               job.Name,
+				SourceVideoRelPath: job.InputRelPath,
+				SourceLanguage:     job.SourceLanguage,
+				TargetLanguage:     job.TargetLanguage,
+				TotalChapters:      1,
+				Status:             models.EpisodeStatusPending,
+			}
+			if err := tx.Create(&ep).Error; err != nil {
+				return fmt.Errorf("auto-create episode: %w", err)
+			}
+			job.EpisodeID = ep.ID
+			if job.ChapterOrdinal == 0 {
+				job.ChapterOrdinal = 1
+			}
+			return tx.Create(job).Error
+		}
+
+		var ep models.Episode
+		if err := tx.First(&ep, job.EpisodeID).Error; err != nil {
+			return fmt.Errorf("episode %d: %w", job.EpisodeID, err)
+		}
+		if ep.TenantKey != "" && ep.TenantKey != job.TenantKey {
+			return fmt.Errorf("episode %d belongs to tenant %q, not %q",
+				ep.ID, ep.TenantKey, job.TenantKey)
+		}
+		if ep.Status.IsTerminal() {
+			return fmt.Errorf("episode %d is in terminal status %q; cannot append chapter",
+				ep.ID, ep.Status)
+		}
+		if job.ChapterOrdinal == 0 {
+			var maxOrdinal int
+			if err := tx.Model(&models.Job{}).
+				Where("episode_id = ?", job.EpisodeID).
+				Select("COALESCE(MAX(chapter_ordinal), 0)").
+				Scan(&maxOrdinal).Error; err != nil {
+				return fmt.Errorf("compute next chapter ordinal: %w", err)
+			}
+			job.ChapterOrdinal = maxOrdinal + 1
+		}
+		return tx.Create(job).Error
+	})
 }
 
 func (s *Store) ListJobs(ctx context.Context) ([]models.Job, error) {
@@ -101,6 +161,208 @@ func (s *Store) ListJobs(ctx context.Context) ([]models.Job, error) {
 		Order("id desc").
 		Find(&jobs).Error
 	return jobs, err
+}
+
+// ── Episode CRUD (OPT-401) ────────────────────────────────────────────────────
+
+// CreateEpisode inserts an Episode row. Most callers should rely on
+// Store.CreateJob's transactional auto-creation path instead — this
+// helper is exposed primarily for OPT-403 chapterize and back-fill.
+func (s *Store) CreateEpisode(ctx context.Context, ep *models.Episode) error {
+	if ep.Status == "" {
+		ep.Status = models.EpisodeStatusPending
+	}
+	if ep.TenantKey == "" {
+		ep.TenantKey = "default"
+	}
+	if ep.TotalChapters == 0 {
+		ep.TotalChapters = 1
+	}
+	return s.db.WithContext(ctx).Create(ep).Error
+}
+
+// GetEpisode returns a single Episode with its chapter Jobs preloaded
+// (ordered by chapter_ordinal asc). Returns gorm.ErrRecordNotFound when
+// the episode does not exist.
+func (s *Store) GetEpisode(ctx context.Context, id uint) (*models.Episode, error) {
+	var ep models.Episode
+	err := s.db.WithContext(ctx).
+		Preload("Chapters", func(db *gorm.DB) *gorm.DB {
+			return db.Order("chapter_ordinal asc, id asc")
+		}).
+		First(&ep, id).Error
+	if err != nil {
+		return nil, err
+	}
+	return &ep, nil
+}
+
+// ListEpisodes returns all Episodes ordered by id desc (newest first).
+// Tenant filtering is performed by the HTTP handler — the store layer
+// returns everything to keep the same shape as ListJobs.
+func (s *Store) ListEpisodes(ctx context.Context) ([]models.Episode, error) {
+	var eps []models.Episode
+	err := s.db.WithContext(ctx).
+		Order("id desc").
+		Find(&eps).Error
+	return eps, err
+}
+
+// GetEpisodeChapters returns the chapter Jobs of one Episode ordered by
+// chapter_ordinal asc. Returned slice may be empty (legal for a freshly
+// created Episode whose chapters have not been fanned out yet).
+func (s *Store) GetEpisodeChapters(ctx context.Context, episodeID uint) ([]models.Job, error) {
+	var jobs []models.Job
+	err := s.db.WithContext(ctx).
+		Where("episode_id = ?", episodeID).
+		Order("chapter_ordinal asc, id asc").
+		Find(&jobs).Error
+	return jobs, err
+}
+
+// UpdateEpisodeStatus transitions an Episode from its current status to the
+// requested target, validating the move via EpisodeStatus.Transition. The
+// optional errMsg is recorded only when transitioning to EpisodeStatusFailed
+// and is otherwise ignored.
+//
+// Returns the validation error (with the current status string) when the
+// transition is invalid, so callers can decide whether to log-and-skip or
+// hard-fail.
+func (s *Store) UpdateEpisodeStatus(ctx context.Context, id uint, to models.EpisodeStatus, errMsg string) error {
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var ep models.Episode
+		if err := tx.First(&ep, id).Error; err != nil {
+			return err
+		}
+		if _, err := ep.Status.Transition(to); err != nil {
+			return err
+		}
+		now := time.Now().UTC()
+		updates := map[string]any{
+			"status":     to,
+			"updated_at": now,
+		}
+		if to == models.EpisodeStatusCompleted {
+			updates["completed_at"] = &now
+		}
+		if to == models.EpisodeStatusFailed && errMsg != "" {
+			updates["error_message"] = errMsg
+		}
+		return tx.Model(&models.Episode{}).Where("id = ?", id).Updates(updates).Error
+	})
+}
+
+// RunBackfillIfNeeded brings legacy databases (created before OPT-401) up to
+// the new Episode/Chapter schema. It is safe to call on every startup:
+//
+//   - If every existing Job already has a non-zero EpisodeID and the
+//     episodes table is in sync, the function returns nil immediately.
+//   - Otherwise, for each orphan Job we INSERT an Episode whose id equals
+//     the Job id (preserving 1:1 backwards compatibility with historical
+//     URLs and external references), then UPDATE the Job to point at it.
+//   - On Postgres we additionally SETVAL the episodes_id_seq so the next
+//     newly created Episode receives a fresh id. Sqlite manages
+//     auto-increment per AUTOINCREMENT semantics so no extra step is
+//     needed there.
+//
+// All work happens in a single transaction; partial failure leaves the
+// database untouched.
+func (s *Store) RunBackfillIfNeeded(ctx context.Context) error {
+	var orphanCount int64
+	if err := s.db.WithContext(ctx).
+		Model(&models.Job{}).
+		Where("episode_id IS NULL OR episode_id = 0").
+		Count(&orphanCount).Error; err != nil {
+		return fmt.Errorf("count orphan jobs: %w", err)
+	}
+	if orphanCount == 0 {
+		return nil
+	}
+
+	type orphanJob struct {
+		ID                 uint
+		TenantKey          string
+		Name               string
+		InputRelPath       string
+		OutputRelPath      string
+		SourceLanguage     string
+		TargetLanguage     string
+		Status             models.JobStatus
+		CreatedAt          time.Time
+		UpdatedAt          time.Time
+		CompletedAt        *time.Time
+	}
+
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var orphans []orphanJob
+		if err := tx.Table("jobs").
+			Select("id, tenant_key, name, input_rel_path, output_rel_path, source_language, target_language, status, created_at, updated_at, completed_at").
+			Where("episode_id IS NULL OR episode_id = 0").
+			Order("id asc").
+			Scan(&orphans).Error; err != nil {
+			return fmt.Errorf("scan orphan jobs: %w", err)
+		}
+
+		for _, oj := range orphans {
+			tenant := oj.TenantKey
+			if tenant == "" {
+				tenant = "default"
+			}
+			status := mapLegacyJobStatusToEpisode(oj.Status)
+			ep := models.Episode{
+				ID:                 oj.ID,
+				TenantKey:          tenant,
+				Name:               oj.Name,
+				SourceVideoRelPath: oj.InputRelPath,
+				SourceLanguage:     oj.SourceLanguage,
+				TargetLanguage:     oj.TargetLanguage,
+				TotalChapters:      1,
+				Status:             status,
+				OutputRelPath:      oj.OutputRelPath,
+				CreatedAt:          oj.CreatedAt,
+				UpdatedAt:          oj.UpdatedAt,
+				CompletedAt:        oj.CompletedAt,
+			}
+			if err := tx.Create(&ep).Error; err != nil {
+				return fmt.Errorf("backfill: insert episode for job %d: %w", oj.ID, err)
+			}
+			if err := tx.Model(&models.Job{}).
+				Where("id = ?", oj.ID).
+				Updates(map[string]any{
+					"episode_id":      oj.ID,
+					"chapter_ordinal": 1,
+				}).Error; err != nil {
+				return fmt.Errorf("backfill: link job %d to episode: %w", oj.ID, err)
+			}
+		}
+
+		// Postgres: advance the episodes id sequence past the highest
+		// back-filled id so subsequent CreateEpisode calls keep monotonic.
+		if tx.Dialector.Name() == "postgres" {
+			if err := tx.Exec(
+				"SELECT setval('episodes_id_seq', GREATEST((SELECT COALESCE(MAX(id),0) FROM episodes), 1))",
+			).Error; err != nil {
+				return fmt.Errorf("backfill: setval episodes_id_seq: %w", err)
+			}
+		}
+		return nil
+	})
+}
+
+// mapLegacyJobStatusToEpisode collapses the eight historical Job statuses
+// into the four Episode statuses that OPT-401 understands today (the other
+// five are reserved for OPT-402..407). Anything that is not clearly
+// terminal becomes "running" so judges/dashboards see something sensible
+// for in-flight jobs at the moment of back-fill.
+func mapLegacyJobStatusToEpisode(s models.JobStatus) models.EpisodeStatus {
+	switch s {
+	case models.JobStatusCompleted, models.JobStatusCancelled:
+		return models.EpisodeStatusCompleted
+	case models.JobStatusFailed, models.JobStatusTimedOut:
+		return models.EpisodeStatusFailed
+	default:
+		return models.EpisodeStatusRunning
+	}
 }
 
 func (s *Store) GetJob(ctx context.Context, id uint) (*models.Job, error) {
