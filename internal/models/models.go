@@ -269,6 +269,14 @@ type TaskPayload struct {
 	// pipeline stage when this task succeeds.  Set to true for manual retries so
 	// the user controls when to proceed to merge.
 	SkipAutoAdvance bool `json:"skip_auto_advance,omitempty"`
+
+	// OPT-402 episode-level dispatch. When EpisodeStage is non-empty the
+	// worker routes the task through the episode-stage switch and uses
+	// EpisodeID instead of JobID. Stage and EpisodeStage are MUTUALLY
+	// EXCLUSIVE in any single payload — the worker enforces this and
+	// rejects payloads that set both.
+	EpisodeID    uint         `json:"episode_id,omitempty"`
+	EpisodeStage EpisodeStage `json:"episode_stage,omitempty"`
 }
 
 type SegmentDraft struct {
@@ -437,6 +445,18 @@ type Episode struct {
 	TargetLanguage     string            `json:"target_language" gorm:"size:16"`
 	DurationMs         int64             `json:"duration_ms"`
 	TotalChapters      int               `json:"total_chapters" gorm:"default:1"`
+	// VocalsRelPath / BgmRelPath are produced by the OPT-402 episode-level
+	// `ep_separate` stage on the FULL video (so the GPU runs once per
+	// episode, not once per chapter). 1-chapter shortcut also writes the
+	// matching Job-level fields for backward compat.
+	VocalsRelPath string `json:"vocals_relpath" gorm:"size:512"`
+	BgmRelPath    string `json:"bgm_relpath" gorm:"size:512"`
+	// ASRDoneAt / GlossaryDoneAt are simple progress timestamps for the
+	// EpisodeDetail UI's "episode-level stages" tracker. Nil until that
+	// episode-stage finishes successfully. They are not strict invariants
+	// (don't gate logic on them) — the source of truth is Status.
+	ASRDoneAt      *time.Time `json:"asr_done_at,omitempty"`
+	GlossaryDoneAt *time.Time `json:"glossary_done_at,omitempty"`
 	// Glossary is the canonical episode-level term sheet produced by OPT-402's
 	// glossary_extract stage. Empty until that stage runs.
 	Glossary datatypes.JSON `json:"glossary,omitempty" gorm:"type:jsonb"`
@@ -455,4 +475,62 @@ type Episode struct {
 	CreatedAt         time.Time      `json:"created_at"`
 	UpdatedAt         time.Time      `json:"updated_at"`
 	Chapters          []Job          `json:"chapters,omitempty" gorm:"foreignKey:EpisodeID"`
+}
+
+// EpisodeStage is the typed pipeline stage for the episode-level pre-fan-out
+// pipeline introduced by OPT-402. These stages run ONCE per episode on the
+// full video before any chapter-level work begins (separate vocals from BGM,
+// ASR the whole soundtrack, derive a canonical glossary, then chapterize).
+//
+// Distinguished from JobStage (which is per-chapter) so worker dispatch can
+// route a single redis queue item unambiguously: TaskPayload carries either
+// Stage or EpisodeStage, never both.
+//
+// OPT-403 / 404 / 406 episode-level stages (chapterize / episode_merge /
+// episode_judge) are pre-declared here so the corresponding fan-out work
+// can land incrementally without further enum churn.
+type EpisodeStage string
+
+const (
+	EpisodeStageMedia           EpisodeStage = "ep_media"
+	EpisodeStageSeparate        EpisodeStage = "ep_separate"
+	EpisodeStageASRSmart        EpisodeStage = "ep_asr_smart"
+	EpisodeStageGlossaryExtract EpisodeStage = "ep_glossary_extract"
+	// OPT-403 placeholder — the chapterize stage will turn the full ASR text
+	// into chapter ranges and fan out chapter Jobs.
+	EpisodeStageChapterize EpisodeStage = "ep_chapterize"
+	// OPT-404 placeholder — final episode-level merge after every chapter
+	// completes (concatenation + cross-chapter loudness normalisation).
+	EpisodeStageEpisodeMerge EpisodeStage = "ep_episode_merge"
+	// OPT-406 placeholder — episode-level judge that scores the full output.
+	EpisodeStageEpisodeJudge EpisodeStage = "ep_episode_judge"
+)
+
+// EpisodeStageOrder is the canonical sequence the OPT-402 worker walks when
+// processing an episode. Each finished stage enqueues the next via
+// EpisodeStage.Next(). The chapter fan-out (post-chapterize) is NOT in this
+// slice — once chapterize is done, control transfers to per-chapter Job
+// stages (StageOrder).
+//
+// Invariant: every stage in this slice has a registered handler in
+// pipeline.HandleTask's episode-stage switch. New stages must be added
+// to both places in the same commit.
+var EpisodeStageOrder = []EpisodeStage{
+	EpisodeStageMedia,
+	EpisodeStageSeparate,
+	EpisodeStageASRSmart,
+	EpisodeStageGlossaryExtract,
+	EpisodeStageChapterize,
+}
+
+// Next returns the stage that should follow the receiver in the episode-
+// level pipeline, or "", false if the receiver is the last (or unknown).
+// Mirrors JobStage.Next().
+func (stage EpisodeStage) Next() (EpisodeStage, bool) {
+	for idx, current := range EpisodeStageOrder {
+		if current == stage && idx+1 < len(EpisodeStageOrder) {
+			return EpisodeStageOrder[idx+1], true
+		}
+	}
+	return "", false
 }

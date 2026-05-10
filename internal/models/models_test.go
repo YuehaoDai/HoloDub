@@ -136,6 +136,73 @@ func TestEpisodeStatus_Transition(t *testing.T) {
 	}
 }
 
+// TestEpisodeStageOrder pins the canonical episode-level pipeline order
+// declared by OPT-402. The chapter-level worker dispatch (HandleTask)
+// hard-codes a switch on these constants, and any reorder/insertion
+// without updating the dispatch breaks the pipeline silently.
+//
+// The test is split into 4 invariants:
+//  1. exact ordered sequence (chronological dependency)
+//  2. Next() returns the immediate successor
+//  3. Next() on the LAST stage returns ok=false (no chapter stage in the
+//     same enum — control transfers to JobStage at that point)
+//  4. unknown stages return ok=false (graceful degradation)
+func TestEpisodeStageOrder(t *testing.T) {
+	want := []EpisodeStage{
+		EpisodeStageMedia,
+		EpisodeStageSeparate,
+		EpisodeStageASRSmart,
+		EpisodeStageGlossaryExtract,
+		EpisodeStageChapterize,
+	}
+	if len(EpisodeStageOrder) != len(want) {
+		t.Fatalf("EpisodeStageOrder length: want %d, got %d (slice=%v)",
+			len(want), len(EpisodeStageOrder), EpisodeStageOrder)
+	}
+	for i, s := range want {
+		if EpisodeStageOrder[i] != s {
+			t.Fatalf("EpisodeStageOrder[%d]: want %q, got %q",
+				i, s, EpisodeStageOrder[i])
+		}
+	}
+
+	for i := 0; i < len(EpisodeStageOrder)-1; i++ {
+		next, ok := EpisodeStageOrder[i].Next()
+		if !ok {
+			t.Fatalf("Next() for %q: expected ok=true", EpisodeStageOrder[i])
+		}
+		if next != EpisodeStageOrder[i+1] {
+			t.Fatalf("Next() for %q: want %q, got %q",
+				EpisodeStageOrder[i], EpisodeStageOrder[i+1], next)
+		}
+	}
+
+	last := EpisodeStageOrder[len(EpisodeStageOrder)-1]
+	if next, ok := last.Next(); ok {
+		t.Fatalf("Next() for last stage %q: expected ok=false, got %q",
+			last, next)
+	}
+
+	if next, ok := EpisodeStage("ep_bogus").Next(); ok {
+		t.Fatalf("Next() for unknown stage: expected ok=false, got %q", next)
+	}
+
+	// OPT-403/404/406 placeholders MUST exist as constants but MUST NOT
+	// appear in EpisodeStageOrder yet (their handlers are not yet wired).
+	for _, placeholder := range []EpisodeStage{
+		EpisodeStageEpisodeMerge,
+		EpisodeStageEpisodeJudge,
+	} {
+		for _, ordered := range EpisodeStageOrder {
+			if placeholder == ordered {
+				t.Fatalf("placeholder stage %q must not be in EpisodeStageOrder yet "+
+					"(handler not wired — would dispatch to unimplemented code)",
+					placeholder)
+			}
+		}
+	}
+}
+
 func TestEpisodeStatus_IsTerminal(t *testing.T) {
 	for _, s := range []EpisodeStatus{EpisodeStatusCompleted, EpisodeStatusFailed} {
 		if !s.IsTerminal() {
