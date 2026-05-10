@@ -18,6 +18,14 @@ const router = createRouter({
       path: "/jobs/:id",
       component: () => import("./components/JobDetail.vue"),
     },
+    {
+      path: "/episodes",
+      component: () => import("./components/JobList.vue"),
+    },
+    {
+      path: "/episodes/:id",
+      component: () => import("./components/EpisodeDetail.vue"),
+    },
   ],
 });
 

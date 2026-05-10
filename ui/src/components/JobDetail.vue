@@ -10,6 +10,17 @@
           <p class="text-xs text-[#9db0c9] mt-1">
             #{{ job.id }} · {{ job.input_relpath }} · {{ job.source_language || "?" }} → {{ job.target_language }}
           </p>
+          <p
+            v-if="job.episode_id"
+            class="text-[11px] text-[#9db0c9] mt-1"
+          >
+            <router-link
+              :to="`/episodes/${job.episode_id}`"
+              class="text-blue-400 hover:text-blue-300"
+            >Episode #{{ job.episode_id }}</router-link>
+            <span class="mx-1">·</span>
+            Chapter {{ job.chapter_ordinal || 1 }}
+          </p>
         </div>
         <div class="flex items-center gap-2">
           <span class="text-xs px-2 py-1 rounded-full font-medium" :class="statusClass(job.status)">

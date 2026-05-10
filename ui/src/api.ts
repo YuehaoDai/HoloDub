@@ -36,6 +36,35 @@ export interface Job {
   error_message?: string;
   created_at: string;
   updated_at: string;
+  // OPT-401 Episode/Chapter columns. Older API bundles will simply not return
+  // these fields and the UI degrades gracefully (no episode link, ordinal=1).
+  episode_id?: number;
+  chapter_ordinal?: number;
+  chapter_start_ms?: number;
+  chapter_end_ms?: number;
+}
+
+// Episode is the long-form container introduced by OPT-401. A single Episode
+// owns 1..N chapter Jobs (each Job is a chapter). For historical 1-chapter
+// videos the back-fill ensures Episode.id == Job.id.
+export interface Episode {
+  id: number;
+  tenant_key?: string;
+  name: string;
+  source_video_relpath: string;
+  source_language: string;
+  target_language: string;
+  duration_ms: number;
+  total_chapters: number;
+  status: string;
+  output_relpath?: string;
+  error_message?: string;
+  reference_card?: string;
+  episode_judge_score?: number;
+  completed_at?: string | null;
+  created_at: string;
+  updated_at: string;
+  chapters?: Job[];
 }
 
 export interface Segment {
@@ -133,9 +162,20 @@ export const api = {
     target_language: string;
     max_retries?: number;
     auto_start?: boolean;
+    episode_id?: number;
   }) => apiFetch<Job>("/jobs", { method: "POST", body: JSON.stringify(data) }),
 
   getJob: (id: number, signal?: AbortSignal) => apiFetch<Job>(`/jobs/${id}`, { signal }),
+
+  // OPT-401 Episode endpoints.
+  listEpisodes: (signal?: AbortSignal) =>
+    apiFetch<{ episodes: Episode[] }>("/episodes", { signal }),
+
+  getEpisode: (id: number, signal?: AbortSignal) =>
+    apiFetch<Episode>(`/episodes/${id}`, { signal }),
+
+  getEpisodeChapters: (id: number, signal?: AbortSignal) =>
+    apiFetch<{ chapters: Job[] }>(`/episodes/${id}/chapters`, { signal }),
 
   startJob: (id: number) => apiFetch(`/jobs/${id}/start`, { method: "POST" }),
 
