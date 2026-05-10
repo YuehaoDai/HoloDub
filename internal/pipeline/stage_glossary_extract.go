@@ -120,5 +120,23 @@ func (s *Service) runEpisodeGlossaryExtract(ctx context.Context, task models.Tas
 		"speakers", len(result.Speakers),
 		"reference_card_chars", len(result.ReferenceCard),
 	)
+
+	// OPT-403 chain: enqueue ep_chapterize so it can decide short-circuit vs
+	// fan-out using the freshly-written reference card. The handler is a no-
+	// op when ChapterizeEnabled=false or when the episode is short enough to
+	// fit one chapter; the cost of always enqueueing is one queue
+	// round-trip + one DB read, which is negligible compared to the LLM
+	// glossary work we just finished.
+	if s.cfg.ChapterizeEnabled {
+		if err := s.EnqueueEpisodeStage(ctx,
+			ep.ID,
+			models.EpisodeStageChapterize,
+			"pipeline",
+			"glossary_extract_completed",
+		); err != nil {
+			slog.Warn("opt-403 enqueue ep_chapterize failed; chapter 1 will stay parked if it was awaiting_chapterize",
+				"episode_id", ep.ID, "error", err)
+		}
+	}
 	return nil
 }

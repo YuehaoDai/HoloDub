@@ -113,6 +113,44 @@ type Config struct {
 	// to true on new installs.
 	ChapterReviewLLMEnabled bool
 
+	// ChapterizeEnabled: OPT-403 master switch. false = always run as a
+	// 1-chapter Episode regardless of duration (legacy behaviour). true =
+	// the ep_chapterize handler runs after ep_glossary_extract and may
+	// fan out long episodes into 2..N chapters. Defaults to true.
+	ChapterizeEnabled bool
+	// ChapterizeMinChapterMs / ChapterizeTargetChapterMs / ChapterizeMaxChapterMs
+	// configure DPOptimalCuts. An episode whose duration is <= MaxChapterMs is
+	// short-circuited to a single chapter; longer episodes get split so every
+	// chapter falls in [MinChapterMs, MaxChapterMs] and minimises distance
+	// from TargetChapterMs. Defaults are 18 / 22 / 30 minutes (matches the
+	// long-form podcast format the OPT-403 baseline targets).
+	ChapterizeMinChapterMs    int64
+	ChapterizeTargetChapterMs int64
+	ChapterizeMaxChapterMs    int64
+	// ChapterizeMinSilenceGapMs is the silence width (in ms) required between
+	// two ASR segments to qualify as a chapter-cut candidate. Default 800ms
+	// — at less than ~600ms ASR routinely produces unintended boundaries
+	// inside a single sentence.
+	ChapterizeMinSilenceGapMs int64
+
+	// LoudnormTargetI / LoudnormTargetTP / LoudnormTargetLRA are the EBU R128
+	// targets passed to media.LoudnormTwoPass for chapter-level + master-level
+	// normalisation. Defaults follow broadcast spec (-23 LUFS / -1 dBTP / 7 LU).
+	LoudnormTargetI   float64
+	LoudnormTargetTP  float64
+	LoudnormTargetLRA float64
+	// LoudnormChapterEnabled / LoudnormMasterEnabled toggle the two passes
+	// independently. Disabling chapter-level normalisation breaks cross-
+	// chapter loudness consistency; disabling the master pass is harmless
+	// when chapter-level is on.
+	LoudnormChapterEnabled bool
+	LoudnormMasterEnabled  bool
+	// EpisodeMergeEnabled toggles stage_episode_merge. When false, chapter
+	// videos still land in episodes/{ep_id}/chapters/... but no final
+	// merge-and-write happens (the EpisodeDetail UI's per-chapter download
+	// links keep working).
+	EpisodeMergeEnabled bool
+
 	FFmpegBin  string
 	FFprobeBin string
 
@@ -317,6 +355,52 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("parse CHAPTER_REVIEW_LLM_ENABLED: %w", err)
 	}
 
+	cfg.ChapterizeEnabled, err = getEnvBool("CHAPTERIZE_ENABLED", true)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse CHAPTERIZE_ENABLED: %w", err)
+	}
+	cfg.ChapterizeMinChapterMs, err = getEnvInt64("CHAPTERIZE_MIN_CHAPTER_MS", 18*60*1000)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse CHAPTERIZE_MIN_CHAPTER_MS: %w", err)
+	}
+	cfg.ChapterizeTargetChapterMs, err = getEnvInt64("CHAPTERIZE_TARGET_CHAPTER_MS", 22*60*1000)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse CHAPTERIZE_TARGET_CHAPTER_MS: %w", err)
+	}
+	cfg.ChapterizeMaxChapterMs, err = getEnvInt64("CHAPTERIZE_MAX_CHAPTER_MS", 30*60*1000)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse CHAPTERIZE_MAX_CHAPTER_MS: %w", err)
+	}
+	cfg.ChapterizeMinSilenceGapMs, err = getEnvInt64("CHAPTERIZE_MIN_SILENCE_GAP_MS", 800)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse CHAPTERIZE_MIN_SILENCE_GAP_MS: %w", err)
+	}
+
+	cfg.LoudnormTargetI, err = getEnvFloat("LOUDNORM_TARGET_I", -23.0)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse LOUDNORM_TARGET_I: %w", err)
+	}
+	cfg.LoudnormTargetTP, err = getEnvFloat("LOUDNORM_TARGET_TP", -1.0)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse LOUDNORM_TARGET_TP: %w", err)
+	}
+	cfg.LoudnormTargetLRA, err = getEnvFloat("LOUDNORM_TARGET_LRA", 7.0)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse LOUDNORM_TARGET_LRA: %w", err)
+	}
+	cfg.LoudnormChapterEnabled, err = getEnvBool("LOUDNORM_CHAPTER_ENABLED", true)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse LOUDNORM_CHAPTER_ENABLED: %w", err)
+	}
+	cfg.LoudnormMasterEnabled, err = getEnvBool("LOUDNORM_MASTER_ENABLED", true)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse LOUDNORM_MASTER_ENABLED: %w", err)
+	}
+	cfg.EpisodeMergeEnabled, err = getEnvBool("EPISODE_MERGE_ENABLED", true)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse EPISODE_MERGE_ENABLED: %w", err)
+	}
+
 	cfg.TTSConcurrency, err = getEnvInt("TTS_CONCURRENCY", 2)
 	if err != nil {
 		return Config{}, fmt.Errorf("parse TTS_CONCURRENCY: %w", err)
@@ -395,6 +479,19 @@ func getEnv(key, fallback string) string {
 func getEnvInt(key string, fallback int) (int, error) {
 	value := getEnv(key, strconv.Itoa(fallback))
 	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return 0, err
+	}
+	return parsed, nil
+}
+
+// getEnvInt64 parses a 64-bit integer from the named env var, falling back
+// to the supplied default when the var is unset or empty. Used by OPT-403's
+// CHAPTERIZE_*_MS knobs whose minute-scale defaults overflow int32 on
+// 32-bit builds (theoretical, but cheap to be correct).
+func getEnvInt64(key string, fallback int64) (int64, error) {
+	value := getEnv(key, strconv.FormatInt(fallback, 10))
+	parsed, err := strconv.ParseInt(value, 10, 64)
 	if err != nil {
 		return 0, err
 	}

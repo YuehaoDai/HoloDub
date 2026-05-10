@@ -404,10 +404,15 @@ func (s *Service) HandleTask(ctx context.Context, task models.TaskPayload) error
 		})
 		return nil
 	}
-	// Blocking stage: if the stage set job status to awaiting_review (e.g.
-	// segment_review waiting for user confirmation), do not auto-advance.
+	// Blocking stage: if the stage set job status to awaiting_review
+	// (segment_review waiting for user confirmation) or
+	// JobStatusAwaitingChapterize (asr_smart on a long video deferring to
+	// the OPT-403 ep_chapterize fan-out decision), do not auto-advance.
+	// In both cases another agent — the user, or runEpisodeChapterize —
+	// will re-enqueue the job.
 	refreshedJob, refreshErr := s.store.GetJob(ctx, task.JobID)
-	if refreshErr == nil && refreshedJob.Status == models.JobStatusAwaitingReview {
+	if refreshErr == nil && (refreshedJob.Status == models.JobStatusAwaitingReview ||
+		refreshedJob.Status == models.JobStatusAwaitingChapterize) {
 		return nil
 	}
 	return s.EnqueueStage(ctx, models.TaskPayload{
@@ -523,6 +528,37 @@ func (s *Service) runASRSmart(ctx context.Context, task models.TaskPayload) erro
 			); err != nil {
 				slog.Warn("opt-402 enqueue ep_glossary_extract failed; continuing",
 					"job_id", job.ID, "episode_id", job.EpisodeID, "error", err)
+			}
+		}
+
+		// OPT-403 gating: if chapterize is enabled AND the episode is long
+		// enough that fan-out is plausible, park chapter 1 in
+		// JobStatusAwaitingChapterize. The auto-advance machinery in
+		// HandleTask checks this status and skips its EnqueueStage call,
+		// leaving runEpisodeChapterize as the sole agent that resumes the
+		// chapter pipeline (either by short-circuiting or by fan-out).
+		// We use the last segment's EndMs as the canonical episode duration
+		// because ASR has just produced it and it is exact (no ffprobe
+		// round-trip needed).
+		if s.cfg.ChapterizeEnabled {
+			lastEndMs := int64(0)
+			if n := len(drafts); n > 0 {
+				lastEndMs = drafts[n-1].EndMs
+			}
+			if lastEndMs > s.cfg.ChapterizeMaxChapterMs {
+				if err := s.store.UpdateJobState(ctx, job.ID,
+					models.JobStatusAwaitingChapterize, models.StageASRSmart,
+					"long video; awaiting OPT-403 chapterize decision", false); err != nil {
+					slog.Warn("opt-403 set chapter 1 awaiting_chapterize failed; continuing",
+						"job_id", job.ID, "error", err)
+				} else {
+					slog.Info("opt-403 chapter 1 parked awaiting chapterize",
+						"job_id", job.ID,
+						"episode_id", job.EpisodeID,
+						"episode_duration_ms", lastEndMs,
+						"max_chapter_ms", s.cfg.ChapterizeMaxChapterMs,
+					)
+				}
 			}
 		}
 	}
@@ -1232,6 +1268,8 @@ func (s *Service) handleEpisodeStage(ctx context.Context, task models.TaskPayloa
 	switch task.EpisodeStage {
 	case models.EpisodeStageGlossaryExtract:
 		stageErr = s.runEpisodeGlossaryExtract(stageCtx, task)
+	case models.EpisodeStageChapterize:
+		stageErr = s.runEpisodeChapterize(stageCtx, task)
 	default:
 		stageErr = fmt.Errorf("unsupported episode stage %q", task.EpisodeStage)
 	}

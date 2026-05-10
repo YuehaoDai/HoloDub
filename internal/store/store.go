@@ -1450,6 +1450,116 @@ func (s *Store) UpdateChapterMetadata(
 		}).Error
 }
 
+// UpdateChapterRange resets a chapter Job's time window + media relpaths.
+// Called from stage_chapterize when chapter 1 is being narrowed from "entire
+// episode" down to "[0, cuts[0])" and when each newly-created chapter 2..N
+// gets its sliced media populated. Empty media relpaths are skipped so the
+// caller can pre-validate (and so 1-chapter shortcut paths can re-use the
+// helper without nuking VocalsRelPath when separate didn't run).
+func (s *Store) UpdateChapterRange(
+	ctx context.Context,
+	jobID uint,
+	startMs, endMs int64,
+	inputRelPath, vocalsRelPath, bgmRelPath string,
+) error {
+	if jobID == 0 {
+		return errors.New("UpdateChapterRange: job id is zero")
+	}
+	if endMs <= startMs {
+		return fmt.Errorf("UpdateChapterRange: invalid range [%d, %d)", startMs, endMs)
+	}
+	updates := map[string]any{
+		"chapter_start_ms": startMs,
+		"chapter_end_ms":   endMs,
+		"updated_at":       time.Now().UTC(),
+	}
+	if inputRelPath != "" {
+		updates["input_rel_path"] = inputRelPath
+	}
+	if vocalsRelPath != "" {
+		updates["vocals_rel_path"] = vocalsRelPath
+	}
+	if bgmRelPath != "" {
+		updates["bgm_rel_path"] = bgmRelPath
+	}
+	return s.db.WithContext(ctx).Model(&models.Job{}).
+		Where("id = ?", jobID).
+		Updates(updates).Error
+}
+
+// UpdateEpisodeName updates the human-readable Episode name. Used by
+// stage_chapterize when the LLM Pass 3 returns a confident overall title;
+// best-effort caller may use it for any Episode rename.
+func (s *Store) UpdateEpisodeName(ctx context.Context, episodeID uint, name string) error {
+	if episodeID == 0 {
+		return errors.New("UpdateEpisodeName: episode id is zero")
+	}
+	if strings.TrimSpace(name) == "" {
+		return nil // nothing to set; not an error
+	}
+	return s.db.WithContext(ctx).Model(&models.Episode{}).
+		Where("id = ?", episodeID).
+		Updates(map[string]any{
+			"name":       name,
+			"updated_at": time.Now().UTC(),
+		}).Error
+}
+
+// SegmentReassignment is one (segment → target_chapter_job + new time window)
+// instruction for ReassignSegmentsToChaptersAndShift. NewStartMs / NewEndMs
+// are CHAPTER-RELATIVE timestamps (i.e. original_ms - chapter.StartMs) so
+// each chapter's segments start at 0 just like a single-chapter episode.
+type SegmentReassignment struct {
+	SegmentID   uint
+	TargetJobID uint
+	NewStartMs  int64
+	NewEndMs    int64
+}
+
+// ReassignSegmentsToChaptersAndShift atomically moves each segment to its
+// target chapter Job AND rewrites its start_ms/end_ms/original_duration_ms
+// to the chapter-local timeline. Single-transaction so a fan-out either
+// commits fully or rolls back fully.
+//
+// After the segment updates, the function renumbers ordinals on every
+// touched chapter so each ends up with a dense 0..N-1 sequence.
+func (s *Store) ReassignSegmentsToChaptersAndShift(
+	ctx context.Context,
+	reassignments []SegmentReassignment,
+) error {
+	if len(reassignments) == 0 {
+		return nil
+	}
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		now := time.Now().UTC()
+		touched := make(map[uint]struct{}, 8)
+		for _, r := range reassignments {
+			if r.NewEndMs <= r.NewStartMs {
+				return fmt.Errorf("segment %d: invalid shifted range [%d, %d)",
+					r.SegmentID, r.NewStartMs, r.NewEndMs)
+			}
+			if err := tx.Model(&models.Segment{}).
+				Where("id = ?", r.SegmentID).
+				Updates(map[string]any{
+					"job_id":               r.TargetJobID,
+					"start_ms":             r.NewStartMs,
+					"end_ms":               r.NewEndMs,
+					"original_duration_ms": r.NewEndMs - r.NewStartMs,
+					"updated_at":           now,
+				}).Error; err != nil {
+				return fmt.Errorf("reassign segment %d: %w", r.SegmentID, err)
+			}
+			touched[r.TargetJobID] = struct{}{}
+		}
+		for jobID := range touched {
+			if err := renumberSegmentOrdinals(tx, jobID); err != nil {
+				return fmt.Errorf("renumber ordinals on job %d: %w", jobID, err)
+			}
+		}
+		return nil
+	})
+}
+
 // UpdateEpisodeChapters updates the Episode.TotalChapters counter at the end
 // of fan-out so the UI's chapter grid sizes correctly. Idempotent.
 func (s *Store) UpdateEpisodeChapters(ctx context.Context, episodeID uint, totalChapters int) error {
