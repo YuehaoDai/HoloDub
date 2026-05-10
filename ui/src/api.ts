@@ -33,6 +33,7 @@ export interface Job {
   input_relpath: string;
   source_language: string;
   target_language: string;
+  output_relpath?: string;
   error_message?: string;
   created_at: string;
   updated_at: string;
@@ -42,6 +43,14 @@ export interface Job {
   chapter_ordinal?: number;
   chapter_start_ms?: number;
   chapter_end_ms?: number;
+  // OPT-403 chapter metadata. Empty for the historical 1-chapter Episodes
+  // (back-fill leaves them blank); populated by chapter_review LLM after
+  // fan-out for OPT-403 Episodes. EpisodeDetail prefers chapter_title_
+  // translated when rendering, falls back to chapter_title, then to a
+  // generic "Chapter N" / "第 N 章" label.
+  chapter_title?: string;
+  chapter_title_translated?: string;
+  chapter_summary_md?: string;
 }
 
 // GlossaryEntry is one (source -> target) translation pair the canonical
@@ -86,6 +95,17 @@ export interface Episode {
   asr_done_at?: string | null;
   glossary_done_at?: string | null;
   glossary?: GlossaryEntry[];
+  // OPT-403 unified output layout fields.
+  // - output_layout_version: 1 = legacy jobs/{id}/output/... (back-fill
+  //   pending); 2 = unified episodes/{id}/... (UI uses /episodes/{id}/
+  //   download/final and chapters.json links).
+  // - chapters_manifest_relpath: path to chapters.json relative to
+  //   DATA_ROOT. Empty until ep_episode_merge writes it.
+  // - loudnorm_stats: opaque map (vp{N}_master, vp{N}_chXX) — UI only
+  //   needs to detect non-empty for the "audio normalised" badge.
+  output_layout_version?: number;
+  chapters_manifest_rel_path?: string;
+  loudnorm_stats?: Record<string, unknown>;
 }
 
 export interface Segment {
@@ -272,6 +292,27 @@ export const api = {
   segmentAudioUrl: (jobId: number, ordinal: number): string => {
     const key = getApiKey();
     const base = `/jobs/${jobId}/tts/${ordinal}`;
+    return key ? `${base}?api_key=${encodeURIComponent(key)}` : base;
+  },
+
+  // OPT-403/404 download helpers. Construct browser-friendly URLs so
+  // <a download> / <video src> work without a custom fetch wrapper.
+  // The api_key is appended as a query param to match the
+  // segmentAudioUrl convention (router.go accepts both the
+  // X-API-Key header and the api_key query param).
+  episodeFinalUrl: (episodeId: number): string => {
+    const key = getApiKey();
+    const base = `/episodes/${episodeId}/download/final`;
+    return key ? `${base}?api_key=${encodeURIComponent(key)}` : base;
+  },
+  episodeChaptersJsonUrl: (episodeId: number): string => {
+    const key = getApiKey();
+    const base = `/episodes/${episodeId}/chapters.json`;
+    return key ? `${base}?api_key=${encodeURIComponent(key)}` : base;
+  },
+  jobFinalUrl: (jobId: number): string => {
+    const key = getApiKey();
+    const base = `/jobs/${jobId}/download/final`;
     return key ? `${base}?api_key=${encodeURIComponent(key)}` : base;
   },
 

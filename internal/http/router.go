@@ -123,6 +123,13 @@ func NewRouter(cfg config.Config, st *store.Store, pipelineSvc *pipeline.Service
 	router.GET("/episodes", server.listEpisodes)
 	router.GET("/episodes/:id", server.getEpisode)
 	router.GET("/episodes/:id/chapters", server.listEpisodeChapters)
+	// OPT-403/404: episode-level final + chapters.json + per-chapter final.
+	// Read paths from DB rows (Episode.OutputRelPath / ChaptersManifest
+	// RelPath / Job.OutputRelPath); never reconstruct from naming
+	// conventions (lessons-learned rule 1).
+	router.GET("/episodes/:id/download/final", server.serveEpisodeFinal)
+	router.GET("/episodes/:id/chapters.json", server.serveEpisodeChaptersJSON)
+	router.GET("/jobs/:id/download/final", server.serveJobFinal)
 	router.POST("/jobs/:id/start", server.startJob)
 	router.POST("/jobs/:id/retry", server.retryJob)
 	router.POST("/jobs/:id/cancel", server.cancelJob)
