@@ -95,6 +95,11 @@ services:
         condition: service_healthy
       ml-service:
         condition: service_healthy
+    ports:
+      # Worker-side /metrics endpoint (OPT-001). Worker emits its own LLM
+      # token / cost / cache-hit counters, separate from the api process.
+      # Set WORKER_METRICS_ADDR="" to disable.
+      - "8081:8081"
     volumes:
       - ./data:/data
 

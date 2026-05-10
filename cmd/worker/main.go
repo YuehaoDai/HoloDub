@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net/http"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -58,6 +60,31 @@ func main() {
 	// and exits the loop instead of being killed mid-stage.
 	rootCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	// Worker-side /metrics endpoint (OPT-001). LLM token / cost / cache hit
+	// counters are emitted from the worker process and would otherwise be
+	// invisible from the api container. Keep this best-effort: a bind
+	// failure logs a warning but does not stop the worker, since metrics
+	// must never block the main flow.
+	if addr := strings.TrimSpace(cfg.WorkerMetricsAddr); addr != "" {
+		go func() {
+			mux := http.NewServeMux()
+			mux.Handle("/metrics", observability.MetricsHandler())
+			mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte("ok"))
+			})
+			server := &http.Server{
+				Addr:              addr,
+				Handler:           mux,
+				ReadHeaderTimeout: 5 * time.Second,
+			}
+			slog.Info("worker metrics endpoint listening", "addr", addr)
+			if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				slog.Warn("worker metrics endpoint exited", "error", err)
+			}
+		}()
+	}
 
 	slog.Info("worker started",
 		"worker_id", cfg.WorkerID,
