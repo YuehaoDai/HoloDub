@@ -60,6 +60,29 @@ Any Go change in `internal/pipeline/`, `internal/store/`, or
 `internal/models/` **must rebuild and redeploy both `api` and `worker`
 binaries**. Failing to do so leaves the worker running stale code.
 
+The preferred way is the one-shot helper [`scripts/hot-reload.ps1`](scripts/hot-reload.ps1),
+which cross-compiles, auto-detects each container's `/proc/1/cmdline`,
+`docker cp`s in place, optionally clears Redis stage leases, restarts
+the services and tails their logs:
+
+```powershell
+# default: rebuild + reload BOTH api and worker
+.\scripts\hot-reload.ps1
+
+# scope down to one binary (e.g. you only touched cmd/worker)
+.\scripts\hot-reload.ps1 -Target worker -ClearLeases
+
+# already ran `go build` yourself? skip the rebuild
+.\scripts\hot-reload.ps1 -NoBuild
+```
+
+The compiled binaries `holodub-api-linux` / `holodub-worker-linux`
+are `.gitignore`'d — they are local hot-update artefacts only and the
+~70 MB push payload was previously timing out GitHub. Each developer
+rebuilds them on demand.
+
+When the helper does not fit, the manual fallback is:
+
 ```powershell
 $env:GOOS="linux"; $env:GOARCH="amd64"
 go build -o holodub-api-linux ./cmd/api/
@@ -70,7 +93,9 @@ docker compose -f docker-compose.yml restart api worker
 ```
 
 UI changes additionally require `npm run build` followed by an `api`
-binary rebuild because the UI is embedded via `go:embed`.
+binary rebuild because the UI is embedded via `go:embed`. After the
+build, `.\scripts\hot-reload.ps1 -Target api` is the quickest way to
+ship the new bundle.
 
 ## Code style and quality
 
