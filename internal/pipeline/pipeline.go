@@ -361,6 +361,12 @@ func (s *Service) HandleTask(ctx context.Context, task models.TaskPayload) error
 		if err := s.store.UpdateJobState(ctx, task.JobID, models.JobStatusCompleted, task.Stage, "", false); err != nil {
 			return err
 		}
+		// OPT-401 1-chapter shortcut: keep the parent Episode's status in
+		// sync with its only chapter so the EpisodeDetail UI doesn't show
+		// "pending" while the chapter has actually finished. Multi-chapter
+		// episodes are intentionally left to OPT-404 / OPT-407 which know
+		// how to fan-in across chapters.
+		s.maybeShortcutEpisodeCompleted(ctx, *job)
 		_ = s.notifyJobEvent(ctx, *job, "job.completed", task, map[string]any{
 			"output_relpath": job.OutputRelPath,
 		})
@@ -1036,6 +1042,11 @@ func (s *Service) handleStageFailure(ctx context.Context, job models.Job, task m
 	if err := s.store.UpdateJobState(ctx, task.JobID, finalStatus, task.Stage, stageErr.Error(), false); err != nil {
 		return err
 	}
+	// OPT-401 1-chapter shortcut: mirror the only chapter's terminal failure
+	// up to the parent Episode so dashboards / GET /episodes reflect the
+	// real state. Multi-chapter episodes are deliberately skipped: OPT-407
+	// rework engine decides episode-wide outcomes from per-chapter signals.
+	s.maybeShortcutEpisodeFailed(ctx, job, stageErr.Error())
 	if err := s.queue.EnqueueDeadLetter(ctx, task, stageErr.Error()); err == nil {
 		observability.IncDeadLetters()
 	}
@@ -1043,6 +1054,50 @@ func (s *Service) handleStageFailure(ctx context.Context, job models.Job, task m
 		"error": stageErr.Error(),
 	})
 	return nil
+}
+
+// maybeShortcutEpisodeCompleted moves the parent Episode through the
+// pending → running → completed legal sequence when (and only when) the
+// chapter Job belongs to a 1-chapter Episode. Errors are intentionally
+// swallowed so the parent job-completion path stays the source of truth.
+func (s *Service) maybeShortcutEpisodeCompleted(ctx context.Context, job models.Job) {
+	if job.EpisodeID == 0 {
+		return
+	}
+	ep, err := s.store.GetEpisode(ctx, job.EpisodeID)
+	if err != nil || ep == nil || ep.TotalChapters > 1 || ep.Status.IsTerminal() {
+		return
+	}
+	if ep.Status == models.EpisodeStatusPending {
+		if err := s.store.UpdateEpisodeStatus(ctx, ep.ID, models.EpisodeStatusRunning, ""); err != nil {
+			slog.Warn("episode shortcut pending->running failed",
+				"episode_id", ep.ID, "error", err)
+			return
+		}
+	}
+	if err := s.store.UpdateEpisodeStatus(ctx, ep.ID, models.EpisodeStatusCompleted, ""); err != nil {
+		slog.Warn("episode shortcut ->completed failed",
+			"episode_id", ep.ID, "error", err)
+	}
+}
+
+// maybeShortcutEpisodeFailed mirrors the chapter Job's terminal failure
+// into the parent 1-chapter Episode. Like the completed counterpart, it
+// is best-effort and never propagates an error to the caller so worker
+// retry / dead-letter logic stays unchanged.
+func (s *Service) maybeShortcutEpisodeFailed(ctx context.Context, job models.Job, errMsg string) {
+	if job.EpisodeID == 0 {
+		return
+	}
+	ep, err := s.store.GetEpisode(ctx, job.EpisodeID)
+	if err != nil || ep == nil || ep.TotalChapters > 1 || ep.Status.IsTerminal() {
+		return
+	}
+	// pending -> failed and running -> failed are both legal.
+	if err := s.store.UpdateEpisodeStatus(ctx, ep.ID, models.EpisodeStatusFailed, errMsg); err != nil {
+		slog.Warn("episode shortcut ->failed failed",
+			"episode_id", ep.ID, "error", err)
+	}
 }
 
 func (s *Service) retryDelay(attempt int) time.Duration {

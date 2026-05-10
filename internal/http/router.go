@@ -46,6 +46,11 @@ type createJobRequest struct {
 	DeadlineAt     *time.Time     `json:"deadline_at"`
 	Config         map[string]any `json:"config"`
 	AutoStart      bool           `json:"auto_start"`
+	// EpisodeID, when non-zero, attaches this Job as a chapter of an existing
+	// Episode (OPT-403 fan-out path). When zero (default) the store auto-creates
+	// a 1-chapter Episode in the same transaction so the historical
+	// "POST /jobs creates a standalone job" contract keeps working unchanged.
+	EpisodeID uint `json:"episode_id"`
 }
 
 type retryJobRequest struct {
@@ -113,6 +118,11 @@ func NewRouter(cfg config.Config, st *store.Store, pipelineSvc *pipeline.Service
 	router.GET("/jobs", server.listJobs)
 	router.POST("/jobs", server.createJob)
 	router.GET("/jobs/:id", server.getJob)
+
+	// Episode routes (OPT-401: long-form three-tier model).
+	router.GET("/episodes", server.listEpisodes)
+	router.GET("/episodes/:id", server.getEpisode)
+	router.GET("/episodes/:id/chapters", server.listEpisodeChapters)
 	router.POST("/jobs/:id/start", server.startJob)
 	router.POST("/jobs/:id/retry", server.retryJob)
 	router.POST("/jobs/:id/cancel", server.cancelJob)
@@ -306,6 +316,7 @@ func (s *Server) createJob(c *gin.Context) {
 		WebhookSecret:  request.WebhookSecret,
 		MaxRetries:     request.MaxRetries,
 		DeadlineAt:     request.DeadlineAt,
+		EpisodeID:      request.EpisodeID,
 	}
 	if err := s.store.CreateJob(c.Request.Context(), &job); err != nil {
 		respondError(c, stdhttp.StatusInternalServerError, "create_job_failed", err.Error())
@@ -327,6 +338,80 @@ func (s *Server) getJob(c *gin.Context) {
 		return
 	}
 	c.JSON(stdhttp.StatusOK, job)
+}
+
+// ── Episode handlers (OPT-401) ──────────────────────────────────────────────
+
+// listEpisodes returns all episodes visible to the requesting tenant.
+// Mirrors listJobs's tenant-filter style: episodes whose tenant_key is
+// empty are treated as legacy/global and surfaced to every caller.
+func (s *Server) listEpisodes(c *gin.Context) {
+	eps, err := s.store.ListEpisodes(c.Request.Context())
+	if err != nil {
+		respondError(c, stdhttp.StatusInternalServerError, "list_episodes_failed", err.Error())
+		return
+	}
+	tenantKey := tenantKeyFromContext(c)
+	filtered := make([]models.Episode, 0, len(eps))
+	for _, ep := range eps {
+		if ep.TenantKey == "" || ep.TenantKey == tenantKey {
+			filtered = append(filtered, ep)
+		}
+	}
+	c.JSON(stdhttp.StatusOK, gin.H{"episodes": filtered})
+}
+
+// getEpisode returns a single Episode with its chapters preloaded
+// (ordered by chapter_ordinal asc).
+func (s *Server) getEpisode(c *gin.Context) {
+	ep, ok := s.getEpisodeForTenant(c)
+	if !ok {
+		return
+	}
+	c.JSON(stdhttp.StatusOK, ep)
+}
+
+// listEpisodeChapters returns the chapter Jobs of one Episode without
+// preloading the heavy Segments/StageRuns trees, so the dashboard grid
+// stays fast even for long-form content.
+func (s *Server) listEpisodeChapters(c *gin.Context) {
+	ep, ok := s.getEpisodeForTenant(c)
+	if !ok {
+		return
+	}
+	chapters, err := s.store.GetEpisodeChapters(c.Request.Context(), ep.ID)
+	if err != nil {
+		respondError(c, stdhttp.StatusInternalServerError, "list_episode_chapters_failed", err.Error())
+		return
+	}
+	c.JSON(stdhttp.StatusOK, gin.H{"chapters": chapters})
+}
+
+// getEpisodeForTenant is the Episode counterpart of getJobForTenant: it
+// parses :id, fetches the row, hides episodes belonging to another
+// tenant behind a 404, and writes the appropriate error response when
+// the lookup fails. Callers receive a usable *models.Episode and ok=true,
+// or nil + ok=false when an error response has already been written.
+func (s *Server) getEpisodeForTenant(c *gin.Context) (*models.Episode, bool) {
+	episodeID, ok := parseUintParam(c, "id")
+	if !ok {
+		return nil, false
+	}
+	ep, err := s.store.GetEpisode(c.Request.Context(), episodeID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		respondError(c, stdhttp.StatusNotFound, "episode_not_found", "episode not found")
+		return nil, false
+	}
+	if err != nil {
+		respondError(c, stdhttp.StatusInternalServerError, "get_episode_failed", err.Error())
+		return nil, false
+	}
+	tenantKey := tenantKeyFromContext(c)
+	if ep.TenantKey != "" && ep.TenantKey != tenantKey {
+		respondError(c, stdhttp.StatusNotFound, "episode_not_found", "episode not found")
+		return nil, false
+	}
+	return ep, true
 }
 
 func (s *Server) startJob(c *gin.Context) {
