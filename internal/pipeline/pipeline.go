@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"math"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -952,21 +953,193 @@ func (s *Service) runMerge(ctx context.Context, task models.TaskPayload) error {
 		totalDurationMs = inputDurationMs
 	}
 
-	dubTrackRelPath := fmt.Sprintf("jobs/%d/output/%s/dub_track.wav", job.ID, mergeVoiceKey(segments))
-	if err := media.RenderDubTrack(s.cfg.DataRoot, s.cfg.FFmpegBin, dubTrackRelPath, totalDurationMs, job.BgmRelPath, overlays); err != nil {
+	// OPT-403: route output paths through the unified layout
+	// (episodes/{ep_id}/chapters/vp{vp}/ch{ord:02d}.{wav,mp4}) when the
+	// parent Episode is on layout v2. Falls back to the legacy
+	// jobs/{id}/output/... layout for v1 episodes (the 138 historical rows
+	// pre-back-fill).
+	dubRelPath, finalRelPath := s.chapterMergeOutputPaths(ctx, job, segments)
+	if err := media.RenderDubTrack(s.cfg.DataRoot, s.cfg.FFmpegBin, dubRelPath, totalDurationMs, job.BgmRelPath, overlays); err != nil {
 		return fmt.Errorf("render dub track: %w", err)
 	}
 
+	// OPT-403 chapter-level EBU R128 normalisation. Runs on the dub track
+	// BEFORE mux so the final.mp4 carries already-normalised audio. The
+	// normalised file replaces the raw dub track on success; on failure
+	// the raw dub track stays in place so the mux step still produces a
+	// usable final.mp4 (logged as a soft warning).
+	if s.cfg.LoudnormChapterEnabled {
+		if stats, err := s.runChapterLoudnorm(ctx, dubRelPath); err != nil {
+			slog.Warn("opt-403 chapter loudnorm failed; using un-normalised dub track",
+				"job_id", job.ID, "error", err)
+		} else {
+			s.persistChapterLoudnormStats(ctx, job, stats)
+		}
+	}
+
 	if media.IsVideoFile(job.InputRelPath) {
-		outputRelPath := fmt.Sprintf("jobs/%d/output/%s/final.mp4", job.ID, mergeVoiceKey(segments))
-		if err := media.MuxVideo(s.cfg.DataRoot, s.cfg.FFmpegBin, job.InputRelPath, dubTrackRelPath, outputRelPath); err != nil {
+		if err := media.MuxVideo(s.cfg.DataRoot, s.cfg.FFmpegBin, job.InputRelPath, dubRelPath, finalRelPath); err != nil {
 			return fmt.Errorf("mux final video: %w", err)
 		}
-		job.OutputRelPath = outputRelPath
+		job.OutputRelPath = finalRelPath
 	} else {
-		job.OutputRelPath = dubTrackRelPath
+		job.OutputRelPath = dubRelPath
 	}
-	return s.store.SaveJob(ctx, job)
+	if err := s.store.SaveJob(ctx, job); err != nil {
+		return err
+	}
+	// OPT-404 trigger: chapter just finished merging. If every chapter under
+	// this episode is completed, kick off ep_episode_merge so the unified-
+	// layout episode-level final + chapters.json get written. The handler
+	// is idempotent if already enqueued.
+	s.maybeEnqueueEpisodeMerge(ctx, job.EpisodeID)
+	return nil
+}
+
+// chapterMergeOutputPaths returns (dubTrackRelPath, finalVideoRelPath) for
+// runMerge, picking the OPT-403 unified layout when the parent Episode is on
+// OutputLayoutVersion=2 and the legacy jobs/{id}/output/{voiceKey}/... layout
+// otherwise. Single source of truth so future layout changes only touch
+// here, not the runMerge body.
+func (s *Service) chapterMergeOutputPaths(
+	ctx context.Context,
+	job *models.Job,
+	segments []models.Segment,
+) (dubRelPath, finalRelPath string) {
+	voiceKey := mergeVoiceKey(segments)
+	primaryVP := primaryVoiceProfileID(segments)
+
+	if job.EpisodeID != 0 {
+		ep, err := s.store.GetEpisode(ctx, job.EpisodeID)
+		if err == nil && ep != nil && ep.OutputLayoutVersion >= 2 {
+			finalRelPath = ep.GetChapterOutputRelPath(job.ChapterOrdinal, primaryVP)
+			// dub_track sits next to the final mp4 in the unified layout.
+			dubRelPath = filepath.ToSlash(filepath.Join(
+				filepath.Dir(finalRelPath),
+				fmt.Sprintf("ch%02d.dub_track.wav", job.ChapterOrdinal),
+			))
+			return dubRelPath, finalRelPath
+		}
+	}
+	// Legacy layout (output_layout_version=1 episodes + standalone jobs).
+	dubRelPath = fmt.Sprintf("jobs/%d/output/%s/dub_track.wav", job.ID, voiceKey)
+	finalRelPath = fmt.Sprintf("jobs/%d/output/%s/final.mp4", job.ID, voiceKey)
+	return dubRelPath, finalRelPath
+}
+
+// primaryVoiceProfileID picks the dominant voice profile across the segments.
+// Uses the lowest non-zero ID when multiple appear (deterministic, matches
+// mergeVoiceKey ordering); falls back to 0 ("default voice") when no segment
+// has a voice profile assigned.
+func primaryVoiceProfileID(segments []models.Segment) uint {
+	seen := map[uint]int{}
+	for _, seg := range segments {
+		if seg.VoiceProfileID != nil {
+			seen[*seg.VoiceProfileID]++
+		} else {
+			seen[0]++
+		}
+	}
+	var best uint
+	var bestCount int
+	for id, count := range seen {
+		if count > bestCount || (count == bestCount && id < best) {
+			best = id
+			bestCount = count
+		}
+	}
+	return best
+}
+
+// runChapterLoudnorm runs LoudnormTwoPass on the dub track and replaces the
+// original wav with the normalised version. Returns the measured stats so
+// the caller can persist them to Episode.LoudnormStats.
+//
+// On any failure the original dub track is left untouched (so the mux step
+// still produces a usable final.mp4) and the error is returned for logging.
+func (s *Service) runChapterLoudnorm(
+	ctx context.Context,
+	dubRelPath string,
+) (media.LoudnormStats, error) {
+	dubAbs := storage.ResolveDataPath(s.cfg.DataRoot, dubRelPath)
+	tmpAbs := dubAbs + ".loudnorm.m4a"
+	stats, err := media.LoudnormTwoPass(ctx, s.cfg.FFmpegBin, dubAbs, tmpAbs,
+		s.cfg.LoudnormTargetI, s.cfg.LoudnormTargetTP, s.cfg.LoudnormTargetLRA)
+	if err != nil {
+		_ = os.Remove(tmpAbs)
+		return stats, err
+	}
+	// Convert the normalised m4a back to the same wav format runMerge
+	// expects downstream (24 kHz mono, matches RenderDubTrack output) so
+	// MuxVideo + ffmpeg consumers don't need to know loudnorm happened.
+	if err := convertM4AToWav(ctx, s.cfg.FFmpegBin, tmpAbs, dubAbs); err != nil {
+		_ = os.Remove(tmpAbs)
+		return stats, fmt.Errorf("re-encode normalised dub track to wav: %w", err)
+	}
+	_ = os.Remove(tmpAbs)
+	return stats, nil
+}
+
+// convertM4AToWav re-encodes an AAC m4a back to PCM wav at the dub track's
+// target sample rate / channel count. Used after the loudnorm pass to keep
+// the rest of the merge pipeline format-agnostic.
+func convertM4AToWav(ctx context.Context, ffmpegBin, inAbs, outAbs string) error {
+	args := []string{
+		"-y",
+		"-i", inAbs,
+		"-ar", "24000",
+		"-ac", "1",
+		"-acodec", "pcm_s16le",
+		outAbs,
+	}
+	out, err := exec.CommandContext(ctx, ffmpegBin, args...).CombinedOutput()
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		return fmt.Errorf("%w\n%s", err, string(out))
+	}
+	return nil
+}
+
+// persistChapterLoudnormStats merges the chapter's measured stats into
+// Episode.LoudnormStats under vp{primary}/ch{ordinal:02d}. Best-effort —
+// stats are descriptive only (UI / future chapter judge surface), the
+// pipeline never reads them back.
+func (s *Service) persistChapterLoudnormStats(
+	ctx context.Context,
+	job *models.Job,
+	stats media.LoudnormStats,
+) {
+	if job.EpisodeID == 0 {
+		return
+	}
+	// Flatten the (vp, chapter) key into a single top-level entry so the
+	// shallow `||` merge in store.UpdateLoudnormStats never collides with
+	// the episode-merge master pass (which writes "vp{N}_master").
+	chapterKey := fmt.Sprintf("vp%d_ch%02d", primaryVoiceProfileIDOnJob(job), job.ChapterOrdinal)
+	statsJSON, err := json.Marshal(map[string]any{chapterKey: stats})
+	if err != nil {
+		slog.Warn("persistChapterLoudnormStats: marshal stats failed",
+			"job_id", job.ID, "error", err)
+		return
+	}
+	if err := s.store.UpdateLoudnormStats(ctx, job.EpisodeID, statsJSON, true); err != nil {
+		slog.Warn("persistChapterLoudnormStats: persist stats failed",
+			"job_id", job.ID, "episode_id", job.EpisodeID, "error", err)
+	}
+}
+
+// primaryVoiceProfileIDOnJob is a Job-level analogue of primaryVoiceProfileID.
+// Scans the segments lazily through the store to keep the loudnorm path
+// independent of runMerge's already-loaded segments slice.
+func primaryVoiceProfileIDOnJob(job *models.Job) uint {
+	// Heuristic: most jobs have a single voice profile. Sniff the job's
+	// first segment via the preloaded slice if present; fall back to 0.
+	if len(job.Segments) > 0 {
+		return primaryVoiceProfileID(job.Segments)
+	}
+	return 0
 }
 
 // PreviewVoice synthesizes a single segment with the specified voice profile

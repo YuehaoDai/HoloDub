@@ -110,7 +110,7 @@ func TestBuildChaptersManifest_OneChapterEpisode(t *testing.T) {
 	}
 }
 
-func TestBuildChaptersManifest_AppendsMasterStatsToVP0(t *testing.T) {
+func TestBuildChaptersManifest_AppendsMasterStatsAtFlatKey(t *testing.T) {
 	ep := &models.Episode{Name: "Ep 2"}
 	ep.ID = 200
 	chapters := []models.Job{
@@ -119,15 +119,29 @@ func TestBuildChaptersManifest_AppendsMasterStatsToVP0(t *testing.T) {
 	stats := &media.LoudnormStats{InputI: -19.5, OutputI: -23.0}
 
 	m := buildChaptersManifest(ep, chapters, "out", stats)
-	bucket, ok := m.LoudnormStats["vp0"].(map[string]any)
+	master, ok := m.LoudnormStats["vp0_master"]
 	if !ok {
-		t.Fatalf("vp0 bucket missing or wrong type: %#v", m.LoudnormStats)
-	}
-	master, ok := bucket["master"]
-	if !ok {
-		t.Fatal("vp0.master entry missing after master pass")
+		t.Fatalf("vp0_master entry missing after master pass: %#v", m.LoudnormStats)
 	}
 	if _, ok := master.(*media.LoudnormStats); !ok {
-		t.Fatalf("vp0.master should be *LoudnormStats; got %T", master)
+		t.Fatalf("vp0_master should be *LoudnormStats; got %T", master)
+	}
+}
+
+// Guards the schema contract: chapter-level loudnorm stats persisted by
+// runMerge land at vp{N}_chXX, so when buildChaptersManifest deserialises
+// Episode.LoudnormStats it must surface them at the same flat path. This
+// test ensures the flat schema is honoured end-to-end.
+func TestBuildChaptersManifest_PreservesFlatChapterStats(t *testing.T) {
+	ep := &models.Episode{Name: "Ep 3"}
+	ep.ID = 300
+	ep.LoudnormStats = []byte(`{"vp0_ch01":{"input_i":-18.0,"output_i":-23.0}}`)
+	chapters := []models.Job{
+		{ChapterOrdinal: 1, ChapterStartMs: 0, ChapterEndMs: 1000, OutputRelPath: "x"},
+	}
+
+	m := buildChaptersManifest(ep, chapters, "out", nil)
+	if _, ok := m.LoudnormStats["vp0_ch01"]; !ok {
+		t.Fatalf("vp0_ch01 chapter stats stripped during manifest build: %#v", m.LoudnormStats)
 	}
 }

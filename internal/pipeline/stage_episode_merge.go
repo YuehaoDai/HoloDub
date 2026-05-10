@@ -159,9 +159,11 @@ func (s *Service) runEpisodeMerge(ctx context.Context, task models.TaskPayload) 
 			"episode_id", ep.ID, "error", err)
 	}
 	if masterStats != nil {
-		statsJSON, err := json.Marshal(map[string]any{
-			fmt.Sprintf("vp%d", vpID): map[string]any{"master": masterStats},
-		})
+		// Flat key (`vp{N}_master`) so the shallow `||` merge in
+		// store.UpdateLoudnormStats cannot collide with chapter-level
+		// `vp{N}_chXX` entries written from stage_merge.
+		masterKey := fmt.Sprintf("vp%d_master", vpID)
+		statsJSON, err := json.Marshal(map[string]any{masterKey: masterStats})
 		if err == nil {
 			if err := s.store.UpdateLoudnormStats(ctx, ep.ID, statsJSON, true); err != nil {
 				slog.Warn("ep_episode_merge: persist master loudnorm stats failed",
@@ -303,13 +305,10 @@ func buildChaptersManifest(
 		_ = json.Unmarshal(ep.LoudnormStats, &loudnormStats)
 	}
 	if masterStats != nil {
-		const vpKey = "vp0"
-		bucket, _ := loudnormStats[vpKey].(map[string]any)
-		if bucket == nil {
-			bucket = map[string]any{}
-		}
-		bucket["master"] = masterStats
-		loudnormStats[vpKey] = bucket
+		// Flat schema: vp{N}_master / vp{N}_chXX. Matches what runMerge
+		// writes for chapter-level stats and what runEpisodeMerge writes
+		// for the master pass — the manifest is just a serialised mirror.
+		loudnormStats["vp0_master"] = masterStats
 	}
 
 	m := &episodepkg.ChaptersManifest{
