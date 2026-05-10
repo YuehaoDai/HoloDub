@@ -48,10 +48,72 @@
         </div>
       </div>
 
-      <!-- Reference card placeholder (OPT-402) -->
+      <!-- Episode-level pipeline progress (OPT-402). Each pill is a stage;
+           filled pill = stage completed (timestamp present). Order mirrors
+           backend EpisodeStageOrder in internal/models/models.go. -->
+      <div class="mb-6 p-3 rounded-lg bg-[#1e2535] border border-[#273246]">
+        <div class="text-[10px] uppercase tracking-wider text-[#9db0c9] mb-2">Episode 阶段 (OPT-402)</div>
+        <div class="flex flex-wrap items-center gap-2">
+          <span
+            class="text-[10px] px-2 py-0.5 rounded-full"
+            :class="episode.vocals_relpath ? 'bg-green-900/60 text-green-300' : 'bg-slate-800 text-slate-500'"
+            :title="episode.vocals_relpath || 'separate 阶段未完成'"
+          >separate</span>
+          <span class="text-[#9db0c9]">›</span>
+          <span
+            class="text-[10px] px-2 py-0.5 rounded-full"
+            :class="episode.asr_done_at ? 'bg-green-900/60 text-green-300' : 'bg-slate-800 text-slate-500'"
+            :title="episode.asr_done_at || 'asr_smart 阶段未完成'"
+          >asr_smart</span>
+          <span class="text-[#9db0c9]">›</span>
+          <span
+            class="text-[10px] px-2 py-0.5 rounded-full"
+            :class="episode.glossary_done_at ? 'bg-green-900/60 text-green-300' : 'bg-slate-800 text-slate-500'"
+            :title="episode.glossary_done_at || 'glossary_extract 阶段未完成'"
+          >glossary_extract</span>
+          <span class="text-[#9db0c9]">›</span>
+          <span
+            class="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-500"
+            title="OPT-403"
+          >chapterize</span>
+        </div>
+      </div>
+
+      <!-- Reference card (OPT-402) -->
       <div v-if="episode.reference_card" class="mb-6 p-3 rounded-lg bg-[#1e2535] border border-[#273246]">
         <div class="text-[10px] uppercase tracking-wider text-[#9db0c9] mb-1">参考卡 (OPT-402)</div>
         <div class="text-xs text-[#f2f5f7] whitespace-pre-wrap">{{ episode.reference_card }}</div>
+      </div>
+
+      <!-- Glossary table (OPT-402). Hidden until ep_glossary_extract finishes
+           and writes a non-empty glossary; staying hidden is the desired
+           legacy behaviour for old episodes. -->
+      <div v-if="episode.glossary && episode.glossary.length" class="mb-6 p-3 rounded-lg bg-[#1e2535] border border-[#273246]">
+        <div class="flex items-center justify-between mb-2">
+          <div class="text-[10px] uppercase tracking-wider text-[#9db0c9]">
+            术语表 (OPT-402, {{ episode.glossary.length }} 项)
+          </div>
+        </div>
+        <table class="w-full text-xs text-left">
+          <thead>
+            <tr class="text-[#9db0c9] border-b border-[#273246]">
+              <th class="font-medium py-1.5 pr-3">Source</th>
+              <th class="font-medium py-1.5 pr-3">Target</th>
+              <th class="font-medium py-1.5">Note</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr
+              v-for="(entry, idx) in episode.glossary"
+              :key="`g-${idx}-${entry.source}`"
+              class="border-b border-[#273246]/50 hover:bg-[#273246]/30"
+            >
+              <td class="py-1.5 pr-3 font-mono text-[#f2f5f7]">{{ entry.source }}</td>
+              <td class="py-1.5 pr-3 font-mono text-[#f2f5f7]">{{ entry.target }}</td>
+              <td class="py-1.5 text-[#9db0c9]">{{ entry.note || "—" }}</td>
+            </tr>
+          </tbody>
+        </table>
       </div>
 
       <!-- Chapter grid -->

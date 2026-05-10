@@ -44,9 +44,23 @@ export interface Job {
   chapter_end_ms?: number;
 }
 
+// GlossaryEntry is one (source -> target) translation pair the canonical
+// episode glossary published by the OPT-402 ep_glossary_extract stage.
+// Older API bundles return no glossary field — UI degrades gracefully.
+export interface GlossaryEntry {
+  source: string;
+  target: string;
+  note?: string;
+}
+
 // Episode is the long-form container introduced by OPT-401. A single Episode
 // owns 1..N chapter Jobs (each Job is a chapter). For historical 1-chapter
 // videos the back-fill ensures Episode.id == Job.id.
+//
+// OPT-402 added vocals/bgm relpaths (mirrored from the chapter that wrote
+// them), a `glossary` jsonb array, and two progress timestamps
+// (asr_done_at, glossary_done_at) that drive the EpisodeDetail
+// "episode-level stages" tracker.
 export interface Episode {
   id: number;
   tenant_key?: string;
@@ -65,6 +79,13 @@ export interface Episode {
   created_at: string;
   updated_at: string;
   chapters?: Job[];
+  // OPT-402 episode-level pipeline fields. All optional so the UI can
+  // render a partial Episode while the pipeline is still running.
+  vocals_relpath?: string;
+  bgm_relpath?: string;
+  asr_done_at?: string | null;
+  glossary_done_at?: string | null;
+  glossary?: GlossaryEntry[];
 }
 
 export interface Segment {
