@@ -1,0 +1,88 @@
+{
+  "version": "pre-OPT-001",
+  "captured_at": "2026-05-10T02:32:08Z",
+  "git_commit_at_capture": "TBD-fill-when-pr-merged",
+  "test_video": "test_60s.mp4",
+  "job_id": 124,
+  "name": "p0-baseline",
+  "source_language": "en",
+  "target_language": "zh-CN",
+  "model_config": {
+    "provider": "openai_compatible",
+    "openai_base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "openai_model": "qwen-turbo",
+    "retranslation_model": "kimi-k2.5",
+    "retranslation_thinking_model": "kimi-k2-thinking",
+    "segment_review_use_tools": false,
+    "judge_model": null,
+    "prompt_cache_observed_via_metric": false
+  },
+  "stages": {
+    "media": 0.015043,
+    "separate": 0.467940,
+    "asr_smart": 6.095361,
+    "segment_review": 3.274136,
+    "translate": 19.902481,
+    "tts_duration": 463.987029,
+    "merge": 0.992998
+  },
+  "wall_clock": {
+    "total_sec": 559.715154,
+    "started_at": "2026-05-10T02:22:48.171825Z",
+    "completed_at": "2026-05-10T02:32:07.886979Z"
+  },
+  "segments": {
+    "count": 5,
+    "drift": [
+      { "ordinal": 0, "target_ms": 7500, "tts_ms": 7337, "drift_ratio": 0.022 },
+      { "ordinal": 1, "target_ms": 4940, "tts_ms": 5421, "drift_ratio": 0.097 },
+      { "ordinal": 2, "target_ms": 20540, "tts_ms": 19820, "drift_ratio": 0.035 },
+      { "ordinal": 3, "target_ms": 14800, "tts_ms": 14793, "drift_ratio": 0.000 },
+      { "ordinal": 4, "target_ms": 4803, "tts_ms": 4667, "drift_ratio": 0.028 }
+    ],
+    "drift_p50": 0.028,
+    "drift_p95": 0.097,
+    "drift_max": 0.097
+  },
+  "llm_call_estimates_from_live_observation": {
+    "_note": "Worker logs lost on restart; numbers below are from real-time tailing during the run.",
+    "review_call_count": 1,
+    "translate_initial_calls": 5,
+    "summary_calls": 2,
+    "retranslate_calls_min": 25,
+    "retranslate_calls_max": 35,
+    "thinking_model_calls_observed": 2,
+    "borrow_gap_accept_count": 0
+  },
+  "tokens": {
+    "_note": "Pre-OPT-001 binary did not emit token metrics. After OPT-001 lands, capture into baseline-post-p0.json.",
+    "input_tokens_total": null,
+    "output_tokens_total": null,
+    "cached_tokens_total": null,
+    "cached_ratio": null
+  },
+  "cost_usd": null,
+  "notes": [
+    "Baseline reflects high-retranslation behavior: 3 of 5 segments hit thinking-model fallback.",
+    "Worker /metrics endpoint did NOT exist in this binary; OPT-001 adds :8081/metrics.",
+    "test_60s.mp4 was previously translated quickly (job 83 = 42.8s); the slow run here is consistent with kimi-k2.5 latency variability when retranslation loops engage.",
+    "Drift p95 = 0.097 is the segment 1 outlier (\"borrowing from gap\" was not chosen); lower-bound for OPT-001 / OPT-002 to compare against."
+  ],
+  "post_opt_comparison_targets": {
+    "OPT-001": {
+      "cached_tokens_ratio_min": 0.4,
+      "translate_stage_sec_max_regression_pct": 5,
+      "_note": "After OPT-001, baseline-post-opt001.json must show cached_tokens / input_tokens >= 0.4 and translate stage not slower than 5%."
+    },
+    "OPT-003": {
+      "review_strict_parse_failed_max": 0,
+      "review_suggestions_count_min": 0,
+      "_note": "Tool-call path must produce >= 0 valid suggestions and 0 strict-parse failures."
+    },
+    "OPT-002": {
+      "judged_segment_ratio_min": 0.95,
+      "judge_score_avg_range": [0.6, 0.95],
+      "_note": "Observe-only mode: every segment should receive a judge score; verdict logged but not acted upon."
+    }
+  }
+}

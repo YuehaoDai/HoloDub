@@ -1,0 +1,137 @@
+{
+  "version": "post-OPT-001+OPT-002+OPT-003 (10min long-video validation)",
+  "captured_at": "2026-05-10T03:56:00Z",
+  "test_video": "test_10min_p0.mp4",
+  "test_video_source": "stream-copied first 600s of test_full.mp4 (MIT 6.824 lecture, 79min total)",
+  "test_video_duration_sec": 600.17,
+  "test_video_size_bytes": 143998711,
+  "comparison_baseline": "tests/quality/baseline-post-p0.json (60s video, 5 segments)",
+  "outcome_summary": "Long-video validation reveals one real OPT-001 design flaw (translate prompt not byte-stable per-segment because targetSec varies) and confirms OPT-002 + OPT-003 work as expected at scale. Cancelled at 50% TTS completion (13/24 segments) due to retranslation oscillation on long segments — see retry_oscillation_analysis below.",
+  "model_config": {
+    "provider": "openai_compatible",
+    "openai_base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "openai_model": "qwen-turbo",
+    "retranslation_model": "kimi-k2.5",
+    "retranslation_thinking_model": "kimi-k2-thinking",
+    "segment_review_use_tools": true,
+    "judge_model": "qwen-turbo",
+    "judge_observe_only": true
+  },
+  "job": {
+    "id": 130,
+    "name": "p0-10min-validation",
+    "status": "cancelled (manual, due to retry oscillation)",
+    "started_at": "2026-05-10T03:31:59Z",
+    "cancelled_at": "2026-05-10T03:55:50Z (~24 min elapsed)",
+    "stages_sec": {
+      "media": 0.01,
+      "separate": 1.62,
+      "asr_smart": 22.60,
+      "segment_review": 10.32,
+      "translate": 55.63,
+      "tts_duration_partial": 1335.11
+    },
+    "segments_total": 24,
+    "segments_synthesized": 13,
+    "segments_stuck_in_retry": 11,
+    "completion_ratio": 0.542
+  },
+  "opt001_long_video_validation": {
+    "verdict": "REVEALED REAL DESIGN FLAW — partial pass",
+    "tokens_total_input": 135222,
+    "tokens_total_output": 8054,
+    "tokens_per_op": {
+      "translate":            { "model": "qwen-turbo", "calls": 29, "input": 23229, "output": 1409, "cached": 0,    "cached_ratio": 0.000 },
+      "retranslate":          { "model": "kimi-k2.5",  "calls": 61, "input": 80620, "output": 3363, "cached": 0,    "cached_ratio": 0.000 },
+      "retranslate_thinking": { "model": "kimi-k2-thinking", "calls": 7, "input": 0, "output": 0, "cached": 0, "_note": "streaming usage not yet captured (OPT-001-followup-2)" },
+      "review":               { "model": "kimi-k2.5",  "calls": 2,  "input": 3533,  "output": 1263, "cached": 0,    "cached_ratio": 0.000 },
+      "summary":              { "model": "kimi-k2.5",  "calls": 4,  "input": 4843,  "output": 1112, "cached": 0,    "cached_ratio": 0.000 },
+      "judge":                { "model": "qwen-turbo", "calls": 17, "input": 22997, "output": 907,  "cached": 1024, "cached_ratio": 0.045 }
+    },
+    "cached_ratio_overall": 0.0076,
+    "design_flaw_discovered": {
+      "title": "translate system prompt is not byte-stable across segments within one job",
+      "explanation": "internal/llm/client.go::buildTranslateSystemPrompt embeds targetSec into the SYSTEM message. Each segment has a different duration, so the cached prefix (which providers match byte-for-byte) is broken at segment N+1. As a result, translate calls always show cached=0 even though the prompt looks 'mostly identical' to a human reader.",
+      "fix_design": "Move targetSec / Hard character limit / speech rate from system prompt into the user message. Keep system prompt = base + episode_summary only (those ARE byte-stable per job). The user message becomes 'Constraints for this segment: duration=N, char limit=K. Source language: X. Text: ...'.",
+      "ticket": "OPT-001-followup-1 promoted to P0; was P3 followup before this validation."
+    },
+    "secondary_observations": [
+      "kimi-k2.5 returns prompt_tokens_details.cached_tokens=0 across all 61 retranslate calls; not a parsing bug — kimi may genuinely lack cache in this DashScope tier, OR per-attempt prompts (history block, attempt N counter) make the prefix unstable. Both effects reinforce each other.",
+      "judge cache hits stopped growing after the initial 1024 tokens, despite 17 total calls. Suggests DashScope cache TTL is short and async judge calls (one per finished segment, with multi-second gaps) drop out of the cache window."
+    ]
+  },
+  "opt002_long_video_validation": {
+    "verdict": "PASS (observe-only, all judged, 0 false-positive retry verdicts)",
+    "judge_calls": 17,
+    "segments_judged_ratio": "13/13 synthesized = 100%",
+    "judge_avg_score": 0.96,
+    "judge_distribution": [
+      { "score_band": "1.00", "count": 10 },
+      { "score_band": "0.90", "count": 2,  "ordinals": [10, 12], "issue_type": "minor awkward phrasing in long segments" },
+      { "score_band": "0.80", "count": 1,  "ordinals": [4],      "issue_type": "stylistic concerns, not semantic loss" }
+    ],
+    "judge_verdict_distribution": {
+      "accept": 13,
+      "retry":  0,
+      "split":  0
+    },
+    "false_positive_rate_in_test": 0.0,
+    "judge_async_blocked_synthesis": false,
+    "_observations": [
+      "Even on a long 10-minute video with 13 fully synthesised segments, judge produced ZERO 'retry' verdicts — observe-only assertion that judge does not interfere with the main loop holds.",
+      "Lowest score (0.80, segment 4) had concrete actionable issues in Chinese: '\u4efb\u52a1\u975e\u5355\u673a\u53ef\u5b8c\u6210' awkward phrasing — a real quality nit, not a hallucination.",
+      "Judge issues for segments 10 and 12 (both 0.90) flagged subtle awkwardness in long Chinese translations. Human reviewer would agree these are nits worth tracking but not retry-worthy."
+    ],
+    "judge_cost_estimate": "$0.001-0.002 per segment at qwen-turbo DashScope rates; 17 calls ≈ $0.02 for this run."
+  },
+  "opt003_long_video_validation": {
+    "verdict": "PASS",
+    "review_calls": 2,
+    "review_strict_parse_failed": 0,
+    "review_input_tokens": 3533,
+    "review_output_tokens": 1263,
+    "review_avg_latency_sec": 18.16,
+    "review_suggestions_count": 3,
+    "_observations": [
+      "Review fired twice (likely a worker-restart-induced stage retry; idempotent by design — see incremental-evolution.mdc#5).",
+      "Both calls succeeded via the strict tool-call path with 0 fallbacks. Robust on long-segment-list payloads (24 segments × 6 fields each ≈ 1700 input tokens per call).",
+      "Average 18 sec/call is slow for review — kimi-k2.5 is not optimised for low-latency structured output. OPT-205 (reasoning model role split) could route review to a faster model."
+    ]
+  },
+  "retry_oscillation_analysis": {
+    "synthesized_segments_drift_p50": 0.029,
+    "synthesized_segments_drift_p95": 0.115,
+    "stuck_segments_target_ms_range": [5840, 44140],
+    "stuck_segments_target_ms_avg_sec": 23.2,
+    "_root_cause": "11/24 segments stuck. All have target durations 5.8-44.1 seconds. RETRANSLATION_DRIFT_THRESHOLD=0.06 with RETRANSLATION_MIN_DRIFT_THRESHOLD=0.03 produces effective threshold ~3% on long segments (e.g. 22.48s target -> ~3.3% threshold = 0.74s tolerance), which kimi-k2.5 cannot reliably hit on long Chinese translations. Pattern: 5-9 normal retries -> escalate to thinking model (600s timeout each) -> often still misses threshold.",
+    "interaction_with_opt002_judge": "JUDGE verdict was 'accept' for 13/13 synthesized despite drift up to 0.115. Judge correctly recognises that 11.5% drift on a 6s segment that compresses meaning faithfully is acceptable. The DURATION-ONLY retry loop disagrees and keeps retrying — strong evidence that OPT-201 SegmentAgent should give judge VETO POWER over duration-only retries.",
+    "_followup": "OPT-FOLLOWUP-3 (new): tune RETRANSLATION_MIN_DRIFT_THRESHOLD upward for segments > 20s, OR let JudgeFidelity verdict='accept' short-circuit further retries even when drift exceeds threshold (depends on OPT-002 graduating from observe-only via OPT-201)."
+  },
+  "comparison_to_60s_baseline": {
+    "60s_total_sec": 263.30,
+    "60s_segments": 5,
+    "60s_per_segment_sec": 52.7,
+    "10min_partial_sec": 1425.61,
+    "10min_segments_synthesized": 13,
+    "10min_per_synthesized_segment_sec": 109.7,
+    "_takeaway": "Long video segments take ~2x more wall time per segment due to (a) longer source text -> more retry candidates and (b) more stringent effective drift threshold. Consistent with retry oscillation analysis."
+  },
+  "actionable_followups": {
+    "OPT-001-followup-1": {
+      "status": "promoted to P0 (was P3); CONCRETE FIX KNOWN",
+      "task": "Move targetSec / Hard char limit / speech rate from system prompt into user message in buildTranslateSystemPrompt, so system prompt becomes byte-stable per job (only varies by targetLanguage and translationSummary). Re-validate cached_tokens>0 on translate path."
+    },
+    "OPT-001-followup-2": {
+      "status": "open (was already in roadmap)",
+      "task": "Capture streaming usage from doChatStream final SSE chunk so retranslate_thinking metrics show non-zero tokens."
+    },
+    "OPT-FOLLOWUP-3": {
+      "status": "NEW — emerged from this validation",
+      "task": "Loosen drift threshold for segments >20s, OR let judge verdict short-circuit drift retries (decision integration needed: OPT-201)."
+    },
+    "OPT-002-followup-1": {
+      "status": "open (was already in roadmap)",
+      "task": "Build golden set of >=50 hand-confirmed (src, tgt) pairs for judge correlation analysis. This 10min job alone gives 13 candidate (src, tgt, judge_score) pairs to seed it."
+    }
+  }
+}

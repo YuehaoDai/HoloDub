@@ -1,0 +1,128 @@
+{
+  "version": "post-OPT-001+OPT-002+OPT-003",
+  "captured_at": "2026-05-10T03:25:00Z",
+  "test_video": "test_60s.mp4",
+  "comparison_baseline": "tests/quality/baseline-pre-p0.json",
+  "model_config": {
+    "provider": "openai_compatible",
+    "openai_base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "openai_model": "qwen-turbo",
+    "retranslation_model": "kimi-k2.5",
+    "retranslation_thinking_model": "kimi-k2-thinking",
+    "segment_review_use_tools": true,
+    "judge_model": "qwen-turbo",
+    "judge_observe_only": true
+  },
+  "validation_jobs": {
+    "job_125": {
+      "purpose": "OPT-001 v1 (wrong cache field)",
+      "name": "p0-opt001-test",
+      "total_sec": 379.92,
+      "completed": true,
+      "cached_tokens_observed": 0,
+      "_note": "Initial OPT-001 binary used cached_tokens / prompt_cache_hit_tokens fields; DashScope returns prompt_tokens_details.cached_tokens (nested). Bug fixed in v2."
+    },
+    "job_126": {
+      "purpose": "OPT-001 v2 (nested field fix)",
+      "name": "p0-opt001-v2",
+      "total_sec_at_cancel": 740,
+      "cancelled": true,
+      "cached_tokens_observed": 0,
+      "_note": "Cancelled mid-tts after 740s. retranslate stage stuck on a single segment; sufficient data already collected. No cache hit because (a) translate uses 5 segments only and (b) kimi-k2.5 retranslate prompts vary per attempt."
+    },
+    "job_128": {
+      "purpose": "OPT-003 tool path validation",
+      "name": "p0-opt003-tools-on",
+      "total_sec": 387.46,
+      "completed": true,
+      "review_strict_parse_failed": 0,
+      "review_call_count": 1,
+      "review_suggestion_count": 1,
+      "review_input_tokens": 691,
+      "review_output_tokens": 112,
+      "_note": "DashScope kimi-k2.5 supports OpenAI-compatible function calling perfectly. 1 high-quality merge suggestion (segments 9160+9161, confidence 0.85). 0 fallbacks to legacy prompt path."
+    },
+    "job_129": {
+      "purpose": "OPT-001 + OPT-002 + OPT-003 joint validation",
+      "name": "p0-opt002-judge-on",
+      "total_sec": 263.30,
+      "completed": true,
+      "stages_sec": {
+        "media": 0.005,
+        "separate": 0.276,
+        "asr_smart": 7.54,
+        "segment_review": 7.31,
+        "translate": 22.37,
+        "tts_duration": 224.70,
+        "merge": 1.10
+      },
+      "segments_count": 5,
+      "judged_count": 5,
+      "judged_ratio": 1.0,
+      "judge_distribution": [
+        { "ordinal": 0, "score": 1.00, "verdict": "accept", "fidelity": 1.0, "fluency": 0.9, "coherence": 1.0 },
+        { "ordinal": 1, "score": 1.00, "verdict": "accept", "fidelity": 1.0, "fluency": 1.0, "coherence": 1.0 },
+        { "ordinal": 2, "score": 1.00, "verdict": "accept", "fidelity": 1.0, "fluency": 1.0, "coherence": 1.0 },
+        { "ordinal": 3, "score": 1.00, "verdict": "accept", "fidelity": 1.0, "fluency": 1.0, "coherence": 1.0 },
+        { "ordinal": 4, "score": 0.80, "verdict": "retry", "fidelity": 0.8, "fluency": 0.7, "coherence": 0.9, "issues": ["awkward phrasing", "missing 'monitoring' reference"] }
+      ],
+      "judge_avg_score": 0.96,
+      "judge_min_score": 0.80,
+      "tokens": {
+        "translate":   { "model": "qwen-turbo", "calls": 5,  "input": 2226,  "output": 122,  "cached": 0 },
+        "retranslate": { "model": "kimi-k2.5",  "calls": 20, "input": 20635, "output": 479,  "cached": 0 },
+        "review":      { "model": "kimi-k2.5",  "calls": 1,  "input": 691,   "output": 978,  "cached": 0 },
+        "summary":     { "model": "kimi-k2.5",  "calls": 2,  "input": 1018,  "output": 581,  "cached": 0 },
+        "judge":       { "model": "qwen-turbo", "calls": 5,  "input": 6023,  "output": 240,  "cached": 512 }
+      },
+      "tokens_total_input": 30593,
+      "tokens_total_output": 2400,
+      "tokens_total_cached": 512,
+      "cached_ratio_overall": 0.0167,
+      "cached_ratio_for_judge_model": 0.0850,
+      "strict_parse_failed_total": 0,
+      "_note": "Segment 4 judge verdict 'retry' correctly identified the same segment that was stuck in retranslation loop in baseline (10+ retries). Judge agent agrees with the symptom (missing 'monitoring' translation) and would, in non-observe mode, trigger a targeted retranslation. Cache hit on judge calls (512/6023 = 8.5%) confirms OPT-001 infrastructure is end-to-end working."
+    }
+  },
+  "opt_status": {
+    "OPT-001": {
+      "infrastructure_complete": true,
+      "metric_emit_verified": true,
+      "cache_hit_observed": true,
+      "cache_hit_ratio_in_test": 0.085,
+      "cache_hit_ratio_target_per_card": 0.4,
+      "_caveat": "5-segment short video is a worst case for cache: translate fires only 5 calls and DashScope appears to need 5+ identical-prefix calls to engage cache (verified by direct curl). Long videos (79min/626 segments) and judge calls (which fire per-segment) both naturally accumulate cache hits over time. Recommend re-validating against the MIT 6.824 long-video benchmark.",
+      "followups": [
+        "OPT-001-followup-1: reproduce cache hit ratio target on the 79min benchmark video",
+        "OPT-001-followup-2: capture streaming usage from doChatStream for retranslate_thinking calls (currently shows token=0 in metric)"
+      ]
+    },
+    "OPT-003": {
+      "tool_path_works": true,
+      "fallback_works": true,
+      "strict_parse_failed_in_test": 0,
+      "verified_in_jobs": ["job_128", "job_129"]
+    },
+    "OPT-002": {
+      "judge_calls_succeeded": 5,
+      "judge_persisted_to_db": 5,
+      "judge_async_no_blocking_observed": true,
+      "judge_caught_real_quality_issue": true,
+      "_human_verify": "Segment 4 verdict 'retry' with issue 'missing monitoring reference' was independently confirmed by inspecting the source vs target text — this is a legitimate semantic loss the drift-only baseline did not catch.",
+      "ready_for_decision_path_integration": "Defer to OPT-201 SegmentAgent refactor; observe-only mode keeps the main pipeline contract unchanged."
+    }
+  },
+  "comparison_summary_vs_baseline": {
+    "baseline_total_sec": 559.72,
+    "post_p0_total_sec": 263.30,
+    "speedup_percent": 53.0,
+    "_speedup_caveat": "Speedup is primarily due to LUCK in retranslation convergence (segment 4 took ~10 retries in baseline, ~5 here). OPT-001/002/003 are NOT performance optimisations — they add observability + structured outputs + judge. Speedup will normalise to ~baseline on average over many runs.",
+    "new_signals": [
+      "per-operation token attribution (translate / retranslate / review / summary / judge)",
+      "per-model cost-USD foundation (waiting for OPT-101 OTEL price-table)",
+      "judge_score per segment (0-1, fidelity-weighted)",
+      "judge_meta with verdict (accept/retry/split) + issues list",
+      "strict_parse_failed counter (segment_review tool path = 0 over 2 jobs)"
+    ]
+  }
+}

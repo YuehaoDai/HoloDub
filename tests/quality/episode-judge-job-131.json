@@ -1,0 +1,125 @@
+{
+    "judgement":  {
+                      "terminology_consistency":  1,
+                      "register_consistency":  1,
+                      "narrative_coherence":  0.95,
+                      "character_voice_stability":  1,
+                      "cultural_localization":  1,
+                      "overall_fidelity":  0.98,
+                      "overall_fluency":  0.98,
+                      "top_3_strongest_segments":  [
+                                                       {
+                                                           "ordinal":  2,
+                                                           "reason":  "清晰地解释了分布式系统的定义，并且提供了具体的例子，逻辑连贯。"
+                                                       },
+                                                       {
+                                                           "ordinal":  6,
+                                                           "reason":  "详细说明了构建分布式系统的原因，包括性能、容错和物理分布等，内容丰富且条理清晰。"
+                                                       },
+                                                       {
+                                                           "ordinal":  17,
+                                                           "reason":  "全面介绍了课程结构和实验环节，信息详尽且表达流畅。"
+                                                       }
+                                                   ],
+                      "top_3_weakest_segments":  [
+                                                     {
+                                                         "ordinal":  4,
+                                                         "issue":  "句子结构稍显复杂，可能影响理解。",
+                                                         "recommended_fix":  "简化句子结构，使其更易于理解。例如：\u0027需要监控的基础设施。这不仅仅是单台计算机需要多台协作，而是系统本身需要在物理上分散。\u0027"
+                                                     },
+                                                     {
+                                                         "ordinal":  10,
+                                                         "issue":  "部分句子较长，可能导致听众难以跟上。",
+                                                         "recommended_fix":  "将长句拆分为短句，提高可读性。例如：\u0027你知道，所有这些分布式系统都是分布式的，因为它们由多部分组成。这些部分因是多台计算机而并发执行。\u0027"
+                                                     },
+                                                     {
+                                                         "ordinal":  12,
+                                                         "issue":  "最后一句话未完成，显得不完整。",
+                                                         "recommended_fix":  "补充完整句子。例如：\u0027但实际上，用1000台计算机获得1000倍的提速非常困难，常常会遇到很多障碍。\u0027"
+                                                     }
+                                                 ],
+                      "terminology_glossary_observed":  [
+                                                            {
+                                                                "source_term":  "distributed systems",
+                                                                "target_term":  "分布式系统",
+                                                                "note":  "一致使用"
+                                                            },
+                                                            {
+                                                                "source_term":  "fault tolerance",
+                                                                "target_term":  "容错",
+                                                                "note":  "一致使用"
+                                                            },
+                                                            {
+                                                                "source_term":  "performance",
+                                                                "target_term":  "性能",
+                                                                "note":  "一致使用"
+                                                            },
+                                                            {
+                                                                "source_term":  "MapReduce",
+                                                                "target_term":  "MapReduce",
+                                                                "note":  "保留英文"
+                                                            },
+                                                            {
+                                                                "source_term":  "peer-to-peer",
+                                                                "target_term":  "点对点",
+                                                                "note":  "一致使用"
+                                                            },
+                                                            {
+                                                                "source_term":  "lab(s)",
+                                                                "target_term":  "实验",
+                                                                "note":  "一致使用"
+                                                            },
+                                                            {
+                                                                "source_term":  "infrastructure",
+                                                                "target_term":  "基础设施",
+                                                                "note":  "一致使用"
+                                                            },
+                                                            {
+                                                                "source_term":  "partial failures",
+                                                                "target_term":  "部分故障",
+                                                                "note":  "一致使用"
+                                                            },
+                                                            {
+                                                                "source_term":  "concurrency",
+                                                                "target_term":  "并发",
+                                                                "note":  "一致使用"
+                                                            },
+                                                            {
+                                                                "source_term":  "Piazza",
+                                                                "target_term":  "Piazza",
+                                                                "note":  "保留英文"
+                                                            }
+                                                        ],
+                      "overall_verdict":  "production_ready",
+                      "one_paragraph_summary":  "整体来看，这段视频的翻译质量非常高，术语一致性、语体一致性、叙事连贯性、角色声音稳定性以及文化本地化都表现得非常好。只有少数几个段落存在一些小问题，如句子结构稍显复杂或句子过长，但这些问题并不影响整体的理解和流畅度。建议对这几个段落进行微调以进一步提升质量。"
+                  },
+    "model":  "qwen-max",
+    "schema_version":  "1.0",
+    "captured_at":  "2026-05-10T05:08:46Z",
+    "segments_summary":  {
+                             "synthesized":  25,
+                             "per_segment_judged":  18,
+                             "total":  25,
+                             "per_segment_judge_avg":  0.994
+                         },
+    "job":  {
+                "id":  131,
+                "name":  "p0-10min-semantic-validation",
+                "status":  "completed",
+                "source_language":  "en",
+                "target_language":  "zh-CN",
+                "translation_summary":  "**REFERENCE CARD: Distributed Systems Course (MIT 6.824)**\n\n**Genre/Setting:** Academic lecture series; university computer science course\n\n**Key Speaker:**\n- Robert Morris (罗伯特·莫里斯) — Course instructor/lecturer\n\n**Recurring Terminology:**\n| English | zh-CN |\n|---------|-------|\n| distributed systems | 分布式系统 |\n| fault tolerance | 容错 |\n| performance | 性能 |\n| MapReduce | MapReduce（保留英文）|\n| peer-to-peer | 点对点 |\n| lab(s) | 实验 |\n| infrastructure | 基础设施 |\n| partial failures | 部分故障 |\n| concurrency | 并发 |\n| Piazza | Piazza（保留英文）|\n\n**Register \u0026 Tone:** Formal academic register; clear, explanatory tone suitable for graduate-level technical instruction. Speaker uses first-person plural (\"we\") and direct address to students.\n\n**Style Conventions:**\n- Technical terms: Translate established equivalents; keep product/protocol names (MapReduce, Piazza) in original English\n- Numbers: Retain Arabic numerals (e.g., \"6824\", \"1000x\")\n- Course elements: \"lab\" consistently as 实验; \"paper\" as 论文\n- Speaker self-reference: Translate name; maintain \"我\" for lecturer\u0027s perspective",
+                "started_at":  "2026-05-10T04:10:58.757594+00:00",
+                "completed_at":  "2026-05-10T04:50:24.019767+00:00",
+                "total_sec":  2365.262173
+            },
+    "elapsed_sec":  26.705496999999998,
+    "usage":  {
+                  "prompt_tokens":  4853,
+                  "completion_tokens":  833,
+                  "total_tokens":  5686,
+                  "prompt_tokens_details":  {
+                                                "cached_tokens":  0
+                                            }
+              }
+}
