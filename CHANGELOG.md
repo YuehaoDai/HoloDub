@@ -15,6 +15,42 @@ once we cut a tagged release.
 
 ### Added
 
+- **Episode / Chapter data model with 1-chapter shortcut (OPT-401)**: a new
+  top-level `episodes` table represents the user's uploaded video, while the
+  existing `jobs` table is repositioned as a "chapter-level execution unit"
+  via four new columns (`episode_id`, `chapter_ordinal`, `chapter_start_ms`,
+  `chapter_end_ms`). A back-fill migration in
+  `migrations/005_episodes.sql` retro-fits every historical job to its own
+  1-chapter episode so `GET /jobs/:id` and the existing UI keep working
+  unchanged. Three new endpoints (`GET /episodes`, `GET /episodes/:id`,
+  `GET /episodes/:id/chapters`) plus `EpisodeDetail.vue` expose the new
+  hierarchy. The 9-state `EpisodeStatus` machine
+  (`pending → chaptering → dispatched → running → merging → judging →
+  reworking → completed → failed`) is the foundation for the upcoming
+  multi-chapter pipeline (OPT-402..408). 1-chapter jobs auto-create and
+  link to a 1-chapter episode and synchronously propagate status updates,
+  so single-video users never need to reason about episodes.
+- **Episode-level pipeline stages and glossary extraction (OPT-402)**:
+  introduces a new `EpisodeStage` enum running parallel to the per-chapter
+  `JobStage` (`ep_media → ep_separate → ep_asr_smart → ep_glossary_extract
+  → ep_chapterize`), so for long videos, separation, ASR and glossary
+  extraction run exactly once at the episode level instead of being
+  duplicated per chapter. A new `internal/llm/glossary.go` calls
+  `ExtractEpisodeGlossary` via the strict OpenAI-compatible
+  `emit_episode_glossary` tool, returning `{glossary[], speakers[],
+  reference_card_md}` from the full ASR transcript; results are persisted
+  to `episodes.glossary_jsonb / reference_card / glossary_done_at` (added
+  by `migrations/006_episode_pipeline.sql`) and injected into every
+  `RetranslateWithConstraint` prompt so terminology stays consistent
+  across chapters. For 1-chapter jobs the chapter's `vocals.wav` /
+  `bgm.wav` and `asr_done_at` are double-written back to the episode row
+  so the episode-stage progress UI lights up immediately. Validated
+  end-to-end on episode 139 (79-minute MIT 6.824 lecture): ASR completed
+  in 4.5 s and glossary extraction in 3.8 s, returning 6 terms + a
+  301-char reference card (snapshot in
+  `tests/quality/opt402-79min-episode-139.json`). The frontend
+  `EpisodeDetail.vue` now shows an episode-stage progress block and a
+  glossary table.
 - **Per-operation LLM token observability (OPT-001)**: every LLM call now
   emits `holodub_llm_input_tokens_total`, `holodub_llm_output_tokens_total`
   and `holodub_llm_cached_tokens_total` with `{model, operation}` labels
@@ -139,6 +175,38 @@ once we cut a tagged release.
 
 ### Changed
 
+- **Translate system prompt is now fully byte-stable across segments
+  (OPT-001-followup-1)**: `buildTranslateSystemPrompt` no longer takes
+  per-segment `targetSec` / `limit` arguments — those values are now
+  appended to the user message as a single `Hard duration constraint:
+  target ~Xs (≤Y chars).` line. The system prompt now varies only with
+  `targetLanguage` and the optional `translationSummary`, satisfying the
+  prefix-cache requirement of every OpenAI-compatible provider. The
+  `TestSystemPromptStable` unit test was inverted to actively assert that
+  the system text is identical regardless of `targetSec` / `limit`, and
+  a companion `TestTranslateUserMsgContainsPerSegmentConstraints` proves
+  the constraints still flow through to the user role. `RetranslateText`
+  applies the same split. This unblocks the original OPT-001 cache
+  observability work, whose 0% translate-path hit ratio was provably
+  caused by the prompt-stability bug rather than the metric pipeline.
+- **Adaptive drift threshold for long TTS segments (OPT-FOLLOWUP-3a)**:
+  `internal/pipeline/tts/budget.go` adds a pure
+  `AdaptiveMinDriftThreshold(targetSec, userFloor)` that lifts the
+  effective `RETRANSLATION_MIN_DRIFT_THRESHOLD` floor based on segment
+  length (≥ 20 s → 0.06, ≥ 10 s → 0.05, ≤ 5 s → keep 0.03) without
+  ever relaxing a stricter user-configured floor. `processOneTTSSegment`
+  applies the adaptive floor when computing whether a retranslate is
+  worth its cost, eliminating the long-segment retry oscillation that
+  caused the 10-min validation cancel observed in
+  `tests/quality/baseline-post-p0-10min.json`. The temporary `.env`
+  warnings recommending `RETRANSLATION_INITIAL_MAX_ATTEMPTS=10 /
+  RETRANSLATION_MIN_DRIFT_THRESHOLD=0.06` are now obsolete and
+  documented as `adaptive floor handled by code`. Six new test cases in
+  `budget_test.go` cover short / medium / long segments, the boundary
+  conditions and the "do not relax stricter user floors" invariant.
+  Sub-task (b) — letting `judge.verdict='accept'` short-circuit a drift
+  retry — remains planned and is gated on OPT-201 SegmentAgent decision
+  routing.
 - `apiKeyAuthMiddleware` now refuses to start in production when no
   `API_AUTH_TOKEN` is configured, instead of silently allowing all
   traffic.
