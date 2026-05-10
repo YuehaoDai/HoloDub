@@ -80,6 +80,10 @@ token.txt
 # Temp test outputs in root
 test_output_*.mp4
 
+# episode-judge debug payloads (large per-job dumps used for one-shot
+# diagnosis when DashScope rejects a request; not historical artefacts)
+tests/quality/_debug/
+
 # Node.js / frontend build artifacts
 ui/node_modules/
 ui/.vite/
