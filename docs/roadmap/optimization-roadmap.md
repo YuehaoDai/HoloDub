@@ -94,14 +94,14 @@ flowchart LR
 | OPT-104 | Agent transcript 持久化 | P1 | planned | 1.5d | OPT-101 |
 | OPT-401 | Episode / Chapter 数据模型（长视频三层级基础） | P1 | done | 3d | - |
 | OPT-402 | Pipeline 重构：episode-level stages + glossary_extract | P1 | done | 3d | OPT-401 |
-| OPT-403 | Chapterize 算法 + fan-out 多 chapter job | P1 | planned | 5d | OPT-401, OPT-402 |
+| OPT-403 | Chapterize 算法 + fan-out 多 chapter job | P1 | done | 5d | OPT-401, OPT-402 |
 | OPT-201 | SegmentAgent ReAct 重构 | P2 | planned | 5d | OPT-002, OPT-104 |
 | OPT-202 | Speculative ensemble + judge | P2 | planned | 3d | OPT-002 |
 | OPT-203 | Streaming TTS + SSE 推送 | P2 | planned | 5d | - |
 | OPT-204 | 结构化情感/韵律输出 | P2 | planned | 2d | OPT-003 |
 | OPT-205 | Reasoning model 全场景化 | P2 | planned | 1d | - |
 | OPT-206 | Skills / Glossary 系统 | P2 | planned | 3d | - |
-| OPT-404 | Episode merge + 跨 chapter 一致性广播 | P2 | planned | 3d | OPT-403 |
+| OPT-404 | Episode merge + 跨 chapter 一致性广播 | P2 | done | 3d | OPT-403 |
 | OPT-405 | Chapter-level Judge | P2 | planned | 2d | OPT-403, OPT-002 |
 | OPT-406 | Episode-level Judge productize（兼容 OPT-EPISODE-JUDGE-PROMOTE） | P2 | planned | 2d | OPT-404, OPT-405 |
 | OPT-407 | Closed-loop rework engine（三级 verdict → 返工调度） | P2 | planned | 5d | OPT-405, OPT-406, OPT-201 |
@@ -1116,6 +1116,19 @@ flowchart TD
   - 验证：60s/10min/79min 三档烟测；1-chapter 短路 → media/separate/ASR 后双写 episode 字段，自动入 ep_glossary_extract 队列
   - 长视频证据：[tests/quality/opt402-79min-episode-139.json](../../tests/quality/opt402-79min-episode-139.json) — episode 139 (79min MIT 6.824 lecture) ASR 4.5s 完成、glossary 提取 3.8s 完成，提取出 6 条术语 + 301 字符 reference card；该任务因仅 1 chapter（OPT-403 缺位）被用户主动取消，但 episode-level stages 已验证可在长视频上跑通
   - 衍生：**OPT-402-followup-1**（多 chapter glossary 合并策略，等 OPT-403 落地后讨论）
+- **OPT-403** Chapterize 算法 + fan-out 多 chapter job
+  - 实际工时：~3d
+  - CHANGELOG: [Chapterize + fan-out 多 chapter job (OPT-403/404)](../../CHANGELOG.md)
+  - 关键改动：`internal/chapterize/algo.go` 新增 Pass 1 `ExtractCandidates`（基于 ASR 静默间隙）+ Pass 2 `DPOptimalCuts`（动态规划，min/target/max 18/22/30min 约束 + 静默偏好惩罚）+ `BuildChapterRanges`，配 13 个测试覆盖空输入 / 单候选 / 边界条件 / 79min 合成长视频；`internal/llm/chapter_review.go` 新增 Pass 3 `ReviewChapterCuts` strict tool call（`emit_chapter_review` schema），生成中英双语 chapter title + summary，配 6 个 mock 测试；`internal/pipeline/stage_chapterize.go` 新增 `runEpisodeChapterize` orchestrator + `runFanOutChapters` 7 步 fan-out（slice 媒体 / 更新 ch1 范围与路径 / 创建 ch2..N sibling jobs / 段落重映射并平移时间戳 / 更新 episode 元数据 / 重新入队 SegmentReview）；`internal/store/store.go` 加 `ListSegmentsByEpisode / ReassignSegmentsToChaptersAndShift / CreateChapterJob / UpdateChapterMetadata / UpdateChapterRange / UpdateEpisodeChapters / UpdateEpisodeOutput / UpdateLoudnormStats`；`internal/models/models.go` 加 `Job.ChapterTitle / ChapterTitleTranslated / ChapterSummaryMD` + `Episode.OutputLayoutVersion / ChaptersManifestRelPath / LoudnormStats` + `JobStatusAwaitingChapterize` 状态；`internal/media/ffmpeg.go` 加 `SliceVideoAtRange / LoudnormTwoPass / ConcatChapterVideos`；migration `migrations/007_chapter_metadata.sql`
+  - 算法基线：[docs/opt-403/baseline-opt403-79min.json](../../docs/opt-403/baseline-opt403-79min.json) — 79min 合成 episode (79 segments / 55s avg seg / 1.6s avg gap) → DP 切出 3 chapter（24.55 / 25.47 / 24.56 min），mean 24.86min（target 22min, 偏差 ≤15.8%），所有 chapter 时长 ∈ [18min, 30min] 区间，候选采样数 78、所有切点 silence ≥850ms（默认阈值 800ms）
+  - 备注：OPT-403 stage_chapterize 与 stage_episode_merge 共同构成长视频流水线骨架；与 OPT-404 同 PR 落地（详见下条）
+- **OPT-404** Episode merge + 统一 output layout
+  - 实际工时：~2d (与 OPT-403 同 PR)
+  - CHANGELOG: [Episode merge + 统一 output layout (OPT-403/404)](../../CHANGELOG.md)
+  - 关键改动：`internal/episode/chapters_manifest.go` 新增 `ChaptersManifest` 结构（schema_version=1）+ `WriteChaptersJSON`（原子写、缩进、自动时戳）+ `Validate / SortChapters / ReadChaptersJSON`，配 7 个测试覆盖空 / 错版 / 乱序 / 缺文件等场景；`internal/pipeline/stage_episode_merge.go` 新增 `runEpisodeMerge`（1-chapter hardlink shortcut + N-chapter `ConcatChapterVideos` + 可选 master EBU R128 pass + 写 chapters.json + 更新 Episode.OutputRelPath/ChaptersManifestRelPath/OutputLayoutVersion=2 + 转 Completed 状态）+ `maybeEnqueueEpisodeMerge`（chapter 完成时 idempotent trigger）；`internal/pipeline/pipeline.go` 把 `runMerge` 输出路径切到统一 layout `episodes/{ep_id}/chapters/vp{vp}/ch{ord:02d}.mp4`（旧 `jobs/{id}/output/...` 仅作为 layout v1 兜底），加 `runChapterLoudnorm`（在 dub 上跑 EBU R128 双轨 normalisation）+ `persistChapterLoudnormStats` 用 flat key `vp{N}_chXX` 写到 `Episode.LoudnormStats` 避免与 master pass 冲突；`internal/http/router_episode_downloads.go` 新增三个下载端点 `GET /episodes/:id/download/final`、`GET /episodes/:id/chapters.json`、`GET /jobs/:id/download/final`，全部从 DB 读 relpath 不自行拼路径（lessons-learned rule 1）；前端 `ui/src/components/EpisodeDetail.vue` 增加 layout v1/v2 badge、loudnorm-applied 标识、chapterize / episode_merge 进度 pill、双语 chapter title 渲染（translated > source > "Chapter N"）+ 章节级下载按钮；`cmd/migrate-output/main.go` 新增 138 历史 episode 一次性 back-fill 工具（--dry-run/--use-hardlink/--keep-old/--episode-ids/--limit/--record）
+  - 算法基线：[docs/opt-403/baseline-opt403-79min.json](../../docs/opt-403/baseline-opt403-79min.json)（OPT-403 + OPT-404 共享）
+  - Back-fill 报告：[docs/opt-403/opt403-backfill-dry-run.json](../../docs/opt-403/opt403-backfill-dry-run.json) — 74 episodes scanned，44 可迁移 (31 GB hardlink, 不重编码), 30 因历史 chapter `output_relpath` 为空需手动处置，总耗时 ~200ms
+  - 备注：OPT-405 chapter-level judge / OPT-406 episode-level judge productize 现可基于本 OPT 的 `chapters.json` + `Episode.OutputRelPath` 实现；多 voice profile 的 episode-level final（mixed-vp）暂留给 OPT-407 multi-track output
 
 ---
 

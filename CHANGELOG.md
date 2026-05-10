@@ -15,6 +15,58 @@ once we cut a tagged release.
 
 ### Added
 
+- **Chapterize + fan-out 多 chapter job (OPT-403/404)**: long-form videos
+  (≥ ~22 min by default) are now automatically split into 18–30 min
+  chapters with bilingual LLM titles, then re-stitched into a single
+  episode-level final video. The pipeline runs three deterministic
+  passes — `internal/chapterize/algo.go` `ExtractCandidates` (silence-
+  aware boundary harvesting) → `DPOptimalCuts` (O(n²) DP that minimises
+  quadratic deviation from `CHAPTERIZE_TARGET_CHAPTER_MS` while honouring
+  min/max bounds and rewarding wider cut silences) → an optional Pass 3
+  LLM review (`internal/llm/chapter_review.go`, strict
+  `emit_chapter_review` tool call) that nudges boundaries and emits the
+  bilingual `chapter_title` + `chapter_title_translated` + `chapter_
+  summary_md`. Fan-out (`internal/pipeline/stage_chapterize.go`
+  `runFanOutChapters`) atomically slices the source media into N
+  per-chapter sub-videos via `media.SliceVideoAtRange`, creates ch2..N
+  sibling Job rows (`store.CreateChapterJob`), reassigns + time-shifts
+  every Segment into its new chapter (`store.ReassignSegmentsToChapters
+  AndShift`), and re-enqueues `StageSegmentReview` for every chapter so
+  downstream translation / TTS proceeds in parallel. Once the last
+  chapter merges, `stage_episode_merge.go` runs `media.ConcatChapter
+  Videos` (ffmpeg concat demuxer, no re-encode) over the per-chapter
+  finals, runs an optional master EBU R128 pass
+  (`media.LoudnormTwoPass`), writes `chapters.json` via the new
+  `internal/episode` package, and stamps the Episode row with
+  `output_layout_version=2` + `output_relpath` + `chapters_manifest_rel_
+  path`. New API surface: `GET /episodes/:id/download/final`,
+  `GET /episodes/:id/chapters.json`, `GET /jobs/:id/download/final`
+  (all read paths from DB, never reconstruct from naming conventions —
+  honours lessons-learned rule 1). Frontend: `EpisodeDetail.vue` gains
+  a layout v1/v2 badge, an `loudnorm ✓` indicator when
+  `Episode.LoudnormStats` is populated, two new pipeline pills
+  (`chapterize` + `episode_merge`), bilingual chapter titles on the
+  chapter grid, and a per-chapter download button. New
+  `JobStatusAwaitingChapterize` parks chapter 1 between ASR and
+  fan-out so segment_review never operates on pre-chapterize segment
+  ranges. Back-fill is a one-off operator tool: `cmd/migrate-output`
+  hard-links (or copies on cross-fs) every layout v1 episode into the
+  unified `episodes/{ep_id}/...` layout with `--dry-run`,
+  `--use-hardlink`, `--keep-old`, `--episode-ids`, `--limit`,
+  `--record` flags. Live dry-run against the staging DB scanned 74
+  episodes (44 migratable, 31 GB hardlink budget) in ~200 ms — see
+  `docs/opt-403/opt403-backfill-dry-run.json`. Algorithm baseline
+  pinned by `cmd/chapterize-baseline` to
+  `docs/opt-403/baseline-opt403-79min.json` (3 chapters at 24.55 /
+  25.47 / 24.56 min on the synthetic 79-min lecture; mean 24.86 min
+  vs. target 22 min). Twelve new env knobs cover every constraint:
+  `CHAPTERIZE_ENABLED / MIN_CHAPTER_MS / TARGET_CHAPTER_MS /
+  MAX_CHAPTER_MS / MIN_SILENCE_GAP_MS`, `CHAPTER_REVIEW_LLM_ENABLED /
+  MODEL`, `LOUDNORM_TARGET_I / TP / LRA / CHAPTER_ENABLED /
+  MASTER_ENABLED`, `EPISODE_MERGE_ENABLED`. Migration:
+  `migrations/007_chapter_metadata.sql`. Validation matrix:
+  `docs/opt-403/validation-matrix.md`.
+
 - **Episode / Chapter data model with 1-chapter shortcut (OPT-401)**: a new
   top-level `episodes` table represents the user's uploaded video, while the
   existing `jobs` table is repositioned as a "chapter-level execution unit"
