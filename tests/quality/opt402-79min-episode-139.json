@@ -1,0 +1,81 @@
+﻿{
+    "id":  139,
+    "tenant_key":  "default",
+    "name":  "opt-402-lec1full",
+    "source_video_relpath":  "test_full.mp4",
+    "source_language":  "en",
+    "target_language":  "zh-CN",
+    "duration_ms":  0,
+    "total_chapters":  1,
+    "vocals_relpath":  "jobs/139/separate/vocals.wav",
+    "bgm_relpath":  "jobs/139/separate/bgm.wav",
+    "asr_done_at":  "2026-05-10T14:45:55.49805Z",
+    "glossary_done_at":  "2026-05-10T14:45:59.334865Z",
+    "glossary":  [
+                     {
+                         "source":  "MapReduce",
+                         "target":  "MapReduce"
+                     },
+                     {
+                         "source":  "Raft",
+                         "target":  "Raft"
+                     },
+                     {
+                         "source":  "6824",
+                         "target":  "6824"
+                     },
+                     {
+                         "source":  "Robert Morris",
+                         "target":  "罗伯特·莫里斯"
+                     },
+                     {
+                         "source":  "Piazza",
+                         "target":  "Piazza"
+                     },
+                     {
+                         "source":  "GFS",
+                         "target":  "GFS"
+                     }
+                 ],
+    "reference_card":  "This is a lecture on distributed systems, focusing on concepts like MapReduce, Raft, and fault tolerance. Key entities include the course number 6824, the instructor Robert Morris, and tools like Piazza and GFS. The tone is academic and technical, with an emphasis on system design and implementation.",
+    "status":  "pending",
+    "output_relpath":  "",
+    "error_message":  "",
+    "completed_at":  null,
+    "created_at":  "2026-05-10T14:41:15.250676Z",
+    "updated_at":  "2026-05-10T14:45:59.334865Z",
+    "chapters":  [
+                     {
+                         "id":  139,
+                         "tenant_key":  "default",
+                         "external_id":  "",
+                         "name":  "opt-402-lec1full",
+                         "status":  "awaiting_review",
+                         "current_stage":  "segment_review",
+                         "source_language":  "en",
+                         "target_language":  "zh-CN",
+                         "input_relpath":  "test_full.mp4",
+                         "vocals_relpath":  "jobs/139/separate/vocals.wav",
+                         "bgm_relpath":  "jobs/139/separate/bgm.wav",
+                         "output_relpath":  "",
+                         "config":  null,
+                         "error_message":  "",
+                         "translation_summary":  "",
+                         "episode_id":  139,
+                         "chapter_ordinal":  1,
+                         "chapter_start_ms":  0,
+                         "chapter_end_ms":  0,
+                         "retry_count":  0,
+                         "max_retries":  0,
+                         "webhook_url":  "",
+                         "heartbeat_at":  "2026-05-10T14:45:59.342915Z",
+                         "started_at":  "2026-05-10T14:41:15.259468Z",
+                         "completed_at":  null,
+                         "deadline_at":  null,
+                         "cancel_requested_at":  null,
+                         "cancelled_at":  null,
+                         "created_at":  "2026-05-10T14:41:15.25183Z",
+                         "updated_at":  "2026-05-10T14:46:41.124452Z"
+                     }
+                 ]
+}
