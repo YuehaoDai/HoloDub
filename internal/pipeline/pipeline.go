@@ -1154,28 +1154,59 @@ func (s *Service) handleStageFailure(ctx context.Context, job models.Job, task m
 	return nil
 }
 
-// maybeShortcutEpisodeCompleted moves the parent Episode through the
-// pending → running → completed legal sequence when (and only when) the
-// chapter Job belongs to a 1-chapter Episode. Errors are intentionally
-// swallowed so the parent job-completion path stays the source of truth.
+// maybeShortcutEpisodeCompleted is called from the chapter HandleTask end
+// when a chapter Job reaches Completed. It is the convergence point for
+// both Episode lifecycle paths:
+//
+//   - 1-chapter episode: transition pending → running (if needed), then
+//     enqueue ep_episode_merge so the unified-layout final.mp4 +
+//     chapters.json get materialised. Episode → Completed happens inside
+//     runEpisodeMerge after the disk I/O succeeds.
+//   - N-chapter episode: only fire when EVERY chapter is completed —
+//     maybeEnqueueEpisodeMerge enforces that check internally.
+//
+// When EpisodeMergeEnabled=false (legacy compatibility), the function
+// falls back to the OPT-401 behaviour: directly stamp the 1-chapter
+// Episode completed without producing the unified manifest.
+//
+// Errors are swallowed throughout — the parent job-completion path stays
+// the source of truth; episode bookkeeping must never fail the job.
 func (s *Service) maybeShortcutEpisodeCompleted(ctx context.Context, job models.Job) {
 	if job.EpisodeID == 0 {
 		return
 	}
 	ep, err := s.store.GetEpisode(ctx, job.EpisodeID)
-	if err != nil || ep == nil || ep.TotalChapters > 1 || ep.Status.IsTerminal() {
+	if err != nil || ep == nil || ep.Status.IsTerminal() {
 		return
 	}
+
+	// Pending → Running on first chapter completion (regardless of count).
 	if ep.Status == models.EpisodeStatusPending {
 		if err := s.store.UpdateEpisodeStatus(ctx, ep.ID, models.EpisodeStatusRunning, ""); err != nil {
 			slog.Warn("episode shortcut pending->running failed",
 				"episode_id", ep.ID, "error", err)
-			return
+			// Do NOT bail; we still want to enqueue merge if every chapter
+			// is done.
 		}
 	}
-	if err := s.store.UpdateEpisodeStatus(ctx, ep.ID, models.EpisodeStatusCompleted, ""); err != nil {
-		slog.Warn("episode shortcut ->completed failed",
-			"episode_id", ep.ID, "error", err)
+
+	// OPT-403/404: route through ep_episode_merge so 1-chapter and N-chapter
+	// episodes both end up with episodes/{ep_id}/output/vp{vp}/final.mp4 +
+	// chapters.json on disk. The merge handler is the sole agent that flips
+	// Episode → Completed once the disk write succeeds.
+	if s.cfg.EpisodeMergeEnabled {
+		s.maybeEnqueueEpisodeMerge(ctx, ep.ID)
+		return
+	}
+
+	// Legacy fall-back when ep_episode_merge is disabled: replicate the
+	// OPT-401 behaviour for 1-chapter episodes only. Multi-chapter episodes
+	// stay in Running until the operator manually re-enables merging.
+	if ep.TotalChapters == 1 {
+		if err := s.store.UpdateEpisodeStatus(ctx, ep.ID, models.EpisodeStatusCompleted, ""); err != nil {
+			slog.Warn("episode shortcut ->completed failed",
+				"episode_id", ep.ID, "error", err)
+		}
 	}
 }
 
@@ -1270,6 +1301,8 @@ func (s *Service) handleEpisodeStage(ctx context.Context, task models.TaskPayloa
 		stageErr = s.runEpisodeGlossaryExtract(stageCtx, task)
 	case models.EpisodeStageChapterize:
 		stageErr = s.runEpisodeChapterize(stageCtx, task)
+	case models.EpisodeStageEpisodeMerge:
+		stageErr = s.runEpisodeMerge(stageCtx, task)
 	default:
 		stageErr = fmt.Errorf("unsupported episode stage %q", task.EpisodeStage)
 	}
