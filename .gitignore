@@ -8,6 +8,13 @@
 *.so
 *.dylib
 
+# Cross-compiled Linux binaries used by scripts/hot-reload.ps1 to docker cp
+# into the running api / worker containers. Pure local artefacts — every
+# developer rebuilds them on demand; pushing 70+ MB on every commit caused
+# repeated HTTP 408 push failures and bloats git history.
+holodub-api-linux
+holodub-worker-linux
+
 # Test binary, built with `go test -c`
 *.test
 
