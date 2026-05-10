@@ -1295,3 +1295,287 @@ func renumberSegmentOrdinals(tx *gorm.DB, jobID uint) error {
 	}
 	return nil
 }
+
+// ── OPT-403 chapterize fan-out + episode merge CRUD ────────────────────────
+
+// ChapterFanOutInput captures the fields stage_chapterize needs to materialise
+// one new chapter Job during fan-out. Pure data type so it can be assembled in
+// the chapterize package without dragging models into algo.go.
+type ChapterFanOutInput struct {
+	Ordinal         int
+	StartMs         int64
+	EndMs           int64
+	StartSegmentID  uint   // INCLUSIVE; 0 means "no segments fall here"
+	EndSegmentID    uint   // INCLUSIVE; 0 means "no segments fall here"
+	Title           string // optional, populated after LLM Pass 3
+	TitleTranslated string // optional, populated after LLM Pass 3
+	SummaryMD       string // optional, populated after LLM Pass 3
+	InputRelPath    string // chapter-sliced source video relpath
+	VocalsRelPath   string // chapter-sliced master vocals relpath
+	BgmRelPath      string // chapter-sliced master BGM relpath
+}
+
+// ListSegmentsByEpisode returns every segment under any chapter of the given
+// episode, ordered by (job_id ASC, ordinal ASC). Used by stage_chapterize for
+// fan-out (it needs every segment so it can decide which chapter each belongs
+// to) and by chapter judge / OPT-405 once that lands.
+//
+// Returns an empty slice (not error) when the episode has no segments yet.
+func (s *Store) ListSegmentsByEpisode(ctx context.Context, episodeID uint) ([]models.Segment, error) {
+	if episodeID == 0 {
+		return nil, errors.New("ListSegmentsByEpisode: episode id is zero")
+	}
+	var segs []models.Segment
+	err := s.db.WithContext(ctx).
+		Joins("JOIN jobs ON jobs.id = segments.job_id").
+		Where("jobs.episode_id = ?", episodeID).
+		Order("segments.job_id ASC, segments.ordinal ASC").
+		Find(&segs).Error
+	return segs, err
+}
+
+// ReassignSegmentsToChapters atomically moves each segment from its original
+// chapter Job (chapter 1 in the OPT-403 fan-out path) to the chapter Job whose
+// time window contains it.
+//
+// `assignments` maps segment.ID → target_chapter_job_id. The function updates
+// rows in one DB transaction so the fan-out either commits fully or rolls
+// back fully — partial fan-out would leave the episode in an unrunnable state.
+//
+// Caller MUST also call renumberSegmentOrdinals on each NEW chapter Job after
+// this returns so each chapter's segments get fresh 0..N-1 ordinals (the
+// pipeline depends on dense ordinals).
+func (s *Store) ReassignSegmentsToChapters(ctx context.Context, assignments map[uint]uint) error {
+	if len(assignments) == 0 {
+		return nil
+	}
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		now := time.Now().UTC()
+		// Group segments by target jobID so we issue at most one UPDATE per
+		// target chapter — keeps the round-trip count to O(num_chapters)
+		// rather than O(num_segments).
+		grouped := make(map[uint][]uint, 8)
+		for segID, jobID := range assignments {
+			grouped[jobID] = append(grouped[jobID], segID)
+		}
+		for targetJobID, segIDs := range grouped {
+			if err := tx.Model(&models.Segment{}).
+				Where("id IN ?", segIDs).
+				Updates(map[string]any{
+					"job_id":     targetJobID,
+					"updated_at": now,
+				}).Error; err != nil {
+				return fmt.Errorf("reassign %d segments to job %d: %w",
+					len(segIDs), targetJobID, err)
+			}
+		}
+		// Renumber ordinals on every target chapter so the pipeline sees
+		// 0..N-1 contiguous ordinals on each chapter independently.
+		for targetJobID := range grouped {
+			if err := renumberSegmentOrdinals(tx, targetJobID); err != nil {
+				return fmt.Errorf("renumber ordinals on job %d: %w", targetJobID, err)
+			}
+		}
+		return nil
+	})
+}
+
+// CreateChapterJob inserts a new chapter Job under an existing Episode,
+// inheriting tenant/language/voice settings from the parent (typically
+// chapter 1) and stamping the chapter window + sliced media relpaths. The
+// new Job starts at JobStatusPending so the worker picks it up at its
+// next poll once fan-out commits.
+//
+// The function is exported because stage_chapterize.go invokes it once
+// per fan-out chapter; production code outside the chapterize package
+// MUST NOT call it directly (use the pipeline path instead).
+func (s *Store) CreateChapterJob(
+	ctx context.Context,
+	episodeID uint,
+	parent *models.Job,
+	in ChapterFanOutInput,
+) (*models.Job, error) {
+	if parent == nil {
+		return nil, errors.New("CreateChapterJob: parent job is nil")
+	}
+	if episodeID == 0 {
+		return nil, errors.New("CreateChapterJob: episode id is zero")
+	}
+	job := models.Job{
+		EpisodeID:              episodeID,
+		ChapterOrdinal:         in.Ordinal,
+		ChapterStartMs:         in.StartMs,
+		ChapterEndMs:           in.EndMs,
+		ChapterTitle:           in.Title,
+		ChapterTitleTranslated: in.TitleTranslated,
+		ChapterSummaryMD:       in.SummaryMD,
+		TenantKey:              parent.TenantKey,
+		Name:                   parent.Name,
+		InputRelPath:           in.InputRelPath,
+		VocalsRelPath:          in.VocalsRelPath,
+		BgmRelPath:             in.BgmRelPath,
+		SourceLanguage:         parent.SourceLanguage,
+		TargetLanguage:         parent.TargetLanguage,
+		Status:                 models.JobStatusPending,
+		CurrentStage:           models.StageSegmentReview, // skip media+separate; chapter inherits from episode
+		MaxRetries:             parent.MaxRetries,
+		WebhookURL:             parent.WebhookURL,
+		WebhookSecret:          parent.WebhookSecret,
+		DeadlineAt:             parent.DeadlineAt,
+	}
+	if err := s.db.WithContext(ctx).Create(&job).Error; err != nil {
+		return nil, fmt.Errorf("create chapter job ord=%d: %w", in.Ordinal, err)
+	}
+	return &job, nil
+}
+
+// UpdateChapterMetadata writes the LLM-derived bilingual title + summary onto
+// an existing chapter Job. Used by stage_chapterize after Pass 3 reviews the
+// cuts, and may be re-invoked from a UI "edit chapter title" path later.
+func (s *Store) UpdateChapterMetadata(
+	ctx context.Context,
+	jobID uint,
+	titleSource, titleTranslated, summaryMD string,
+) error {
+	if jobID == 0 {
+		return errors.New("UpdateChapterMetadata: job id is zero")
+	}
+	return s.db.WithContext(ctx).Model(&models.Job{}).
+		Where("id = ?", jobID).
+		Updates(map[string]any{
+			"chapter_title":            titleSource,
+			"chapter_title_translated": titleTranslated,
+			"chapter_summary_md":       summaryMD,
+			"updated_at":               time.Now().UTC(),
+		}).Error
+}
+
+// UpdateEpisodeChapters updates the Episode.TotalChapters counter at the end
+// of fan-out so the UI's chapter grid sizes correctly. Idempotent.
+func (s *Store) UpdateEpisodeChapters(ctx context.Context, episodeID uint, totalChapters int) error {
+	if episodeID == 0 {
+		return errors.New("UpdateEpisodeChapters: episode id is zero")
+	}
+	if totalChapters < 1 {
+		return fmt.Errorf("UpdateEpisodeChapters: totalChapters %d must be >= 1", totalChapters)
+	}
+	return s.db.WithContext(ctx).Model(&models.Episode{}).
+		Where("id = ?", episodeID).
+		Updates(map[string]any{
+			"total_chapters": totalChapters,
+			"updated_at":     time.Now().UTC(),
+		}).Error
+}
+
+// UpdateEpisodeOutput records the unified-layout episode-level final video
+// path + the chapters.json manifest path + bumps OutputLayoutVersion to 2.
+// Called from stage_episode_merge after the merge succeeds AND from the
+// cmd/migrate-output back-fill tool after the historical files are linked
+// into place.
+//
+// Pass empty strings to skip the corresponding field (e.g. layoutVersion-only
+// bump after a partial migration).
+func (s *Store) UpdateEpisodeOutput(
+	ctx context.Context,
+	episodeID uint,
+	outputRelPath, chaptersManifestRelPath string,
+	layoutVersion int8,
+) error {
+	if episodeID == 0 {
+		return errors.New("UpdateEpisodeOutput: episode id is zero")
+	}
+	updates := map[string]any{"updated_at": time.Now().UTC()}
+	if outputRelPath != "" {
+		updates["output_rel_path"] = outputRelPath
+	}
+	if chaptersManifestRelPath != "" {
+		updates["chapters_manifest_rel_path"] = chaptersManifestRelPath
+	}
+	if layoutVersion > 0 {
+		updates["output_layout_version"] = layoutVersion
+	}
+	if len(updates) == 1 { // only updated_at — caller passed nothing useful
+		return errors.New("UpdateEpisodeOutput: nothing to update")
+	}
+	return s.db.WithContext(ctx).Model(&models.Episode{}).
+		Where("id = ?", episodeID).
+		Updates(updates).Error
+}
+
+// UpdateLoudnormStats merges the supplied per-chapter / master stats into
+// Episode.LoudnormStats. The shape persisted is:
+//
+//	{ "vp0": { "ch01": {...}, "ch02": {...}, "master": {...} },
+//	  "vp1": { ... } }
+//
+// `merge` decides whether the supplied JSON object is shallow-merged at the
+// top level (true; preferred — chapter-level callers add their own slice)
+// or replaces the column wholesale (false; episode_merge writes the master
+// pass via the merge path too, but back-fill uses replace).
+//
+// The function is intentionally opinionated about JSON-level merge so that
+// concurrent chapter merges do not race the same column — Postgres jsonb
+// `||` operator is used at the SQL level for atomic merge.
+func (s *Store) UpdateLoudnormStats(
+	ctx context.Context,
+	episodeID uint,
+	statsJSON []byte,
+	merge bool,
+) error {
+	if episodeID == 0 {
+		return errors.New("UpdateLoudnormStats: episode id is zero")
+	}
+	if len(statsJSON) == 0 || string(statsJSON) == "null" {
+		return nil // no-op, keep existing
+	}
+	if !json.Valid(statsJSON) {
+		return errors.New("UpdateLoudnormStats: invalid JSON")
+	}
+	if !merge {
+		return s.db.WithContext(ctx).Model(&models.Episode{}).
+			Where("id = ?", episodeID).
+			Updates(map[string]any{
+				"loudnorm_stats": datatypes.JSON(statsJSON),
+				"updated_at":     time.Now().UTC(),
+			}).Error
+	}
+	// Atomic shallow merge via Postgres `||`. SQLite has no `||` jsonb op so
+	// we fall back to read-modify-write under that driver — the test suite
+	// uses sqlite-in-memory and merge concurrency is not exercised there.
+	dialectName := s.db.Dialector.Name()
+	if dialectName == "postgres" || dialectName == "postgresql" {
+		return s.db.WithContext(ctx).Exec(
+			"UPDATE episodes SET loudnorm_stats = COALESCE(loudnorm_stats, '{}'::jsonb) || ?::jsonb, updated_at = ? WHERE id = ?",
+			string(statsJSON), time.Now().UTC(), episodeID,
+		).Error
+	}
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var ep models.Episode
+		if err := tx.Select("id", "loudnorm_stats").First(&ep, episodeID).Error; err != nil {
+			return err
+		}
+		var existing map[string]any
+		if len(ep.LoudnormStats) > 0 {
+			_ = json.Unmarshal(ep.LoudnormStats, &existing)
+		}
+		if existing == nil {
+			existing = map[string]any{}
+		}
+		var incoming map[string]any
+		if err := json.Unmarshal(statsJSON, &incoming); err != nil {
+			return fmt.Errorf("parse incoming loudnorm stats: %w", err)
+		}
+		for k, v := range incoming {
+			existing[k] = v
+		}
+		merged, err := json.Marshal(existing)
+		if err != nil {
+			return err
+		}
+		return tx.Model(&models.Episode{}).Where("id = ?", episodeID).
+			Updates(map[string]any{
+				"loudnorm_stats": datatypes.JSON(merged),
+				"updated_at":     time.Now().UTC(),
+			}).Error
+	})
+}
