@@ -1,7 +1,10 @@
 package media
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -362,4 +365,250 @@ func clipAndFadeFilter(actualDurationMs, maxDurationMs int64) string {
 	}
 	return fmt.Sprintf("aresample=24000,atrim=duration=%.3f,afade=t=in:st=0:d=%.2f,afade=t=out:st=%.2f:d=%.2f,",
 		float64(clip)/1000.0, fadeDurationSec, fadeOutStartSec, fadeDurationSec)
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// OPT-403 helpers — chapter slicing, loudness normalisation, concatenation
+// ───────────────────────────────────────────────────────────────────────────
+
+// SliceVideoAtRange extracts the [startMs, endMs) range from inputRelPath into
+// outRelPath using stream-copy (-c copy). Near-instant; keyframe alignment may
+// shift the actual cut by ±1 GOP (~100 ms) but OPT-403 places chapter
+// boundaries inside silence gaps so the visual cut sits in dead air anyway.
+//
+// Used by stage_chapterize when slicing the source video into chapter videos.
+// The source vocals/BGM tracks are sliced separately (TrimAudioSegment) since
+// they are sample-accurate WAV.
+func SliceVideoAtRange(dataRoot, ffmpegBin, inputRelPath, outRelPath string, startMs, endMs int64) error {
+	if startMs < 0 || endMs <= startMs {
+		return fmt.Errorf("SliceVideoAtRange: invalid range [%d, %d)", startMs, endMs)
+	}
+	inPath := storage.ResolveDataPath(dataRoot, inputRelPath)
+	outPath := storage.ResolveDataPath(dataRoot, outRelPath)
+	if err := storage.EnsureParentDir(outPath); err != nil {
+		return err
+	}
+	durationMs := endMs - startMs
+	args := []string{
+		"-y",
+		"-ss", formatSeconds(startMs),
+		"-i", inPath,
+		"-t", formatSeconds(durationMs),
+		"-c", "copy",
+		"-avoid_negative_ts", "make_zero",
+		outPath,
+	}
+	return runCmd(ffmpegBin, args...)
+}
+
+// LoudnormStats are the EBU R128 measurements ffmpeg's loudnorm filter prints
+// to stderr at the end of pass 1 (and pass 2 in summary mode). Persisted to
+// Episode.LoudnormStats so the UI / chapter judge can surface deviations.
+//
+// Field semantics (LUFS = Loudness Units Full Scale, dBTP = decibels True Peak):
+//   - InputI / OutputI  integrated loudness across the file
+//   - InputTP / OutputTP  highest true peak detected
+//   - InputLRA / OutputLRA  loudness range (perceptual dynamic range)
+//   - InputThresh / OutputThresh  relative gating threshold
+//   - NormType  "linear" (single coefficient) or "dynamic" (compressor)
+//   - TargetOffset  gain offset applied during pass 2 (dB)
+type LoudnormStats struct {
+	InputI       float64 `json:"input_i"`
+	InputTP      float64 `json:"input_tp"`
+	InputLRA     float64 `json:"input_lra"`
+	InputThresh  float64 `json:"input_thresh"`
+	OutputI      float64 `json:"output_i"`
+	OutputTP     float64 `json:"output_tp"`
+	OutputLRA    float64 `json:"output_lra"`
+	OutputThresh float64 `json:"output_thresh"`
+	NormType     string  `json:"normalization_type"`
+	TargetOffset float64 `json:"target_offset"`
+}
+
+// LoudnormTwoPass runs EBU R128 loudness normalisation on inputPath in two
+// passes:
+//
+//   - Pass 1: measure (loudnorm=...:print_format=json), parse the JSON block
+//     printed to stderr.
+//   - Pass 2: apply linear normalisation seeded with the pass-1 measurements,
+//     write the normalised audio to outPath.
+//
+// Returns the pass-1 measurements regardless of pass-2 success so that on
+// pass-2 failure the caller can still log "what we measured".
+//
+// Defaults follow EBU R128 broadcast: I=-23 LUFS / TP=-1.0 dBTP / LRA=7 LU.
+// Pass cfg.Loudnorm* knobs from caller — values < 0 are kept as-is, but a
+// targetTP of 0 dBTP is silently snapped to -1.0 to avoid hard clipping
+// the AAC encoder.
+func LoudnormTwoPass(
+	ctx context.Context,
+	ffmpegBin, inputPath, outPath string,
+	targetI, targetTP, targetLRA float64,
+) (LoudnormStats, error) {
+	if targetTP == 0 {
+		targetTP = -1.0
+	}
+	pass1Args := []string{
+		"-y", "-i", inputPath,
+		"-af", fmt.Sprintf("loudnorm=I=%.2f:TP=%.2f:LRA=%.2f:print_format=json",
+			targetI, targetTP, targetLRA),
+		"-f", "null", "-",
+	}
+	cmd := exec.CommandContext(ctx, ffmpegBin, pass1Args...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return LoudnormStats{}, ctxErr
+		}
+		return LoudnormStats{}, fmt.Errorf("loudnorm pass 1: %w\nstderr: %s",
+			err, truncateForLog(stderr.String(), 2000))
+	}
+	stats, err := parseLoudnormJSON(stderr.String())
+	if err != nil {
+		return LoudnormStats{}, fmt.Errorf("loudnorm pass 1 parse: %w\nstderr tail: %s",
+			err, truncateForLog(stderr.String(), 800))
+	}
+
+	if err := storage.EnsureParentDir(outPath); err != nil {
+		return stats, err
+	}
+	pass2Filter := fmt.Sprintf(
+		"loudnorm=I=%.2f:TP=%.2f:LRA=%.2f:"+
+			"measured_I=%.6f:measured_TP=%.6f:measured_LRA=%.6f:measured_thresh=%.6f:"+
+			"offset=%.6f:linear=true:print_format=summary",
+		targetI, targetTP, targetLRA,
+		stats.InputI, stats.InputTP, stats.InputLRA, stats.InputThresh, stats.TargetOffset,
+	)
+	pass2Args := []string{
+		"-y", "-i", inputPath,
+		"-af", pass2Filter,
+		"-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2",
+		outPath,
+	}
+	if err := runCmdCtx(ctx, ffmpegBin, pass2Args...); err != nil {
+		return stats, fmt.Errorf("loudnorm pass 2: %w", err)
+	}
+	return stats, nil
+}
+
+// ConcatChapterVideos concatenates ordered chapter videos into outPath using
+// ffmpeg's concat demuxer (no re-encoding). All inputs MUST share codec,
+// sample rate and timebase — chapter videos produced by stage_merge always
+// do because they come out of the same encoder settings, so this fast path
+// is safe by construction.
+//
+// Single-input case is a plain file copy. Empty input is an error so the
+// caller never silently produces an empty mp4.
+func ConcatChapterVideos(ctx context.Context, ffmpegBin string, inputPaths []string, outPath string) error {
+	if len(inputPaths) == 0 {
+		return errors.New("ConcatChapterVideos: no input paths")
+	}
+	if err := storage.EnsureParentDir(outPath); err != nil {
+		return err
+	}
+	if len(inputPaths) == 1 {
+		return copyFile(inputPaths[0], outPath)
+	}
+
+	// Write a temp concat list inside outPath's directory so it inherits the
+	// same filesystem permissions and gets cleaned up next to the result.
+	listFile, err := os.CreateTemp(filepath.Dir(outPath), "concat_*.txt")
+	if err != nil {
+		return fmt.Errorf("ConcatChapterVideos: create concat list: %w", err)
+	}
+	listPath := listFile.Name()
+	defer os.Remove(listPath)
+
+	for _, p := range inputPaths {
+		absP, err := filepath.Abs(p)
+		if err != nil {
+			listFile.Close()
+			return fmt.Errorf("ConcatChapterVideos: resolve abs path %q: %w", p, err)
+		}
+		// ffmpeg concat format: file 'PATH' — escape single quotes by closing
+		// the quoted span, inserting an escaped quote, and reopening.
+		escaped := strings.ReplaceAll(absP, "'", "'\\''")
+		if _, err := fmt.Fprintf(listFile, "file '%s'\n", escaped); err != nil {
+			listFile.Close()
+			return fmt.Errorf("ConcatChapterVideos: write concat list: %w", err)
+		}
+	}
+	if err := listFile.Close(); err != nil {
+		return fmt.Errorf("ConcatChapterVideos: close concat list: %w", err)
+	}
+
+	args := []string{
+		"-y",
+		"-f", "concat",
+		"-safe", "0",
+		"-i", listPath,
+		"-c", "copy",
+		outPath,
+	}
+	return runCmdCtx(ctx, ffmpegBin, args...)
+}
+
+// parseLoudnormJSON extracts the trailing JSON block ffmpeg's loudnorm filter
+// prints to stderr (it appears AFTER the regular ffmpeg log lines, so we scan
+// from the end for the last balanced { ... } block). Returns LoudnormStats
+// with the eight measurements parsed; any unparseable numeric is returned as 0
+// (and we log the raw string in the caller's wrapping error).
+//
+// Exported in test-friendly form: parseLoudnormJSON(string) is exercised
+// directly by ffmpeg_test.go without spawning ffmpeg.
+func parseLoudnormJSON(stderr string) (LoudnormStats, error) {
+	end := strings.LastIndex(stderr, "}")
+	if end < 0 {
+		return LoudnormStats{}, errors.New("loudnorm: no JSON block found in stderr")
+	}
+	start := strings.LastIndex(stderr[:end], "{")
+	if start < 0 {
+		return LoudnormStats{}, errors.New("loudnorm: unbalanced braces in stderr")
+	}
+	var raw struct {
+		InputI       string `json:"input_i"`
+		InputTP      string `json:"input_tp"`
+		InputLRA     string `json:"input_lra"`
+		InputThresh  string `json:"input_thresh"`
+		OutputI      string `json:"output_i"`
+		OutputTP     string `json:"output_tp"`
+		OutputLRA    string `json:"output_lra"`
+		OutputThresh string `json:"output_thresh"`
+		NormType     string `json:"normalization_type"`
+		TargetOffset string `json:"target_offset"`
+	}
+	if err := json.Unmarshal([]byte(stderr[start:end+1]), &raw); err != nil {
+		return LoudnormStats{}, fmt.Errorf("loudnorm: unmarshal JSON: %w", err)
+	}
+	parse := func(s string) float64 {
+		v, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
+		if err != nil {
+			return 0
+		}
+		return v
+	}
+	return LoudnormStats{
+		InputI:       parse(raw.InputI),
+		InputTP:      parse(raw.InputTP),
+		InputLRA:     parse(raw.InputLRA),
+		InputThresh:  parse(raw.InputThresh),
+		OutputI:      parse(raw.OutputI),
+		OutputTP:     parse(raw.OutputTP),
+		OutputLRA:    parse(raw.OutputLRA),
+		OutputThresh: parse(raw.OutputThresh),
+		NormType:     raw.NormType,
+		TargetOffset: parse(raw.TargetOffset),
+	}, nil
+}
+
+// truncateForLog clips a string to maxLen runes, replacing the middle with
+// "..." when it exceeds the budget. Used to keep ffmpeg stderr readable in
+// error wrappers without flooding logs.
+func truncateForLog(s string, maxLen int) string {
+	if maxLen <= 0 || len(s) <= maxLen {
+		return s
+	}
+	half := maxLen / 2
+	return s[:half] + "...[truncated " + strconv.Itoa(len(s)-maxLen) + " bytes]..." + s[len(s)-half:]
 }
