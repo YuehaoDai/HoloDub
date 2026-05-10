@@ -182,15 +182,22 @@ if ($ClearLeases -and ($plan.Name -contains 'worker')) {
         Write-Note "no holodub:lease:* keys found"
     } else {
         # redis-cli prints one key per line with surrounding double quotes.
+        # When there are no matches with --no-raw it prints "(empty array)" —
+        # filter that out so we don't try to DEL a literal "(empty array)" key.
         $cleared = 0
         foreach ($line in $rawKeys -split "`r?`n") {
             $key = $line.Trim().Trim('"')
             if (-not $key) { continue }
+            if ($key -match '^\(empty (array|list or set)\)$') { continue }
             & docker exec $RedisContainer redis-cli DEL $key | Out-Null
             Write-Host "  DEL $key"
             $cleared++
         }
-        Write-Note "cleared $cleared lease(s)"
+        if ($cleared -eq 0) {
+            Write-Note "no holodub:lease:* keys found"
+        } else {
+            Write-Note "cleared $cleared lease(s)"
+        }
     }
 }
 
@@ -198,9 +205,24 @@ if ($ClearLeases -and ($plan.Name -contains 'worker')) {
 if (-not $NoRestart) {
     Write-Step "Restarting containers"
     $svcs = $plan.Name
-    & docker compose -f $ComposeFile restart @svcs
+    # docker compose writes progress lines like "Container ... Restarting"
+    # to STDERR. PowerShell 5 with $ErrorActionPreference = 'Stop' treats
+    # ANY native-command stderr output as a NativeCommandError and aborts —
+    # even when the command exits 0. Neither 2>&1 stream merge nor *>&1
+    # can suppress that, because the throw happens at the I/O layer.
+    # The only reliable workaround is to relax ErrorActionPreference for
+    # the duration of the call and key off $LASTEXITCODE manually.
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        & docker compose -f $ComposeFile restart @svcs 2>&1 | ForEach-Object {
+            Write-Host "  $_" -ForegroundColor DarkGray
+        }
+    } finally {
+        $ErrorActionPreference = $prevEap
+    }
     if ($LASTEXITCODE -ne 0) {
-        throw "docker compose restart failed"
+        throw "docker compose restart failed (exit $LASTEXITCODE)"
     }
     Write-Note ("restarted: " + ($svcs -join ', '))
 } else {
@@ -213,7 +235,7 @@ if ($LogTail -gt 0 -and -not $NoRestart) {
     # shutdown logs and panic that the new one didn't boot.
     Start-Sleep -Seconds 2
     foreach ($t in $plan) {
-        Write-Step "$($t.Container) — last $LogTail log lines"
+        Write-Step "$($t.Container) -- last $LogTail log lines"
         & docker logs $t.Container --tail $LogTail
     }
 }
