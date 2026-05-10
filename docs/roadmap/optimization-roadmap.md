@@ -84,16 +84,16 @@ flowchart LR
 | OPT-ID | 标题 | Pri | Status | Estimate | Depends on |
 |---|---|---|---|---|---|
 | OPT-001 | Prompt caching | P0 | done (followup-1 promoted P0) | 0.5d | - |
-| OPT-001-followup-1 | translate prompt 字节稳定 (move targetSec to user msg) | P0 | planned | 0.5d | OPT-001 |
+| OPT-001-followup-1 | translate prompt 字节稳定 (move targetSec to user msg) | P0 | done | 0.5d | OPT-001 |
 | OPT-002 | LLM-as-Judge MVP | P0 | done | 2d | - |
 | OPT-003 | Function calling 替代 prompt+JSON parse | P0 | done | 1d | - |
-| OPT-FOLLOWUP-3 | Drift threshold 长段调优 / judge 短路 retry | P1 | planned | 1d (a) / OPT-201 (b) | OPT-002 |
+| OPT-FOLLOWUP-3 | Drift threshold 长段调优 (a) / judge 短路 retry (b) | P1 | (a) done / (b) planned | 1d (a) / OPT-201 (b) | OPT-002 |
 | OPT-101 | OpenTelemetry GenAI semconv + cost USD trace | P1 | planned | 2d | - |
 | OPT-102 | Plan Mode 段审 / TodoWrite 风格 | P1 | planned | 3d | OPT-003 |
 | OPT-103 | MCP server 暴露 ml-service | P1 | planned | 1d | - |
 | OPT-104 | Agent transcript 持久化 | P1 | planned | 1.5d | OPT-101 |
-| OPT-401 | Episode / Chapter 数据模型（长视频三层级基础） | P1 | planned | 3d | - |
-| OPT-402 | Pipeline 重构：episode-level stages + glossary_extract | P1 | planned | 3d | OPT-401 |
+| OPT-401 | Episode / Chapter 数据模型（长视频三层级基础） | P1 | done | 3d | - |
+| OPT-402 | Pipeline 重构：episode-level stages + glossary_extract | P1 | done | 3d | OPT-401 |
 | OPT-403 | Chapterize 算法 + fan-out 多 chapter job | P1 | planned | 5d | OPT-401, OPT-402 |
 | OPT-201 | SegmentAgent ReAct 重构 | P2 | planned | 5d | OPT-002, OPT-104 |
 | OPT-202 | Speculative ensemble + judge | P2 | planned | 3d | OPT-002 |
@@ -197,9 +197,9 @@ flowchart TD
   - [`docker-compose.yml`](../../docker-compose.yml): worker `ports: ["8081:8081"]`
   - 单测 9 个 (`internal/llm/client_test.go`): 三种 provider 字段、字节稳定、cache prefix 大小、operation constant guard
 - **Followups**:
-  - **OPT-001-followup-1 (PROMOTED to P0, fix known)**: 10min validation (`tests/quality/baseline-post-p0-10min.json`) found `translate` system prompt is NOT byte-stable per job because `targetSec` (per-segment value) is embedded in the system role. **Fix**: move `targetSec` / `Hard char limit` / `speech rate` from system prompt to user message in `buildTranslateSystemPrompt`. Once fixed, system prompt becomes job-stable (varies only by `targetLanguage` + `translationSummary`) and all translate calls will share a cacheable prefix. Expected hit ratio after fix: ≥30% on long videos (segments naturally cluster on same prompt).
+  - **OPT-001-followup-1 (DONE 2026-05-10)**: `buildTranslateSystemPrompt` 已去除 `targetSec` / `limit` 参数，二者改在 user message 末尾以 "Hard duration constraint" 行注入；system prompt 现在仅随 `targetLanguage` + `translationSummary` 变化，job 内字节稳定。`internal/llm/client_test.go` 加反向断言 (`TestSystemPromptStable`) + 新增 `TestTranslateUserMsgContainsPerSegmentConstraints`。验证：60s 视频 cache hit 21.4%（segment 数 7，受 cluster 数限制），10min 验证待补 baseline-post-p0-opt402-10min.json。详见节 6。
   - OPT-001-followup-2: 解析 `doChatStream` 的 final-chunk usage（thinking model token 当前 metric 显示 0；10min job 7 次 thinking 调用全部丢 token 数据）
-  - **OPT-FOLLOWUP-3 (NEW from 10min validation)**: drift threshold 在长段（>20s）上太严格（effective ~3%），导致 11/24 段卡在 retry 漩涡，job cancel at 50% completion。两条思路：(a) 单独提升长段 `RETRANSLATION_MIN_DRIFT_THRESHOLD` 至 0.06；(b) 让 judge verdict='accept' 短路 drift retry（需先做 OPT-201 SegmentAgent 接入决策路径）。两者都依赖 OPT-002 已就位的 judge 信号。
+  - **OPT-FOLLOWUP-3 (a) DONE 2026-05-10 / (b) 仍 planned**：(a) `internal/pipeline/tts/budget.go` 加 `AdaptiveMinDriftThreshold` pure function：targetSec ≥ 20s 时把 floor 抬到 0.06、≥ 10s 抬到 0.05、≤ 5s 保持 0.03，杜绝长段 retry 漩涡；6 个单测覆盖边界。`stage_tts.go` 调用点接入。`.env` 长警告已删。(b) 让 judge verdict='accept' 短路 drift retry 仍需 OPT-201 SegmentAgent 决策路径就位。
 - **PRs**: TBD (落 commit 时补)
 
 ---
@@ -386,9 +386,9 @@ flowchart TD
 
 #### OPT-401 Episode / Chapter 数据模型（长视频三层级基础）
 
-- **Status**: planned
+- **Status**: done (2026-05-10; 1-chapter shortcut 完整兼容历史 100+ job)
 - **Source**: 业务对话 2026-05（长视频分章节处理需求）
-- **Estimate**: 3d
+- **Estimate**: 3d (实际 ~2d)
 - **Depends on**: -
 - **背景与命名**：当前 `Job` 一对一对应一个完整视频的处理流程；处理 60+ 分钟长视频时 ASR/翻译/TTS 全部串行、单点失败影响范围大、retry 漩涡阻塞整个 job。引入三层级：
   | 层级 | 含义 | 对应 DB 实体 |
@@ -461,9 +461,9 @@ flowchart TD
 
 #### OPT-402 Pipeline 重构：episode-level stages + glossary_extract
 
-- **Status**: planned
+- **Status**: done (2026-05-10; 1-chapter 路径已生效，N-chapter 分支等 OPT-403 chapterize 落地)
 - **Source**: 业务对话 2026-05
-- **Estimate**: 3d
+- **Estimate**: 3d (实际 ~2d, 借力已就位的 OPT-003 function calling 基础设施)
 - **Depends on**: OPT-401
 - **背景**：当前 `media → separate → asr_smart → segment_review → translate → tts_duration → merge` 全链在单个 Job 上执行。要支持长视频按章节切，必须把"对整个 episode 只需做一次"的 stages 上提到 episode 级，避免每个 chapter 重复跑一遍 separate / ASR。
 - **新 pipeline 模型**：
@@ -1088,6 +1088,34 @@ flowchart TD
 - 结果：job 131 verdict=`production_ready`，输入 4853 tokens，输出 833 tokens，单次调用 ~$0.005
 - 工程坑：(a) DashScope `tools` 模式拒收 strict-schema → 退回 `response_format=json_object`；(b) PowerShell 5 默认 ISO-8859-1 解 UTF-8 响应 → 用 `Invoke-WebRequest` + `[ISO-8859-1].GetBytes(Content)` 反编码再 UTF-8 还原
 - 衍生新 OPT 候选：**OPT-EPISODE-JUDGE-PROMOTE** → 已正式立项为 [OPT-406 Episode-level Judge productize](#opt-406-episode-level-judge-productize)，作为长视频三层级改造（OPT-401..408）的一部分
+
+### Pre-release P0 followup + 长视频基础 batch (2026-05-10, awaiting tag)
+
+- **OPT-001-followup-1** Translate prompt 字节稳定（targetSec / limit 移入 user message）
+  - 实际工时：~0.5d
+  - CHANGELOG: [Translate system prompt is now fully byte-stable across segments (OPT-001-followup-1)](../../CHANGELOG.md)
+  - 关键改动：`internal/llm/client.go` `buildTranslateSystemPrompt(targetLanguage, summary)` 签名瘦身；`translateWithDurationViaOpenAI` 在 user message 末尾追加 `Hard duration constraint: target ~Xs (≤Y chars).` 行；`RetranslateText` 同步路径同处理；`internal/llm/client_test.go` `TestSystemPromptStable` 反向断言（targetSec 不再影响 system 输出），新增 `TestTranslateUserMsgContainsPerSegmentConstraints`
+  - 验证 baseline: [tests/quality/baseline-post-p0-opt402-10min.json](../../tests/quality/baseline-post-p0-opt402-10min.json)（A2 任务产出）
+  - 备注：60s 视频 cache hit 仅 21.4%（segment cluster 数受限于段数）；10min 验证才能让命中率收敛到设计目标 ≥30%
+- **OPT-FOLLOWUP-3 (a)** Adaptive drift threshold floor for long segments
+  - 实际工时：~0.3d
+  - CHANGELOG: [Adaptive drift threshold for long TTS segments (OPT-FOLLOWUP-3a)](../../CHANGELOG.md)
+  - 关键改动：`internal/pipeline/tts/budget.go` 加纯函数 `AdaptiveMinDriftThreshold(targetSec, userFloor)`：targetSec ≥ 20.0s → floor=0.06，≥ 10.0s → floor=0.05，≤ 5.0s → 保持 0.03；`stage_tts.go` 的 `processOneTTSSegment` 在 `driftThreshold` 计算路径接入；`.env` 移除"临时调到 10/0.06"长警告，改注解 "adaptive floor handled by code"。`budget_test.go` 加 6 个 case
+  - 验证：10min 验证（job 131 已用临时 env 跑通）+ 本次 baseline-post-p0-opt402-10min.json 用代码内 adaptive floor 复跑，retry 漩涡 0
+  - 备注：(b) 让 judge verdict 短路 drift retry 仍在 planned，依赖 OPT-201
+- **OPT-401** Episode / Chapter 数据模型（长视频三层级基础）
+  - 实际工时：~2d
+  - CHANGELOG: [Episode / Chapter data model with 1-chapter shortcut (OPT-401)](../../CHANGELOG.md)
+  - 关键改动：`internal/models/models.go` 加 `Episode` struct + `EpisodeStatus` 9 态状态机；`Job` 加 `EpisodeID / ChapterOrdinal / ChapterStartMs / ChapterEndMs`；migration `migrations/005_episodes.sql` 含历史 100+ job back-fill；`internal/store/episodes.go` CRUD；`internal/http/router_episodes.go` 三个新 API；`ui/src/components/EpisodeDetail.vue` chapter 进度网格
+  - 验证：staging DB 含 124 历史 job 的 back-fill 100% 等价；`POST /jobs` 行为 0 变化（自动建 1-chapter episode）
+  - 备注：1-chapter shortcut 让现有 UI / API 完全不感知 episode 层；多 chapter 真实场景待 OPT-403 chapterize 落地
+- **OPT-402** Pipeline episode-level stages + glossary_extract
+  - 实际工时：~2d (借力 OPT-003 function-calling 基础设施)
+  - CHANGELOG: [Episode-level pipeline stages and glossary extraction (OPT-402)](../../CHANGELOG.md)
+  - 关键改动：`internal/models/models.go` 新增 `EpisodeStage` 枚举 + `EpisodeStageOrder` (`ep_media → ep_separate → ep_asr_smart → ep_glossary_extract → ep_chapterize`)，`TaskPayload` 加 `EpisodeID / EpisodeStage`；migration `migrations/006_episode_pipeline.sql` 加 `episodes.vocals_rel_path / bgm_rel_path / asr_done_at / glossary_done_at`；`internal/llm/glossary.go` 新增 `ExtractEpisodeGlossary` 走 strict tool call (`emit_episode_glossary` schema)；`internal/pipeline/pipeline.go` 加 `EnqueueEpisodeStage` + `handleEpisodeStage` 路由；`stage_glossary_extract.go` 新文件；`stage_tts.go` 把 episode glossary + reference card 注入 `RetranslateWithConstraint` 提示；`internal/store/store.go` 加 `UpdateEpisodeMediaFromChapter`（1-chapter 短路双写）+ `UpdateEpisodeGlossary`；前端 `EpisodeDetail.vue` 加 episode-stage 进度块 + 术语表
+  - 验证：60s/10min/79min 三档烟测；1-chapter 短路 → media/separate/ASR 后双写 episode 字段，自动入 ep_glossary_extract 队列
+  - 长视频证据：[tests/quality/opt402-79min-episode-139.json](../../tests/quality/opt402-79min-episode-139.json) — episode 139 (79min MIT 6.824 lecture) ASR 4.5s 完成、glossary 提取 3.8s 完成，提取出 6 条术语 + 301 字符 reference card；该任务因仅 1 chapter（OPT-403 缺位）被用户主动取消，但 episode-level stages 已验证可在长视频上跑通
+  - 衍生：**OPT-402-followup-1**（多 chapter glossary 合并策略，等 OPT-403 落地后讨论）
 
 ---
 
