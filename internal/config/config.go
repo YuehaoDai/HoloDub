@@ -88,6 +88,18 @@ type Config struct {
 	// hands the judge verdict to the agent loop (see OPT-201).
 	JudgeObserveOnly bool
 
+	// GlossaryModel: OPT-402. The model used by ExtractEpisodeGlossary
+	// to derive the canonical episode-level term sheet from the full ASR
+	// text. Empty = fall back to OpenAIModel. Recommended: qwen-turbo
+	// (cheap, fast, ~3 s on the 10 min baseline). The glossary call is
+	// non-blocking on the pipeline; failure leaves Episode.Glossary empty
+	// and translate falls back to the no-glossary mode (== current behaviour).
+	GlossaryModel string
+	// GlossaryEnabled: OPT-402 feature flag. true = ep_glossary_extract
+	// stage runs after ep_asr_smart. false = stage is skipped (Episode.
+	// Glossary stays empty). Defaults to true on new installs.
+	GlossaryEnabled bool
+
 	FFmpegBin  string
 	FFprobeBin string
 
@@ -278,6 +290,12 @@ func Load() (Config, error) {
 	cfg.JudgeObserveOnly, err = getEnvBool("JUDGE_OBSERVE_ONLY", true)
 	if err != nil {
 		return Config{}, fmt.Errorf("parse JUDGE_OBSERVE_ONLY: %w", err)
+	}
+
+	cfg.GlossaryModel = getEnv("GLOSSARY_MODEL", "")
+	cfg.GlossaryEnabled, err = getEnvBool("GLOSSARY_ENABLED", true)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse GLOSSARY_ENABLED: %w", err)
 	}
 
 	cfg.TTSConcurrency, err = getEnvInt("TTS_CONCURRENCY", 2)

@@ -30,6 +30,7 @@ type Client struct {
 	segmentReviewModel       string
 	segmentReviewUseTools    bool
 	judgeModel               string // OPT-002; "" disables judging
+	glossaryModel            string // OPT-402; "" => fall back to model
 	thinkingHTTPClient       *http.Client
 	httpClient               *http.Client
 }
@@ -55,6 +56,7 @@ func New(cfg config.Config) *Client {
 		segmentReviewModel:       cfg.SegmentReviewModel,
 		segmentReviewUseTools:    cfg.SegmentReviewUseTools,
 		judgeModel:               cfg.JudgeModel,
+		glossaryModel:            cfg.GlossaryModel,
 		thinkingHTTPClient: &http.Client{
 			Timeout: thinkingTimeout,
 		},
@@ -580,7 +582,8 @@ const (
 	OpRetranslateThinking  = "retranslate_thinking"
 	OpSummary              = "summary"
 	OpReview               = "review"
-	OpJudge                = "judge" // reserved for OPT-002
+	OpJudge                = "judge"    // OPT-002
+	OpGlossary             = "glossary" // OPT-402 episode glossary extraction
 )
 
 func (c *Client) translateViaOpenAI(ctx context.Context, sourceLanguage, targetLanguage, text string) (string, error) {
@@ -620,13 +623,20 @@ func (c *Client) translateWithDurationViaOpenAI(ctx context.Context, sourceLangu
 		limit = 1
 	}
 
-	systemPrompt := buildTranslateSystemPrompt(targetSec, targetLanguage, limit, rate, translationSummary)
+	systemPrompt := buildTranslateSystemPrompt(targetLanguage, rate, translationSummary)
+
+	// OPT-001-followup-1: per-segment constraints (segment duration, char
+	// limit) MUST live in the user message, never in system. The provider
+	// prefix cache only matches a byte-identical prefix; if duration changes
+	// per segment and lives in system, the cache misses every call. Placing
+	// it at the head of the user message keeps system byte-stable per job.
+	var userMsg strings.Builder
+	userMsg.WriteString("[Per-segment constraints]\n")
+	userMsg.WriteString(fmt.Sprintf("Segment duration: %.1f seconds.\n", targetSec))
+	userMsg.WriteString(fmt.Sprintf("Hard character limit: %d characters.\n\n", limit))
 
 	// Inject preceding translated segments for local consistency.
-	// IMPORTANT (OPT-001): we put this in the user message, NOT system,
-	// because contextBefore changes for every segment within a job and
-	// would otherwise break the system prompt prefix cache.
-	var userMsg strings.Builder
+	// contextBefore also varies per segment, so it stays in user message.
 	if len(contextBefore) > 0 {
 		userMsg.WriteString("[Preceding segments — for terminology and style reference]\n")
 		for i, seg := range contextBefore {
@@ -655,22 +665,28 @@ func (c *Client) translateWithDurationViaOpenAI(ctx context.Context, sourceLangu
 // (2) downstream call sites (judge, ensemble, retranslate) can share the
 // same template piece-by-piece without breaking prefix cache reuse.
 //
+// OPT-001-followup-1: signature deliberately accepts ONLY per-job
+// constants (targetLanguage, rate, translationSummary). Per-segment values
+// like duration/char-limit MUST be passed via the user message — putting
+// them here would change the prompt byte-by-byte for every segment and
+// destroy the provider's prefix cache (observed empirically on DashScope
+// qwen-turbo: 0% cache hits on the 10min baseline before this fix).
+//
 // Within a single job, all per-segment calls receive identical
-// (targetSec, targetLanguage, limit, rate, translationSummary) — this
-// guarantees the returned prompt is byte-stable, which is exactly what
-// the provider's prefix cache requires to hit.
-func buildTranslateSystemPrompt(targetSec float64, targetLanguage string, limit int, rate float64, translationSummary string) string {
+// (targetLanguage, rate, translationSummary) — this guarantees the
+// returned prompt is byte-stable, which is exactly what the provider's
+// prefix cache requires to hit.
+func buildTranslateSystemPrompt(targetLanguage string, rate float64, translationSummary string) string {
 	systemPrompt := fmt.Sprintf(
 		"You are a professional dubbing translator. Translate the given source segment accurately and concisely.\n\n"+
 			"[Constraints]\n"+
-			"Segment duration: %.1f seconds.\n"+
 			"Target language: %s.\n"+
-			"Hard character limit: %d characters (speech rate ~%.1f chars/sec).\n\n"+
+			"Speech rate guideline: ~%.1f characters per second (used to derive a per-segment hard character limit, supplied with each segment).\n\n"+
 			"[Rules — follow strictly]\n"+
 			"1. VERBATIM FIDELITY: Translate only what the speaker actually says. "+
 			"Do NOT add explanations, elaborations, summaries, or context that are not in the source. "+
 			"If the speaker is incomplete or informal, reflect that — do not 'complete' their thought.\n"+
-			"2. LENGTH: Stay within %d characters. Aim for natural spoken length — "+
+			"2. LENGTH: Stay within the per-segment hard character limit supplied in the user message. Aim for natural spoken length — "+
 			"do NOT pad with filler phrases to fill the time slot.\n"+
 			"3. PROPER NOUNS & TECHNICAL TERMS: Do NOT translate algorithm names, protocol names, "+
 			"product names, or other proper nouns (e.g. 'Raft' stays 'Raft', 'MapReduce' stays 'MapReduce'). "+
@@ -679,7 +695,7 @@ func buildTranslateSystemPrompt(targetSec float64, targetLanguage string, limit 
 			"Follow any glossary or style guidance provided below.\n"+
 			"5. REGISTER: Match the speaker's tone and register (academic lecture → formal academic style).\n"+
 			"6. OUTPUT: Respond with the translation only. No explanations, no alternatives, no notes.",
-		targetSec, targetLanguage, limit, rate, limit,
+		targetLanguage, rate,
 	)
 
 	if translationSummary != "" {

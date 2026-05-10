@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -132,36 +133,57 @@ func TestUsageParseDashScopeNestedZero(t *testing.T) {
 }
 
 // TestSystemPromptStable is the OPT-001 cache-friendliness invariant:
-// for the same job (same source/target language, same target duration,
-// same chars-per-sec rate, same episode summary), buildTranslateSystemPrompt
-// MUST return a byte-identical string. Otherwise the provider's prefix
-// cache will miss every segment and OPT-001 yields zero benefit.
+// for the same job (same target language, same chars-per-sec rate, same
+// episode summary), buildTranslateSystemPrompt MUST return a byte-identical
+// string. Otherwise the provider's prefix cache will miss every segment
+// and OPT-001 yields zero benefit.
+//
+// OPT-001-followup-1: the signature only accepts per-job constants now —
+// targetSec / limit live in the user message — so this test additionally
+// asserts the function CANNOT be passed per-segment values.
 func TestSystemPromptStable(t *testing.T) {
 	const summary = "Genre: technical lecture. Speakers: SPK_01 (host). Term map: Raft -> Raft, MapReduce -> MapReduce."
 
-	p1 := buildTranslateSystemPrompt(7.5, "zh-CN", 30, 4.0, summary)
-	p2 := buildTranslateSystemPrompt(7.5, "zh-CN", 30, 4.0, summary)
+	p1 := buildTranslateSystemPrompt("zh-CN", 4.0, summary)
+	p2 := buildTranslateSystemPrompt("zh-CN", 4.0, summary)
 	if p1 != p2 {
 		t.Fatalf("system prompt should be byte-stable for identical inputs:\nhash1=%s\nhash2=%s",
 			hashPrompt(p1), hashPrompt(p2))
 	}
 
 	// Sanity: changing summary must change prompt.
-	p3 := buildTranslateSystemPrompt(7.5, "zh-CN", 30, 4.0, summary+" extra")
+	p3 := buildTranslateSystemPrompt("zh-CN", 4.0, summary+" extra")
 	if p1 == p3 {
 		t.Fatal("changing summary did not change system prompt")
 	}
 
-	// Sanity: changing targetSec must change prompt.
-	p4 := buildTranslateSystemPrompt(8.0, "zh-CN", 32, 4.0, summary)
-	if p1 == p4 {
-		t.Fatal("changing targetSec did not change system prompt")
-	}
-
 	// Sanity: changing targetLanguage must change prompt.
-	p5 := buildTranslateSystemPrompt(7.5, "ja", 33, 4.5, summary)
+	p5 := buildTranslateSystemPrompt("ja", 4.5, summary)
 	if p1 == p5 {
 		t.Fatal("changing targetLanguage did not change system prompt")
+	}
+
+	// Sanity: changing rate must change prompt (rate is per-job, derived
+	// from the voice profile — different jobs may use different rates,
+	// but within a job the rate is constant).
+	p6 := buildTranslateSystemPrompt("zh-CN", 5.5, summary)
+	if p1 == p6 {
+		t.Fatal("changing rate did not change system prompt")
+	}
+
+	// OPT-001-followup-1 reverse-assertion: the per-segment-stable system
+	// prompt must NOT mention any specific segment duration or char limit.
+	// If a future maintainer accidentally re-adds them, the test fails loud.
+	for _, banned := range []string{
+		"Segment duration:",
+		"Hard character limit:",
+		"7.5 seconds",
+		"30 characters",
+	} {
+		if strings.Contains(p1, banned) {
+			t.Fatalf("system prompt must not contain per-segment text %q "+
+				"(OPT-001-followup-1: would break prefix cache)", banned)
+		}
 	}
 }
 
@@ -173,7 +195,7 @@ func TestSystemPromptStable(t *testing.T) {
 // to guarantee any provider can cache.
 func TestSystemPromptCachePrefixSize(t *testing.T) {
 	const summary = "Genre: technical lecture. Speakers: SPK_01 (host)."
-	p := buildTranslateSystemPrompt(7.5, "zh-CN", 30, 4.0, summary)
+	p := buildTranslateSystemPrompt("zh-CN", 4.0, summary)
 	if len(p) < 1024 {
 		t.Fatalf("system prompt is %d bytes; cache may not trigger on smaller-prefix providers (need ≥1024)", len(p))
 	}
@@ -183,6 +205,111 @@ func TestSystemPromptCachePrefixSize(t *testing.T) {
 		t.Fatal("episode reference must be at the END of system prompt for cache stability")
 	}
 }
+
+// TestTranslateUserMsgContainsPerSegmentConstraints verifies the OPT-001-
+// followup-1 contract: per-segment duration & character limit MUST appear
+// in the user message body sent to the LLM. If they silently disappear
+// the model loses critical sync information; if they migrate back into
+// system the cache breaks. We capture the actual chat payload via a stub
+// server and inspect both messages.
+func TestTranslateUserMsgContainsPerSegmentConstraints(t *testing.T) {
+	type capture struct {
+		System string
+		User   string
+	}
+	got := make([]capture, 0, 3)
+
+	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req chatCompletionRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		var sys, usr string
+		for _, m := range req.Messages {
+			switch m.Role {
+			case "system":
+				sys = m.Content
+			case "user":
+				usr = m.Content
+			}
+		}
+		got = append(got, capture{System: sys, User: usr})
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"ok"}}],"usage":{"prompt_tokens":100}}`))
+	}))
+	defer stub.Close()
+
+	c := &Client{
+		provider:   "openai_compatible",
+		baseURL:    stub.URL,
+		apiKey:     "sk-test",
+		model:      "qwen-turbo",
+		httpClient: &http.Client{Timeout: 5 * time.Second},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	type call struct {
+		text      string
+		targetSec float64
+	}
+	calls := []call{
+		{text: "Hello world", targetSec: 3.5},
+		{text: "Another segment here", targetSec: 9.0},
+		{text: "Final one", targetSec: 18.25},
+	}
+	for _, ca := range calls {
+		if _, err := c.translateWithDurationViaOpenAI(
+			ctx, "en", "zh-CN", ca.text, ca.targetSec, 4.0,
+			nil, "Genre: tech.",
+		); err != nil {
+			t.Fatalf("translateWithDurationViaOpenAI[%s]: %v", ca.text, err)
+		}
+	}
+	if len(got) != len(calls) {
+		t.Fatalf("want %d captured calls, got %d", len(calls), len(got))
+	}
+
+	// 1. Every user message contains the per-segment constraints block
+	//    with the actual numbers; if they disappeared we'd lose audio sync.
+	for i, ca := range calls {
+		want := []string{
+			"[Per-segment constraints]",
+			"Segment duration:",
+			"Hard character limit:",
+		}
+		for _, sub := range want {
+			if !strings.Contains(got[i].User, sub) {
+				t.Fatalf("call[%d] user missing %q; user=%q", i, sub, got[i].User)
+			}
+		}
+		// Numerical proof: the chosen targetSec appears verbatim with one
+		// decimal place. Catches any future helper that quietly rounds.
+		wantSec := fmt.Sprintf("%.1f seconds", ca.targetSec)
+		if !strings.Contains(got[i].User, wantSec) {
+			t.Fatalf("call[%d] user missing duration %q; user=%q", i, wantSec, got[i].User)
+		}
+	}
+
+	// 2. System message MUST be byte-identical across calls (this is the
+	//    whole point of OPT-001-followup-1; if it isn't, prefix cache misses
+	//    every segment).
+	for i := 1; i < len(got); i++ {
+		if got[i].System != got[0].System {
+			t.Fatalf("system prompt drifted between calls 0 and %d; "+
+				"hash0=%s hash%d=%s", i, hashPrompt(got[0].System),
+				i, hashPrompt(got[i].System))
+		}
+	}
+
+	// 3. System MUST NOT contain per-segment numbers from any call.
+	for _, banned := range []string{"3.5 seconds", "9.0 seconds", "18.3 seconds", "Segment duration:", "Hard character limit:"} {
+		if strings.Contains(got[0].System, banned) {
+			t.Fatalf("system contains per-segment text %q (broke cache invariant)", banned)
+		}
+	}
+}
+
 
 // TestOperationConstants guards against a future maintainer renaming or
 // removing the metric labels. Changing these breaks existing dashboards /
@@ -195,6 +322,7 @@ func TestOperationConstants(t *testing.T) {
 		OpSummary:             "summary",
 		OpReview:              "review",
 		OpJudge:               "judge",
+		OpGlossary:            "glossary",
 	}
 	for got, want := range cases {
 		if got != want {
