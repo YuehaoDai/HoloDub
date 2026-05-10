@@ -323,6 +323,7 @@ func TestOperationConstants(t *testing.T) {
 		OpReview:              "review",
 		OpJudge:               "judge",
 		OpGlossary:            "glossary",
+		OpChapterReview:       "chapter_review",
 	}
 	for got, want := range cases {
 		if got != want {

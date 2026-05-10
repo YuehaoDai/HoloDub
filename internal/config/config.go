@@ -100,6 +100,19 @@ type Config struct {
 	// Glossary stays empty). Defaults to true on new installs.
 	GlossaryEnabled bool
 
+	// ChapterReviewModel: OPT-403 Pass 3 LLM. Reviews the deterministic DP
+	// chapter cuts, optionally nudges them by ±1 silence-gap, and mints a
+	// bilingual chapter title for each chapter. Empty = fall back to
+	// OpenAIModel. Recommended: qwen-turbo (same tier as glossary). The
+	// review call is non-blocking — on failure the DP cuts are used as-is
+	// and chapter titles default to "Chapter N".
+	ChapterReviewModel string
+	// ChapterReviewLLMEnabled: OPT-403 feature flag for Pass 3. false =
+	// skip LLM review entirely (cuts come straight from DP, titles default
+	// to "Chapter N"). true = call ReviewChapterCuts after DP. Defaults
+	// to true on new installs.
+	ChapterReviewLLMEnabled bool
+
 	FFmpegBin  string
 	FFprobeBin string
 
@@ -296,6 +309,12 @@ func Load() (Config, error) {
 	cfg.GlossaryEnabled, err = getEnvBool("GLOSSARY_ENABLED", true)
 	if err != nil {
 		return Config{}, fmt.Errorf("parse GLOSSARY_ENABLED: %w", err)
+	}
+
+	cfg.ChapterReviewModel = getEnv("CHAPTER_REVIEW_MODEL", "")
+	cfg.ChapterReviewLLMEnabled, err = getEnvBool("CHAPTER_REVIEW_LLM_ENABLED", true)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse CHAPTER_REVIEW_LLM_ENABLED: %w", err)
 	}
 
 	cfg.TTSConcurrency, err = getEnvInt("TTS_CONCURRENCY", 2)

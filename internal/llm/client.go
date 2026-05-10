@@ -31,6 +31,7 @@ type Client struct {
 	segmentReviewUseTools    bool
 	judgeModel               string // OPT-002; "" disables judging
 	glossaryModel            string // OPT-402; "" => fall back to model
+	chapterReviewModel       string // OPT-403; "" => fall back to model
 	thinkingHTTPClient       *http.Client
 	httpClient               *http.Client
 }
@@ -57,6 +58,7 @@ func New(cfg config.Config) *Client {
 		segmentReviewUseTools:    cfg.SegmentReviewUseTools,
 		judgeModel:               cfg.JudgeModel,
 		glossaryModel:            cfg.GlossaryModel,
+		chapterReviewModel:       cfg.ChapterReviewModel,
 		thinkingHTTPClient: &http.Client{
 			Timeout: thinkingTimeout,
 		},
@@ -577,13 +579,14 @@ type usageStats struct {
 // Prometheus cardinality grows linearly with len(operations) * len(models).
 // Adding a new value requires updating the corresponding doc and rules.
 const (
-	OpTranslate            = "translate"
-	OpRetranslate          = "retranslate"
-	OpRetranslateThinking  = "retranslate_thinking"
-	OpSummary              = "summary"
-	OpReview               = "review"
-	OpJudge                = "judge"    // OPT-002
-	OpGlossary             = "glossary" // OPT-402 episode glossary extraction
+	OpTranslate           = "translate"
+	OpRetranslate         = "retranslate"
+	OpRetranslateThinking = "retranslate_thinking"
+	OpSummary             = "summary"
+	OpReview              = "review"
+	OpJudge               = "judge"          // OPT-002
+	OpGlossary            = "glossary"       // OPT-402 episode glossary extraction
+	OpChapterReview       = "chapter_review" // OPT-403 chapter cut review + bilingual title
 )
 
 func (c *Client) translateViaOpenAI(ctx context.Context, sourceLanguage, targetLanguage, text string) (string, error) {
