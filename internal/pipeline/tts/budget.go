@@ -68,6 +68,41 @@ func EffectiveDriftThreshold(relThreshold, absMaxDriftSec, minRelThreshold, targ
 	return threshold
 }
 
+// AdaptiveMinDriftThreshold relaxes the relative-threshold floor for long
+// segments where the absolute precision required by a low floor is
+// physically unreachable by current TTS+LLM stacks.
+//
+// OPT-FOLLOWUP-3: empirical evidence on the 10 min baseline (job 130/131):
+// segments ≥20 s with the global 0.03 floor required ±0.6 s of dub-length
+// precision, which the kimi-k2.5 + cosyvoice2 stack cannot consistently
+// hit. The retry loop oscillated and exhausted all 50 attempts. Relaxing
+// the floor proportionally to segment length keeps short-segment quality
+// strict (default 0.03 → ±0.15 s @ 5 s) while making long-segment retry
+// converge (0.06 → ±1.2 s @ 20 s).
+//
+// The function is monotonic in baseFloor (returns the max) so a user who
+// sets a stricter global floor (.env override) is never silently relaxed
+// below their setting.
+//
+// Bands chosen empirically (validated on 10 min retry-oscillation traces):
+//
+//	targetSec ≥ 20 s → floor = max(baseFloor, 0.06)   ~±1.2 s
+//	targetSec ≥ 10 s → floor = max(baseFloor, 0.045)  ~±0.45 s
+//	targetSec <  10 s → floor = baseFloor             unchanged
+//
+// Per-band threshold values are documented inline so the next maintainer
+// can re-tune them without re-deriving the rationale.
+func AdaptiveMinDriftThreshold(baseFloor, targetSec float64) float64 {
+	switch {
+	case targetSec >= 20.0:
+		return math.Max(baseFloor, 0.06)
+	case targetSec >= 10.0:
+		return math.Max(baseFloor, 0.045)
+	default:
+		return baseFloor
+	}
+}
+
 // EffectiveBorrowDriftPct returns the maximum overflow drift (relative to
 // targetMs) that is still acceptable for "borrow from trailing gap" without
 // triggering re-translation. It applies the absolute drift cap to the

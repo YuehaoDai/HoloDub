@@ -66,6 +66,70 @@ func TestEffectiveDriftThreshold(t *testing.T) {
 	}
 }
 
+// TestAdaptiveMinDriftThreshold validates the OPT-FOLLOWUP-3 long-segment
+// floor relaxation. The function MUST:
+//
+//  1. leave short segments (<10s) at the user-configured baseFloor;
+//  2. raise the floor to ~0.045 for medium segments (10-20s);
+//  3. raise the floor to ~0.06 for long segments (≥20s);
+//  4. NEVER lower a user-set baseFloor that is already stricter than the
+//     band's relaxed value (monotonic-in-baseFloor invariant — otherwise
+//     a global override would be silently weakened).
+func TestAdaptiveMinDriftThreshold(t *testing.T) {
+	tests := []struct {
+		name      string
+		baseFloor float64
+		targetSec float64
+		want      float64
+	}{
+		{
+			name:      "short segment uses base floor unchanged",
+			baseFloor: 0.03,
+			targetSec: 8.0,
+			want:      0.03,
+		},
+		{
+			name:      "medium segment relaxed to 0.045",
+			baseFloor: 0.03,
+			targetSec: 15.0,
+			want:      0.045,
+		},
+		{
+			name:      "long segment relaxed to 0.06",
+			baseFloor: 0.03,
+			targetSec: 25.0,
+			want:      0.06,
+		},
+		{
+			name:      "user-set strict floor not relaxed even on long segment",
+			baseFloor: 0.08, // user wants ≥0.08 globally
+			targetSec: 25.0, // long segment band would say 0.06
+			want:      0.08, // monotonic: keep user value
+		},
+		{
+			name:      "exact 10s boundary is medium",
+			baseFloor: 0.03,
+			targetSec: 10.0,
+			want:      0.045,
+		},
+		{
+			name:      "exact 20s boundary is long",
+			baseFloor: 0.03,
+			targetSec: 20.0,
+			want:      0.06,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := AdaptiveMinDriftThreshold(tt.baseFloor, tt.targetSec)
+			if math.Abs(got-tt.want) > 1e-9 {
+				t.Fatalf("AdaptiveMinDriftThreshold(base=%v, target=%v) = %v, want %v",
+					tt.baseFloor, tt.targetSec, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestEffectiveBorrowDriftPct(t *testing.T) {
 	tests := []struct {
 		name           string
