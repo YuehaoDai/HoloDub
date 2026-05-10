@@ -401,6 +401,22 @@ func (s *Store) UpdateSegmentSynthResults(ctx context.Context, segments []models
 	})
 }
 
+// UpdateSegmentJudgeResult writes the OPT-002 judge verdict for one segment.
+// score is the scalar overall score (0..1, currently == JudgeResult.Fidelity);
+// metaJSON is the full structured verdict serialised to JSON (issues, sub-scores).
+//
+// This MUST NOT be called inside the main pipeline transaction — judging is
+// async and observe-only, so its failures are non-fatal and should not roll
+// back synthesis writes.
+func (s *Store) UpdateSegmentJudgeResult(ctx context.Context, segmentID uint, score float64, metaJSON []byte) error {
+	updates := map[string]any{
+		"judge_score": score,
+		"judge_meta":  metaJSON,
+		"updated_at":  time.Now().UTC(),
+	}
+	return s.db.WithContext(ctx).Model(&models.Segment{}).Where("id = ?", segmentID).Updates(updates).Error
+}
+
 func (s *Store) UpsertBindings(ctx context.Context, jobID uint, inputs []BindingInput) ([]uint, error) {
 	if len(inputs) == 0 {
 		return nil, nil

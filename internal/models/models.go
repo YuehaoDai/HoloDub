@@ -186,6 +186,13 @@ type Segment struct {
 	TTSDurationMs      int64             `json:"tts_duration_ms"`
 	Status             SegmentStatus     `json:"status" gorm:"size:32;index:idx_segment_status"`
 	Meta               datatypes.JSONMap `json:"meta" gorm:"type:jsonb"`
+	// JudgeScore + JudgeMeta are populated asynchronously by the OPT-002
+	// LLM-as-Judge MVP. Both nil when judging is disabled (JUDGE_MODEL="")
+	// or when the judge call has not yet run for this segment.
+	// JudgeScore is the overall scalar (currently equal to Fidelity 0..1);
+	// JudgeMeta carries the full structured verdict (issues, sub-scores).
+	JudgeScore         *float64          `json:"judge_score,omitempty" gorm:"type:numeric"`
+	JudgeMeta          datatypes.JSON    `json:"judge_meta,omitempty" gorm:"type:jsonb"`
 	CreatedAt          time.Time         `json:"created_at"`
 	UpdatedAt          time.Time         `json:"updated_at"`
 }

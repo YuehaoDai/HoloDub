@@ -53,6 +53,16 @@ export interface Segment {
   speaker_label: string;
   voice_profile_id?: number;
   meta?: Record<string, unknown>;
+  // OPT-002 LLM-as-Judge MVP. Both undefined when judging is disabled
+  // (JUDGE_MODEL=""), or when the async judge call has not yet completed.
+  judge_score?: number; // 0..1, currently equal to JudgeResult.fidelity
+  judge_meta?: {
+    fidelity?: number;
+    fluency?: number;
+    coherence?: number;
+    issues?: string[];
+    verdict?: "accept" | "retry" | "split";
+  };
 }
 
 export interface StageRun {

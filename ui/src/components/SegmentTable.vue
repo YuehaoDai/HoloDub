@@ -44,6 +44,8 @@
           <th class="px-3 py-2 text-center font-medium w-24">声音</th>
           <th class="px-3 py-2 text-center font-medium w-20">漂移率</th>
           <th class="px-3 py-2 text-center font-medium w-20">偏差时长</th>
+          <!-- OPT-002: AI 评分 (observe-only). Hidden when no segments have judge_score. -->
+          <th v-if="hasAnyJudgeScore" class="px-3 py-2 text-center font-medium w-16" title="OPT-002 LLM-as-Judge: 0-100, 综合保真/流畅/连贯">AI 评分</th>
           <th class="px-3 py-2 text-center font-medium w-40">原声 / TTS</th>
           <th class="px-3 py-2 text-center font-medium w-16">操作</th>
         </tr>
@@ -122,6 +124,16 @@
                 {{ driftSecLabel(seg) }}
               </span>
             </td>
+            <!-- OPT-002 judge column: only render when feature is in use. -->
+            <td v-if="hasAnyJudgeScore" class="px-3 py-2 text-center">
+              <span
+                v-if="seg.judge_score != null"
+                class="inline-block px-1.5 py-0.5 rounded-full text-[10px] font-medium font-mono"
+                :class="judgeBadgeClass(seg.judge_score)"
+                :title="judgeTooltip(seg)"
+              >{{ Math.round(seg.judge_score * 100) }}</span>
+              <span v-else class="text-[10px] text-[#37465f]">—</span>
+            </td>
             <td class="px-3 py-2">
               <div class="flex flex-col gap-1">
                 <!-- 原声 -->
@@ -198,7 +210,7 @@
 
           <!-- 波形展开行 -->
           <tr v-if="waveformSegId === seg.id" class="border-t border-[#273246] bg-[#111722]">
-            <td colspan="9" class="px-4 py-3">
+            <td :colspan="hasAnyJudgeScore ? 10 : 9" class="px-4 py-3">
               <div class="flex gap-6">
                 <div class="flex-1 min-w-0">
                   <WaveformViewer
@@ -229,7 +241,7 @@
 
           <!-- 内联编辑行 -->
           <tr v-if="editingId === seg.id" class="border-t border-[#273246] bg-[#111722]">
-            <td colspan="9" class="px-4 py-3">
+            <td :colspan="hasAnyJudgeScore ? 10 : 9" class="px-4 py-3">
               <div class="space-y-2">
                 <label class="block text-[10px] text-[#9db0c9]">译文（可编辑）</label>
                 <textarea
@@ -295,7 +307,7 @@
         </template>
 
         <tr v-if="!segments.length">
-          <td colspan="9" class="px-4 py-8 text-center text-[#37465f]">暂无段落数据</td>
+          <td :colspan="hasAnyJudgeScore ? 10 : 9" class="px-4 py-8 text-center text-[#37465f]">暂无段落数据</td>
         </tr>
       </tbody>
     </table>
@@ -534,6 +546,30 @@ function driftSecClass(seg: Segment): string {
   if (abs < 0.5) return "bg-green-900 text-green-300";
   if (abs < 1.5) return "bg-yellow-900 text-yellow-300";
   return "bg-red-900 text-red-300";
+}
+
+// OPT-002: LLM-as-Judge column. Only show the column when at least one
+// segment has been judged (so jobs predating the feature look unchanged).
+const hasAnyJudgeScore = computed(() =>
+  props.segments.some((s) => s.judge_score != null),
+);
+
+function judgeBadgeClass(score: number): string {
+  if (score >= 0.8) return "bg-green-900 text-green-300";
+  if (score >= 0.6) return "bg-yellow-900 text-yellow-300";
+  return "bg-red-900 text-red-300";
+}
+
+function judgeTooltip(seg: Segment): string {
+  const m = seg.judge_meta;
+  if (!m) return `score=${seg.judge_score}`;
+  const parts: string[] = [];
+  if (m.fidelity != null) parts.push(`fid=${m.fidelity.toFixed(2)}`);
+  if (m.fluency != null) parts.push(`flu=${m.fluency.toFixed(2)}`);
+  if (m.coherence != null) parts.push(`coh=${m.coherence.toFixed(2)}`);
+  if (m.verdict) parts.push(`verdict=${m.verdict}`);
+  if (m.issues && m.issues.length > 0) parts.push(`issues: ${m.issues.join("; ")}`);
+  return parts.join(" | ");
 }
 
 function fmtMs(ms: number): string {

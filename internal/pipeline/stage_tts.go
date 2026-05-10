@@ -2,11 +2,13 @@ package pipeline
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"math"
 	"sync"
+	"time"
 
 	"holodub/internal/llm"
 	"holodub/internal/ml"
@@ -466,5 +468,83 @@ func (s *Service) processOneTTSSegment(ctx context.Context, job *models.Job, seg
 			"error", saveErr,
 		)
 	}
+
+	// OPT-002: async judge call. Observe-only by default — never blocks
+	// synthesis, never rolls back the segment, never affects retry decisions.
+	// Decision integration is OPT-201 (SegmentAgent ReAct refactor).
+	s.maybeJudgeSegmentAsync(job, *seg, contextBefore)
+
 	return nil
+}
+
+// maybeJudgeSegmentAsync fires off a background judge call for the just-
+// synthesised segment when JUDGE_MODEL is configured. The function returns
+// immediately; the goroutine has its own deadline + writes results via
+// store.UpdateSegmentJudgeResult on a fresh background context so a worker
+// SIGTERM cancelling the synthesis ctx does NOT silently drop the verdict.
+//
+// Failure modes (network / parse / provider error) are logged and dropped:
+// observability dashboards should monitor holodub_llm_strict_parse_failed_total
+// {operation="judge"} to detect sustained issues.
+func (s *Service) maybeJudgeSegmentAsync(job *models.Job, segCopy models.Segment, contextBefore []llm.ContextSegment) {
+	if s.cfg.JudgeModel == "" {
+		return
+	}
+	if segCopy.SourceText == "" || segCopy.TargetText == "" {
+		return
+	}
+	go func() {
+		// Detached background context so a worker shutdown signal does
+		// not silently lose the verdict mid-flight. 30s ceiling is
+		// generous for a single short LLM call but bounds the goroutine's
+		// max in-flight time.
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		result, err := s.llm.JudgeFidelity(ctx, llm.JudgeArgs{
+			SrcText:        segCopy.SourceText,
+			TgtText:        segCopy.TargetText,
+			SrcLang:        job.SourceLanguage,
+			TgtLang:        job.TargetLanguage,
+			EpisodeSummary: job.TranslationSummary,
+			PrevContext:    contextBefore,
+		})
+		if err != nil {
+			slog.Warn("judge call failed",
+				"job_id", job.ID,
+				"segment_id", segCopy.ID,
+				"error", err,
+			)
+			return
+		}
+		if result == nil {
+			return // judging disabled or empty inputs — should not reach here
+		}
+
+		metaJSON, err := json.Marshal(result)
+		if err != nil {
+			slog.Warn("judge result marshal failed",
+				"job_id", job.ID,
+				"segment_id", segCopy.ID,
+				"error", err,
+			)
+			return
+		}
+		if err := s.store.UpdateSegmentJudgeResult(ctx, segCopy.ID, result.OverallScore(), metaJSON); err != nil {
+			slog.Warn("judge result persist failed",
+				"job_id", job.ID,
+				"segment_id", segCopy.ID,
+				"error", err,
+			)
+			return
+		}
+		slog.Info("judge result recorded",
+			"job_id", job.ID,
+			"segment_id", segCopy.ID,
+			"verdict", result.Verdict,
+			"fidelity", result.Fidelity,
+			"fluency", result.Fluency,
+			"coherence", result.Coherence,
+		)
+	}()
 }
