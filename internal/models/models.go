@@ -36,11 +36,17 @@ const (
 	JobStatusQueued          JobStatus = "queued"
 	JobStatusRunning         JobStatus = "running"
 	JobStatusAwaitingReview  JobStatus = "awaiting_review"
-	JobStatusFailed          JobStatus = "failed"
-	JobStatusCompleted       JobStatus = "completed"
-	JobStatusTimedOut        JobStatus = "timed_out"
-	JobStatusCancelRequested JobStatus = "cancel_requested"
-	JobStatusCancelled       JobStatus = "cancelled"
+	// JobStatusAwaitingChapterize is the transitional state OPT-403 puts chapter 1
+	// into between "ASR/glossary done" and "fan-out chapter 2..N created". Chapter 1
+	// stays here while runFanOutChapters slices media + reassigns segments + creates
+	// sibling chapter Jobs; once fan-out commits, every chapter (including ch1) goes
+	// back to JobStatusQueued and resumes from StageSegmentReview.
+	JobStatusAwaitingChapterize JobStatus = "awaiting_chapterize"
+	JobStatusFailed             JobStatus = "failed"
+	JobStatusCompleted          JobStatus = "completed"
+	JobStatusTimedOut           JobStatus = "timed_out"
+	JobStatusCancelRequested    JobStatus = "cancel_requested"
+	JobStatusCancelled          JobStatus = "cancelled"
 )
 
 type Job struct {
@@ -71,23 +77,31 @@ type Job struct {
 	ChapterOrdinal int `json:"chapter_ordinal" gorm:"index:idx_jobs_episode_chapter,priority:2;default:1"`
 	// ChapterStartMs / ChapterEndMs mark the chapter's time window inside the source video,
 	// in milliseconds. Both default to 0 (entire video) until OPT-403 chapterize fills them in.
-	ChapterStartMs    int64         `json:"chapter_start_ms"`
-	ChapterEndMs      int64         `json:"chapter_end_ms"`
-	RetryCount        int           `json:"retry_count"`
-	MaxRetries        int           `json:"max_retries"`
-	WebhookURL        string        `json:"webhook_url"`
-	WebhookSecret     string        `json:"-" gorm:"type:text"`
-	HeartbeatAt       *time.Time    `json:"heartbeat_at"`
-	StartedAt         *time.Time    `json:"started_at"`
-	CompletedAt       *time.Time    `json:"completed_at"`
-	DeadlineAt        *time.Time    `json:"deadline_at"`
-	CancelRequestedAt *time.Time    `json:"cancel_requested_at"`
-	CancelledAt       *time.Time    `json:"cancelled_at"`
-	CreatedAt         time.Time     `json:"created_at"`
-	UpdatedAt         time.Time     `json:"updated_at"`
-	Segments          []Segment     `json:"segments,omitempty"`
-	Speakers          []Speaker     `json:"speakers,omitempty"`
-	StageRuns         []JobStageRun `json:"stage_runs,omitempty"`
+	ChapterStartMs int64 `json:"chapter_start_ms"`
+	ChapterEndMs   int64 `json:"chapter_end_ms"`
+	// ChapterTitle / ChapterTitleTranslated / ChapterSummaryMD are written by OPT-403
+	// chapterize after the LLM Pass 3 review (see internal/llm/chapter_review.go). Empty
+	// strings on 1-chapter shortcut paths and on every historical Job. The translated
+	// title is what the EpisodeDetail UI shows by default; the source title is preserved
+	// for downstream search / human review.
+	ChapterTitle           string        `json:"chapter_title" gorm:"size:256"`
+	ChapterTitleTranslated string        `json:"chapter_title_translated" gorm:"size:256"`
+	ChapterSummaryMD       string        `json:"chapter_summary_md" gorm:"type:text"`
+	RetryCount             int           `json:"retry_count"`
+	MaxRetries             int           `json:"max_retries"`
+	WebhookURL             string        `json:"webhook_url"`
+	WebhookSecret          string        `json:"-" gorm:"type:text"`
+	HeartbeatAt            *time.Time    `json:"heartbeat_at"`
+	StartedAt              *time.Time    `json:"started_at"`
+	CompletedAt            *time.Time    `json:"completed_at"`
+	DeadlineAt             *time.Time    `json:"deadline_at"`
+	CancelRequestedAt      *time.Time    `json:"cancel_requested_at"`
+	CancelledAt            *time.Time    `json:"cancelled_at"`
+	CreatedAt              time.Time     `json:"created_at"`
+	UpdatedAt              time.Time     `json:"updated_at"`
+	Segments               []Segment     `json:"segments,omitempty"`
+	Speakers               []Speaker     `json:"speakers,omitempty"`
+	StageRuns              []JobStageRun `json:"stage_runs,omitempty"`
 }
 
 type VoiceProfile struct {
@@ -468,13 +482,65 @@ type Episode struct {
 	// episode-level judge stage. Both nil until that stage runs.
 	EpisodeJudgeScore *float64       `json:"episode_judge_score,omitempty" gorm:"type:numeric"`
 	EpisodeJudgeMeta  datatypes.JSON `json:"episode_judge_meta,omitempty" gorm:"type:jsonb"`
-	Status            EpisodeStatus  `json:"status" gorm:"size:32;index"`
-	OutputRelPath     string         `json:"output_relpath"`
-	ErrorMessage      string         `json:"error_message" gorm:"type:text"`
-	CompletedAt       *time.Time     `json:"completed_at"`
-	CreatedAt         time.Time      `json:"created_at"`
-	UpdatedAt         time.Time      `json:"updated_at"`
-	Chapters          []Job          `json:"chapters,omitempty" gorm:"foreignKey:EpisodeID"`
+	Status        EpisodeStatus `json:"status" gorm:"size:32;index"`
+	OutputRelPath string        `json:"output_relpath"`
+	// OutputLayoutVersion distinguishes pre-OPT-403 layout (1 = jobs/{id}/output/...)
+	// from the unified OPT-403 layout (2 = episodes/{ep_id}/{chapters,output}/...).
+	// New episodes default to 2; the cmd/migrate-output one-shot tool back-fills every
+	// historical episode to 2 in lock-step with hard-linking the physical files. Code
+	// reading episode artefacts MUST honour this field — never assume layout.
+	OutputLayoutVersion int8 `json:"output_layout_version" gorm:"not null;default:1"`
+	// ChaptersManifestRelPath points at episodes/{ep_id}/chapters.json (written by
+	// stage_episode_merge after every chapter completes). Empty until episode-merge
+	// runs, or until back-fill seeds it.
+	ChaptersManifestRelPath string `json:"chapters_manifest_rel_path" gorm:"size:512"`
+	// LoudnormStats records per-chapter measured EBU R128 LUFS / TP / LRA from
+	// stage_merge plus the optional master-pass stats from stage_episode_merge. Shape:
+	//   { "vp0": { "ch01": {...}, "ch02": {...}, "master": {...} }, "vp1": { ... } }
+	// Used by chapters.json to surface per-chapter loudness, and by future OPT-405/406.
+	LoudnormStats datatypes.JSON `json:"loudnorm_stats,omitempty" gorm:"type:jsonb"`
+	ErrorMessage  string         `json:"error_message" gorm:"type:text"`
+	CompletedAt   *time.Time     `json:"completed_at"`
+	CreatedAt     time.Time      `json:"created_at"`
+	UpdatedAt     time.Time      `json:"updated_at"`
+	Chapters      []Job          `json:"chapters,omitempty" gorm:"foreignKey:EpisodeID"`
+}
+
+// GetEpisodeOutputRelPath returns the relpath of the episode-level final video for
+// the given voice profile. Format: episodes/{ep_id}/output/vp{vpID}/final.mp4
+//
+// All path generation for episode artefacts MUST go through these four helpers
+// (do not fmt.Sprintf in handlers) — single source of truth for the OPT-403 output
+// layout, and the only reason lessons-learned.mdc §1's "always read DB, never
+// reconstruct path by convention" rule does not get repeatedly violated.
+func (e *Episode) GetEpisodeOutputRelPath(vpID uint) string {
+	return fmt.Sprintf("episodes/%d/output/vp%d/final.mp4", e.ID, vpID)
+}
+
+// GetChapterOutputRelPath returns the relpath of one chapter's final video.
+// Format: episodes/{ep_id}/chapters/vp{vpID}/ch{ordinal:02d}.mp4
+//
+// Used by chapter-level stage_merge as the OUTPUT and by stage_episode_merge as
+// the INPUT it concats from.
+func (e *Episode) GetChapterOutputRelPath(ordinal int, vpID uint) string {
+	return fmt.Sprintf("episodes/%d/chapters/vp%d/ch%02d.mp4", e.ID, vpID, ordinal)
+}
+
+// GetEpisodeSeparateRelPath returns the relpath of the episode-level master vocals
+// or BGM track. Track must be one of "vocals" or "bgm".
+// Format: episodes/{ep_id}/separate/{track}.wav
+func (e *Episode) GetEpisodeSeparateRelPath(track string) string {
+	return fmt.Sprintf("episodes/%d/separate/%s.wav", e.ID, track)
+}
+
+// GetChaptersJSONRelPath returns the relpath of the chapter manifest JSON.
+// Format: episodes/{ep_id}/chapters.json
+//
+// Written by stage_episode_merge / cmd/migrate-output. Read by the UI's "下载
+// 章节清单" button and by any external CLI that needs the bilingual chapter
+// list without going through the API.
+func (e *Episode) GetChaptersJSONRelPath() string {
+	return fmt.Sprintf("episodes/%d/chapters.json", e.ID)
 }
 
 // EpisodeStage is the typed pipeline stage for the episode-level pre-fan-out
@@ -521,6 +587,11 @@ var EpisodeStageOrder = []EpisodeStage{
 	EpisodeStageASRSmart,
 	EpisodeStageGlossaryExtract,
 	EpisodeStageChapterize,
+	// EpisodeStageEpisodeMerge is intentionally NOT in this list. It runs at a
+	// non-deterministic time AFTER all chapter Jobs reach JobStatusCompleted, so
+	// chapter-merge code triggers it via pipeline.maybeEnqueueEpisodeMerge instead
+	// of EpisodeStageChapterize.Next() returning it. Same reasoning will apply to
+	// EpisodeStageEpisodeJudge once OPT-406 lands.
 }
 
 // Next returns the stage that should follow the receiver in the episode-

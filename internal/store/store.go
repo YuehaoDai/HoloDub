@@ -119,6 +119,11 @@ func (s *Store) CreateJob(ctx context.Context, job *models.Job) error {
 				TargetLanguage:     job.TargetLanguage,
 				TotalChapters:      1,
 				Status:             models.EpisodeStatusPending,
+				// OPT-403: every newly-created episode is on the unified output
+				// layout from day 1. The SQL DEFAULT 1 only matters for the 138
+				// historical OPT-401 back-fill rows; cmd/migrate-output flips
+				// those to 2 in lock-step with hard-linking the physical files.
+				OutputLayoutVersion: 2,
 			}
 			if err := tx.Create(&ep).Error; err != nil {
 				return fmt.Errorf("auto-create episode: %w", err)
@@ -178,6 +183,10 @@ func (s *Store) CreateEpisode(ctx context.Context, ep *models.Episode) error {
 	}
 	if ep.TotalChapters == 0 {
 		ep.TotalChapters = 1
+	}
+	if ep.OutputLayoutVersion == 0 {
+		// OPT-403: see CreateJob — every newly-created episode is v2 by default.
+		ep.OutputLayoutVersion = 2
 	}
 	return s.db.WithContext(ctx).Create(ep).Error
 }

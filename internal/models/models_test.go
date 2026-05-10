@@ -235,3 +235,44 @@ func TestEpisodeStatus_IsTerminal(t *testing.T) {
 		t.Fatal("empty status should not be terminal")
 	}
 }
+
+// TestEpisodePathHelpers locks the OPT-403 unified output layout. Anything
+// generating an episode artefact path MUST go through these helpers so that
+// (a) the path string is computed in one place and (b) lessons-learned.mdc §1
+// (the "fmt.Sprintf segment-XXXX.wav" antipattern) does not get re-introduced
+// at every new file-serving / merge / fan-out site.
+func TestEpisodePathHelpers(t *testing.T) {
+	ep := &Episode{ID: 138}
+
+	cases := []struct {
+		name string
+		got  string
+		want string
+	}{
+		{"episode output vp0", ep.GetEpisodeOutputRelPath(0), "episodes/138/output/vp0/final.mp4"},
+		{"episode output vp7", ep.GetEpisodeOutputRelPath(7), "episodes/138/output/vp7/final.mp4"},
+		{"chapter 1 vp0", ep.GetChapterOutputRelPath(1, 0), "episodes/138/chapters/vp0/ch01.mp4"},
+		{"chapter 14 vp0 zero-pads ordinal", ep.GetChapterOutputRelPath(14, 0), "episodes/138/chapters/vp0/ch14.mp4"},
+		{"separate vocals", ep.GetEpisodeSeparateRelPath("vocals"), "episodes/138/separate/vocals.wav"},
+		{"separate bgm", ep.GetEpisodeSeparateRelPath("bgm"), "episodes/138/separate/bgm.wav"},
+		{"chapters json", ep.GetChaptersJSONRelPath(), "episodes/138/chapters.json"},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.got != tt.want {
+				t.Fatalf("got %q, want %q", tt.got, tt.want)
+			}
+		})
+	}
+}
+
+// TestJobStatusAwaitingChapterizeConstant guards that the OPT-403 transitional
+// state introduced for chapter 1 (between "ASR done" and "fan-out committed")
+// keeps its expected string value, since the UI renders the badge by exact
+// match and store layer stages keyed off it.
+func TestJobStatusAwaitingChapterizeConstant(t *testing.T) {
+	if string(JobStatusAwaitingChapterize) != "awaiting_chapterize" {
+		t.Fatalf("JobStatusAwaitingChapterize wire value drifted: got %q",
+			JobStatusAwaitingChapterize)
+	}
+}
