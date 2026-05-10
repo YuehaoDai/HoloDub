@@ -88,6 +88,28 @@ func (s *Service) EnqueueStage(ctx context.Context, task models.TaskPayload) err
 	return s.queue.Enqueue(ctx, task)
 }
 
+// EnqueueEpisodeStage is the OPT-402 entry point for episode-level
+// pipeline tasks (currently: ep_glossary_extract). It deliberately does
+// NOT touch the chapter-level Job state machine — episode stages run
+// in parallel with the chapter pipeline (e.g. glossary extracted
+// between asr_smart and segment_review of the same 1-chapter episode).
+//
+// The TaskPayload uses EpisodeID + EpisodeStage; Stage / JobID are
+// left zero so the worker dispatch can unambiguously route via
+// EpisodeStage != "".
+func (s *Service) EnqueueEpisodeStage(ctx context.Context, episodeID uint, stage models.EpisodeStage, requestedBy, reason string) error {
+	if episodeID == 0 || stage == "" {
+		return fmt.Errorf("EnqueueEpisodeStage requires non-zero episodeID and non-empty stage")
+	}
+	return s.queue.Enqueue(ctx, models.TaskPayload{
+		EpisodeID:    episodeID,
+		EpisodeStage: stage,
+		Attempt:      0,
+		RequestedBy:  requestedBy,
+		Reason:       reason,
+	})
+}
+
 func (s *Service) StartJob(ctx context.Context, jobID uint, requestedBy string) error {
 	return s.EnqueueStage(ctx, models.TaskPayload{
 		JobID:       jobID,
@@ -254,6 +276,16 @@ func (s *Service) RetrySegmentASR(ctx context.Context, jobID uint, segmentID uin
 }
 
 func (s *Service) HandleTask(ctx context.Context, task models.TaskPayload) error {
+	// OPT-402 episode-stage routing. Episode-level tasks (ep_glossary_extract,
+	// future ep_chapterize, ep_episode_merge, ep_episode_judge) carry
+	// EpisodeStage != "" and operate on EpisodeID, NOT JobID. They bypass
+	// the chapter Job state machine so episode-level work can run in
+	// parallel with chapter pipelines (e.g. glossary extract runs while a
+	// 1-chapter episode is between asr_smart and segment_review).
+	if task.EpisodeStage != "" {
+		return s.handleEpisodeStage(ctx, task)
+	}
+
 	job, err := s.store.GetJob(ctx, task.JobID)
 	if err != nil {
 		return err
@@ -464,7 +496,37 @@ func (s *Service) runASRSmart(ctx context.Context, task models.TaskPayload) erro
 			SplitReason:  segment.SplitReason,
 		})
 	}
-	return s.store.ReplaceSegments(ctx, job.ID, drafts)
+	if err := s.store.ReplaceSegments(ctx, job.ID, drafts); err != nil {
+		return err
+	}
+
+	// OPT-402 double-write: mirror the chapter Job's vocals/bgm into
+	// the parent Episode row and stamp asr_done_at. 1-chapter shortcut
+	// path; multi-chapter episodes will get vocals from a dedicated
+	// ep_separate stage in OPT-403.
+	if job.EpisodeID != 0 {
+		if err := s.store.UpdateEpisodeMediaFromChapter(ctx, job.EpisodeID, job.VocalsRelPath, job.BgmRelPath); err != nil {
+			slog.Warn("opt-402 double-write episode media failed; continuing",
+				"job_id", job.ID, "episode_id", job.EpisodeID, "error", err)
+		}
+		// Fire-and-forget enqueue of the OPT-402 glossary stage. If
+		// GlossaryEnabled=false the handler short-circuits at the top.
+		// Non-fatal: queue failure logs but never blocks the chapter
+		// pipeline (translate falls back to the legacy summary if
+		// glossary doesn't materialise in time).
+		if s.cfg.GlossaryEnabled {
+			if err := s.EnqueueEpisodeStage(ctx,
+				job.EpisodeID,
+				models.EpisodeStageGlossaryExtract,
+				"pipeline",
+				"asr_smart_completed",
+			); err != nil {
+				slog.Warn("opt-402 enqueue ep_glossary_extract failed; continuing",
+					"job_id", job.ID, "episode_id", job.EpisodeID, "error", err)
+			}
+		}
+	}
+	return nil
 }
 
 // runSegmentReview is the pipeline stage that sits between asr_smart and translate.
@@ -1148,4 +1210,59 @@ func (s *Service) outputRelPathForJob(ctx context.Context, jobID uint) string {
 		return ""
 	}
 	return job.OutputRelPath
+}
+
+// handleEpisodeStage dispatches OPT-402 episode-level tasks to their
+// stage handlers. Compared to chapter HandleTask this path is
+// deliberately leaner: no per-stage lease, no JobStatus mutations, no
+// stage-run rows. Episode stages are short, idempotent and best-effort
+// (a glossary failure leaves the column empty and the chapter pipeline
+// keeps running with the legacy summary).
+//
+// We DO record metrics + log so dashboards can spot episode-stage
+// regressions independently from chapter stage_runs. If/when OPT-403
+// fan-out makes episode stages long-running, lift this path back into
+// the same lease/stage_run scaffolding chapter stages use.
+func (s *Service) handleEpisodeStage(ctx context.Context, task models.TaskPayload) error {
+	startedAt := time.Now()
+	stageCtx, cancel := context.WithTimeout(ctx, s.cfg.StageTimeout)
+	defer cancel()
+
+	var stageErr error
+	switch task.EpisodeStage {
+	case models.EpisodeStageGlossaryExtract:
+		stageErr = s.runEpisodeGlossaryExtract(stageCtx, task)
+	default:
+		stageErr = fmt.Errorf("unsupported episode stage %q", task.EpisodeStage)
+	}
+	duration := time.Since(startedAt)
+	observability.ObserveStageRun(string(task.EpisodeStage), statusFromErr(stageErr), duration)
+	if stageErr != nil {
+		slog.Warn("episode-stage failed",
+			"episode_id", task.EpisodeID,
+			"stage", task.EpisodeStage,
+			"duration_ms", duration.Milliseconds(),
+			"error", stageErr,
+		)
+		return stageErr
+	}
+	slog.Info("episode-stage completed",
+		"episode_id", task.EpisodeID,
+		"stage", task.EpisodeStage,
+		"duration_ms", duration.Milliseconds(),
+	)
+	return nil
+}
+
+// statusFromErr converts a stage error to the status label used by
+// holodub_stage_run_total. nil → "completed"; ctx-deadline → "timed_out";
+// everything else → "failed". Matches the chapter-stage convention.
+func statusFromErr(err error) string {
+	if err == nil {
+		return "completed"
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "timed_out"
+	}
+	return "failed"
 }

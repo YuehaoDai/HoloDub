@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"strings"
 	"sync"
 	"time"
 
@@ -35,6 +36,14 @@ func (s *Service) runTTSDuration(ctx context.Context, task models.TaskPayload) e
 		return errors.New("no segments available for tts stage")
 	}
 
+	// OPT-402: prepend episode-level glossary + reference card to the
+	// translation summary that retranslate sees, so a long-segment retry
+	// stays terminologically consistent with the rest of the episode.
+	// effectiveSummary is computed ONCE per stage (not per segment) so the
+	// system prompt sent to the LLM stays byte-stable per job and the
+	// OPT-001 prefix cache continues to hit.
+	effectiveSummary := s.buildEpisodeAwareSummary(ctx, job)
+
 	// Pipeline-triggered synthesis uses stricter thresholds and more attempts.
 	isInitial := task.Reason == "translate_completed"
 
@@ -59,7 +68,7 @@ func (s *Service) runTTSDuration(ctx context.Context, task models.TaskPayload) e
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			if err := s.processOneTTSSegment(ctx, job, segments, idx, isInitial); err != nil {
+			if err := s.processOneTTSSegment(ctx, job, segments, idx, isInitial, effectiveSummary); err != nil {
 				errMu.Lock()
 				if firstErr == nil {
 					firstErr = err
@@ -126,7 +135,12 @@ func (s *Service) runTTSDuration(ctx context.Context, task models.TaskPayload) e
 // processOneTTSSegment runs the per-segment TTS synthesis loop with adaptive
 // duration alignment. The pure decision helpers used here live in
 // internal/pipeline/tts and are unit-tested independently.
-func (s *Service) processOneTTSSegment(ctx context.Context, job *models.Job, segments []models.Segment, idx int, isInitial bool) error {
+//
+// translationSummary is the OPT-402 episode-aware summary (job's own
+// summary prepended with the episode glossary + reference card). It is
+// passed through to RetranslateWithConstraint verbatim so the LLM sees
+// canonical terminology even on a single isolated retry.
+func (s *Service) processOneTTSSegment(ctx context.Context, job *models.Job, segments []models.Segment, idx int, isInitial bool, translationSummary string) error {
 	seg := &segments[idx]
 	voiceConfig := map[string]any{}
 	profile, err := s.store.ResolveVoiceProfileForSegment(ctx, job.ID, *seg)
@@ -188,13 +202,22 @@ func (s *Service) processOneTTSSegment(ctx context.Context, job *models.Job, seg
 	}
 
 	// Effective threshold: stricter of the relative % or the absolute-seconds
-	// cap, but never below the minimum relative floor (prevents impossibly
-	// strict targets for very long segments, e.g. 0.8s / 105.9s = 0.76% is
-	// unreachable). Logic extracted to internal/pipeline/tts for testability.
+	// cap, but never below the (adaptive) minimum relative floor.
+	//
+	// OPT-FOLLOWUP-3: AdaptiveMinDriftThreshold relaxes the floor for long
+	// segments (≥10s, ≥20s) where the global 0.03 default required absolute
+	// precision the TTS+LLM stack cannot reach, causing retry oscillation
+	// on the 10 min baseline. Short segments stay at the user-configured
+	// floor; users who set a stricter global value (e.g. 0.05) are NEVER
+	// silently relaxed because AdaptiveMinDriftThreshold is monotonic in
+	// baseFloor.
+	effectiveFloor := pipettstts.AdaptiveMinDriftThreshold(
+		s.cfg.RetranslationMinDriftThreshold, targetSec,
+	)
 	driftThreshold := pipettstts.EffectiveDriftThreshold(
 		s.cfg.RetranslationDriftThreshold,
 		absMaxDriftSec,
-		s.cfg.RetranslationMinDriftThreshold,
+		effectiveFloor,
 		targetSec,
 	)
 
@@ -372,7 +395,7 @@ func (s *Service) processOneTTSSegment(ctx context.Context, job *models.Job, seg
 			observedCharsPerSec,
 			contextBefore,
 			nextSrcText,
-			job.TranslationSummary,
+			translationSummary,
 		)
 		if retErr != nil {
 			slog.Warn("re-translation failed, accepting current result",
@@ -475,6 +498,79 @@ func (s *Service) processOneTTSSegment(ctx context.Context, job *models.Job, seg
 	s.maybeJudgeSegmentAsync(job, *seg, contextBefore)
 
 	return nil
+}
+
+// buildEpisodeAwareSummary returns the translation summary that retranslate
+// should see, augmented with the OPT-402 episode glossary + reference card.
+//
+// Format (markdown, injected verbatim into the LLM prompt):
+//
+//	[Episode reference card]
+//	<reference_card markdown ...>
+//	[End of reference card]
+//
+//	[Episode glossary — use these translations verbatim]
+//	- <source>: <target> (<note>)
+//	- ...
+//	[End of glossary]
+//
+//	[Translation summary from job]
+//	<job.TranslationSummary>
+//
+// The function is intentionally tolerant of missing pieces:
+//   - no episode → return job.TranslationSummary unchanged (== legacy behaviour)
+//   - episode exists but glossary empty → return job.TranslationSummary unchanged
+//   - episode lookup error → log + fall back to job.TranslationSummary
+//
+// This is the OPT-402 contract: glossary failure NEVER blocks the pipeline.
+func (s *Service) buildEpisodeAwareSummary(ctx context.Context, job *models.Job) string {
+	if job == nil || job.EpisodeID == 0 {
+		return job.TranslationSummary
+	}
+	ep, err := s.store.GetEpisode(ctx, job.EpisodeID)
+	if err != nil || ep == nil {
+		// Best-effort. Glossary unavailability should not break TTS.
+		return job.TranslationSummary
+	}
+
+	var glossaryEntries []llm.GlossaryEntry
+	if len(ep.Glossary) > 0 {
+		if err := json.Unmarshal(ep.Glossary, &glossaryEntries); err != nil {
+			slog.Warn("episode glossary unmarshal failed; falling back to legacy summary",
+				"episode_id", ep.ID, "job_id", job.ID, "error", err)
+			glossaryEntries = nil
+		}
+	}
+
+	if len(glossaryEntries) == 0 && ep.ReferenceCard == "" {
+		return job.TranslationSummary
+	}
+
+	var b strings.Builder
+	if ep.ReferenceCard != "" {
+		b.WriteString("[Episode reference card]\n")
+		b.WriteString(ep.ReferenceCard)
+		b.WriteString("\n[End of reference card]\n\n")
+	}
+	if len(glossaryEntries) > 0 {
+		b.WriteString("[Episode glossary — use these translations verbatim]\n")
+		for _, g := range glossaryEntries {
+			if g.Source == "" || g.Target == "" {
+				continue
+			}
+			if g.Note != "" {
+				fmt.Fprintf(&b, "- %s: %s (%s)\n", g.Source, g.Target, g.Note)
+			} else {
+				fmt.Fprintf(&b, "- %s: %s\n", g.Source, g.Target)
+			}
+		}
+		b.WriteString("[End of glossary]\n\n")
+	}
+	if job.TranslationSummary != "" {
+		b.WriteString("[Translation summary from job]\n")
+		b.WriteString(job.TranslationSummary)
+	}
+	return strings.TrimRight(b.String(), "\n")
 }
 
 // maybeJudgeSegmentAsync fires off a background judge call for the just-

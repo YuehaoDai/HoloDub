@@ -12,6 +12,7 @@ import (
 	"holodub/internal/config"
 	"holodub/internal/models"
 
+	"gorm.io/datatypes"
 	"gorm.io/driver/postgres"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -250,6 +251,60 @@ func (s *Store) UpdateEpisodeStatus(ctx context.Context, id uint, to models.Epis
 		}
 		return tx.Model(&models.Episode{}).Where("id = ?", id).Updates(updates).Error
 	})
+}
+
+// UpdateEpisodeMediaFromChapter is the OPT-402 "double-write" path called
+// at the end of the chapter-level runASRSmart for a 1-chapter episode.
+// It mirrors the chapter Job's vocals/bgm relpaths (already proven good
+// by the chapter pipeline) into the parent Episode row and stamps
+// asr_done_at. Multi-chapter episodes are skipped because their
+// vocals/BGM come from the OPT-403 episode-level separate stage instead.
+//
+// Errors are returned for the caller to log; the caller MUST NOT abort
+// the chapter pipeline on failure (Episode.* fields are progress
+// metadata, not pipeline state).
+func (s *Store) UpdateEpisodeMediaFromChapter(ctx context.Context, episodeID uint, vocalsRelPath, bgmRelPath string) error {
+	if episodeID == 0 {
+		return nil
+	}
+	now := time.Now().UTC()
+	updates := map[string]any{
+		"asr_done_at": &now,
+		"updated_at":  now,
+	}
+	if vocalsRelPath != "" {
+		updates["vocals_rel_path"] = vocalsRelPath
+	}
+	if bgmRelPath != "" {
+		updates["bgm_rel_path"] = bgmRelPath
+	}
+	return s.db.WithContext(ctx).Model(&models.Episode{}).
+		Where("id = ?", episodeID).
+		Updates(updates).Error
+}
+
+// UpdateEpisodeGlossary persists the OPT-402 glossary_extract result and
+// stamps glossary_done_at. The glossary slice is JSON-encoded because the
+// column is jsonb (so a partial provider response isn't lossy).
+//
+// Caller contract: pass the exact GlossaryEntry slice the LLM returned —
+// this function does NOT validate / dedupe, on the rationale that the
+// schema enforces shape and the EpisodeDetail UI is the right surface
+// to surface duplicates.
+func (s *Store) UpdateEpisodeGlossary(ctx context.Context, episodeID uint, glossaryJSON []byte, referenceCard string) error {
+	if episodeID == 0 {
+		return nil
+	}
+	now := time.Now().UTC()
+	updates := map[string]any{
+		"glossary":         datatypes.JSON(glossaryJSON),
+		"reference_card":   referenceCard,
+		"glossary_done_at": &now,
+		"updated_at":       now,
+	}
+	return s.db.WithContext(ctx).Model(&models.Episode{}).
+		Where("id = ?", episodeID).
+		Updates(updates).Error
 }
 
 // RunBackfillIfNeeded brings legacy databases (created before OPT-401) up to
