@@ -14,6 +14,7 @@
 # repeated HTTP 408 push failures and bloats git history.
 holodub-api-linux
 holodub-worker-linux
+migrate-output-linux
 
 # Test binary, built with `go test -c`
 *.test

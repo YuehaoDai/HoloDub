@@ -1,0 +1,893 @@
+﻿{
+  "started_at": "2026-05-10T16:40:19.919038413Z",
+  "finished_at": "2026-05-10T16:40:20.096182537Z",
+  "dry_run": true,
+  "use_hardlink": true,
+  "keep_old": true,
+  "episodes_scanned": 74,
+  "episodes_migrated": 44,
+  "episodes_skipped": 0,
+  "episodes_failed": 30,
+  "total_bytes": 31059638108,
+  "episodes": [
+    {
+      "episode_id": 139,
+      "name": "opt-402-lec1full",
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "failed",
+      "new_episode_output": "episodes/139/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/139/chapters.json",
+      "bytes_touched": 0,
+      "hard_link_used": true,
+      "errors": [
+        "chapter 139 has empty OutputRelPath"
+      ]
+    },
+    {
+      "episode_id": 138,
+      "name": "opt-402-smoke-10min",
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "migrated",
+      "new_episode_output": "episodes/138/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/138/chapters.json",
+      "bytes_touched": 278564850,
+      "hard_link_used": true
+    },
+    {
+      "episode_id": 137,
+      "name": "opt-402-smoke-60s",
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "migrated",
+      "new_episode_output": "episodes/137/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/137/chapters.json",
+      "bytes_touched": 7374368,
+      "hard_link_used": true
+    },
+    {
+      "episode_id": 136,
+      "name": "opt-402-smoke-60s",
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "failed",
+      "new_episode_output": "episodes/136/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/136/chapters.json",
+      "bytes_touched": 0,
+      "hard_link_used": true,
+      "errors": [
+        "chapter 136 has empty OutputRelPath"
+      ]
+    },
+    {
+      "episode_id": 135,
+      "name": "opt-401-test",
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "failed",
+      "new_episode_output": "episodes/135/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/135/chapters.json",
+      "bytes_touched": 0,
+      "hard_link_used": true,
+      "errors": [
+        "chapter 135 has empty OutputRelPath"
+      ]
+    },
+    {
+      "episode_id": 133,
+      "name": "opt-401-60s-smoke",
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "migrated",
+      "new_episode_output": "episodes/133/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/133/chapters.json",
+      "bytes_touched": 7374186,
+      "hard_link_used": true
+    },
+    {
+      "episode_id": 131,
+      "name": "p0-10min-semantic-validation",
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "migrated",
+      "new_episode_output": "episodes/131/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/131/chapters.json",
+      "bytes_touched": 285115378,
+      "hard_link_used": true
+    },
+    {
+      "episode_id": 130,
+      "name": "p0-10min-validation",
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "failed",
+      "new_episode_output": "episodes/130/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/130/chapters.json",
+      "bytes_touched": 0,
+      "hard_link_used": true,
+      "errors": [
+        "chapter 130 has empty OutputRelPath"
+      ]
+    },
+    {
+      "episode_id": 129,
+      "name": "p0-opt002-judge-on",
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "migrated",
+      "new_episode_output": "episodes/129/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/129/chapters.json",
+      "bytes_touched": 7384586,
+      "hard_link_used": true
+    },
+    {
+      "episode_id": 128,
+      "name": "p0-opt003-tools-on",
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "migrated",
+      "new_episode_output": "episodes/128/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/128/chapters.json",
+      "bytes_touched": 7395690,
+      "hard_link_used": true
+    },
+    {
+      "episode_id": 127,
+      "name": "p0-opt003-tools-on",
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "failed",
+      "new_episode_output": "episodes/127/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/127/chapters.json",
+      "bytes_touched": 0,
+      "hard_link_used": true,
+      "errors": [
+        "chapter 127 has empty OutputRelPath"
+      ]
+    },
+    {
+      "episode_id": 126,
+      "name": "p0-opt001-v2",
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "failed",
+      "new_episode_output": "episodes/126/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/126/chapters.json",
+      "bytes_touched": 0,
+      "hard_link_used": true,
+      "errors": [
+        "chapter 126 has empty OutputRelPath"
+      ]
+    },
+    {
+      "episode_id": 125,
+      "name": "p0-opt001-test",
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "migrated",
+      "new_episode_output": "episodes/125/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/125/chapters.json",
+      "bytes_touched": 7365314,
+      "hard_link_used": true
+    },
+    {
+      "episode_id": 124,
+      "name": "p0-baseline",
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "migrated",
+      "new_episode_output": "episodes/124/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/124/chapters.json",
+      "bytes_touched": 7383052,
+      "hard_link_used": true
+    },
+    {
+      "episode_id": 123,
+      "name": "lecture1",
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "failed",
+      "new_episode_output": "episodes/123/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/123/chapters.json",
+      "bytes_touched": 0,
+      "hard_link_used": true,
+      "errors": [
+        "chapter 123 has empty OutputRelPath"
+      ]
+    },
+    {
+      "episode_id": 122,
+      "name": "lecture-7",
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "failed",
+      "new_episode_output": "episodes/122/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/122/chapters.json",
+      "bytes_touched": 0,
+      "hard_link_used": true,
+      "errors": [
+        "chapter 122 has empty OutputRelPath"
+      ]
+    },
+    {
+      "episode_id": 121,
+      "name": "lecture-7",
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "migrated",
+      "new_episode_output": "episodes/121/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/121/chapters.json",
+      "bytes_touched": 2181530138,
+      "hard_link_used": true
+    },
+    {
+      "episode_id": 120,
+      "name": "lecture-6",
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "migrated",
+      "new_episode_output": "episodes/120/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/120/chapters.json",
+      "bytes_touched": 2681598012,
+      "hard_link_used": true
+    },
+    {
+      "episode_id": 119,
+      "name": "lecture-5",
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "migrated",
+      "new_episode_output": "episodes/119/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/119/chapters.json",
+      "bytes_touched": 1668523508,
+      "hard_link_used": true
+    },
+    {
+      "episode_id": 118,
+      "name": "lecture4-new",
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "migrated",
+      "new_episode_output": "episodes/118/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/118/chapters.json",
+      "bytes_touched": 3132167124,
+      "hard_link_used": true
+    },
+    {
+      "episode_id": 117,
+      "name": "lecture4",
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "failed",
+      "new_episode_output": "episodes/117/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/117/chapters.json",
+      "bytes_touched": 0,
+      "hard_link_used": true,
+      "errors": [
+        "chapter 117 has empty OutputRelPath"
+      ]
+    },
+    {
+      "episode_id": 116,
+      "name": "lecture3",
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "migrated",
+      "new_episode_output": "episodes/116/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/116/chapters.json",
+      "bytes_touched": 2960991294,
+      "hard_link_used": true
+    },
+    {
+      "episode_id": 115,
+      "name": "lecture2",
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "migrated",
+      "new_episode_output": "episodes/115/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/115/chapters.json",
+      "bytes_touched": 2256576622,
+      "hard_link_used": true
+    },
+    {
+      "episode_id": 114,
+      "name": "lecture2",
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "failed",
+      "new_episode_output": "episodes/114/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/114/chapters.json",
+      "bytes_touched": 0,
+      "hard_link_used": true,
+      "errors": [
+        "chapter 114 has empty OutputRelPath"
+      ]
+    },
+    {
+      "episode_id": 113,
+      "name": "0322-test3",
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "migrated",
+      "new_episode_output": "episodes/113/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/113/chapters.json",
+      "bytes_touched": 1908206396,
+      "hard_link_used": true
+    },
+    {
+      "episode_id": 112,
+      "name": "0322-test2",
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "migrated",
+      "new_episode_output": "episodes/112/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/112/chapters.json",
+      "bytes_touched": 278404582,
+      "hard_link_used": true
+    },
+    {
+      "episode_id": 111,
+      "name": "0322-test1",
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "failed",
+      "new_episode_output": "episodes/111/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/111/chapters.json",
+      "bytes_touched": 0,
+      "hard_link_used": true,
+      "errors": [
+        "chapter 111 has empty OutputRelPath"
+      ]
+    },
+    {
+      "episode_id": 110,
+      "name": "0321-test1",
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "migrated",
+      "new_episode_output": "episodes/110/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/110/chapters.json",
+      "bytes_touched": 278430796,
+      "hard_link_used": true
+    },
+    {
+      "episode_id": 109,
+      "name": "0319-test15",
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "migrated",
+      "new_episode_output": "episodes/109/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/109/chapters.json",
+      "bytes_touched": 278630948,
+      "hard_link_used": true
+    },
+    {
+      "episode_id": 108,
+      "name": "0319-test4",
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "failed",
+      "new_episode_output": "episodes/108/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/108/chapters.json",
+      "bytes_touched": 0,
+      "hard_link_used": true,
+      "errors": [
+        "chapter 108 has empty OutputRelPath"
+      ]
+    },
+    {
+      "episode_id": 107,
+      "name": "0319-test3",
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "migrated",
+      "new_episode_output": "episodes/107/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/107/chapters.json",
+      "bytes_touched": 277195734,
+      "hard_link_used": true
+    },
+    {
+      "episode_id": 106,
+      "name": "0319-test2",
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "migrated",
+      "new_episode_output": "episodes/106/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/106/chapters.json",
+      "bytes_touched": 277590564,
+      "hard_link_used": true
+    },
+    {
+      "episode_id": 105,
+      "name": "0319-test1",
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "migrated",
+      "new_episode_output": "episodes/105/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/105/chapters.json",
+      "bytes_touched": 1903041452,
+      "hard_link_used": true
+    },
+    {
+      "episode_id": 104,
+      "name": "0318-test1",
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "migrated",
+      "new_episode_output": "episodes/104/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/104/chapters.json",
+      "bytes_touched": 1903492624,
+      "hard_link_used": true
+    },
+    {
+      "episode_id": 103,
+      "name": "11",
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "failed",
+      "new_episode_output": "episodes/103/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/103/chapters.json",
+      "bytes_touched": 0,
+      "hard_link_used": true,
+      "errors": [
+        "chapter 103 has empty OutputRelPath"
+      ]
+    },
+    {
+      "episode_id": 102,
+      "name": "full-test1",
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "failed",
+      "new_episode_output": "episodes/102/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/102/chapters.json",
+      "bytes_touched": 0,
+      "hard_link_used": true,
+      "errors": [
+        "chapter 102 has empty OutputRelPath"
+      ]
+    },
+    {
+      "episode_id": 101,
+      "name": "full-test",
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "failed",
+      "new_episode_output": "episodes/101/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/101/chapters.json",
+      "bytes_touched": 0,
+      "hard_link_used": true,
+      "errors": [
+        "chapter 101 has empty OutputRelPath"
+      ]
+    },
+    {
+      "episode_id": 100,
+      "name": "test-rep2",
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "migrated",
+      "new_episode_output": "episodes/100/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/100/chapters.json",
+      "bytes_touched": 278189728,
+      "hard_link_used": true
+    },
+    {
+      "episode_id": 99,
+      "name": "test-rep1",
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "failed",
+      "new_episode_output": "episodes/99/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/99/chapters.json",
+      "bytes_touched": 0,
+      "hard_link_used": true,
+      "errors": [
+        "chapter 99 has empty OutputRelPath"
+      ]
+    },
+    {
+      "episode_id": 98,
+      "name": "test-rep",
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "failed",
+      "new_episode_output": "episodes/98/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/98/chapters.json",
+      "bytes_touched": 0,
+      "hard_link_used": true,
+      "errors": [
+        "chapter 98 has empty OutputRelPath"
+      ]
+    },
+    {
+      "episode_id": 97,
+      "name": "test-con",
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "failed",
+      "new_episode_output": "episodes/97/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/97/chapters.json",
+      "bytes_touched": 0,
+      "hard_link_used": true,
+      "errors": [
+        "chapter 97 has empty OutputRelPath"
+      ]
+    },
+    {
+      "episode_id": 96,
+      "name": "test2",
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "migrated",
+      "new_episode_output": "episodes/96/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/96/chapters.json",
+      "bytes_touched": 277886114,
+      "hard_link_used": true
+    },
+    {
+      "episode_id": 95,
+      "name": "test1",
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "migrated",
+      "new_episode_output": "episodes/95/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/95/chapters.json",
+      "bytes_touched": 277360916,
+      "hard_link_used": true
+    },
+    {
+      "episode_id": 94,
+      "name": "93",
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "migrated",
+      "new_episode_output": "episodes/94/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/94/chapters.json",
+      "bytes_touched": 276077164,
+      "hard_link_used": true
+    },
+    {
+      "episode_id": 93,
+      "name": "93",
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "failed",
+      "new_episode_output": "episodes/93/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/93/chapters.json",
+      "bytes_touched": 0,
+      "hard_link_used": true,
+      "errors": [
+        "chapter 93 has empty OutputRelPath"
+      ]
+    },
+    {
+      "episode_id": 92,
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "migrated",
+      "new_episode_output": "episodes/92/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/92/chapters.json",
+      "bytes_touched": 1889614946,
+      "hard_link_used": true
+    },
+    {
+      "episode_id": 91,
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "migrated",
+      "new_episode_output": "episodes/91/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/91/chapters.json",
+      "bytes_touched": 276328410,
+      "hard_link_used": true
+    },
+    {
+      "episode_id": 90,
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "migrated",
+      "new_episode_output": "episodes/90/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/90/chapters.json",
+      "bytes_touched": 1907238082,
+      "hard_link_used": true
+    },
+    {
+      "episode_id": 89,
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "failed",
+      "new_episode_output": "episodes/89/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/89/chapters.json",
+      "bytes_touched": 0,
+      "hard_link_used": true,
+      "errors": [
+        "chapter 89 has empty OutputRelPath"
+      ]
+    },
+    {
+      "episode_id": 88,
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "migrated",
+      "new_episode_output": "episodes/88/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/88/chapters.json",
+      "bytes_touched": 1907077822,
+      "hard_link_used": true
+    },
+    {
+      "episode_id": 87,
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "migrated",
+      "new_episode_output": "episodes/87/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/87/chapters.json",
+      "bytes_touched": 278080082,
+      "hard_link_used": true
+    },
+    {
+      "episode_id": 86,
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "migrated",
+      "new_episode_output": "episodes/86/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/86/chapters.json",
+      "bytes_touched": 277933194,
+      "hard_link_used": true
+    },
+    {
+      "episode_id": 85,
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "migrated",
+      "new_episode_output": "episodes/85/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/85/chapters.json",
+      "bytes_touched": 278251426,
+      "hard_link_used": true
+    },
+    {
+      "episode_id": 84,
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "migrated",
+      "new_episode_output": "episodes/84/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/84/chapters.json",
+      "bytes_touched": 276834454,
+      "hard_link_used": true
+    },
+    {
+      "episode_id": 83,
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "migrated",
+      "new_episode_output": "episodes/83/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/83/chapters.json",
+      "bytes_touched": 7390008,
+      "hard_link_used": true
+    },
+    {
+      "episode_id": 82,
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "migrated",
+      "new_episode_output": "episodes/82/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/82/chapters.json",
+      "bytes_touched": 7291914,
+      "hard_link_used": true
+    },
+    {
+      "episode_id": 81,
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "migrated",
+      "new_episode_output": "episodes/81/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/81/chapters.json",
+      "bytes_touched": 7310134,
+      "hard_link_used": true
+    },
+    {
+      "episode_id": 80,
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "failed",
+      "new_episode_output": "episodes/80/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/80/chapters.json",
+      "bytes_touched": 0,
+      "hard_link_used": true,
+      "errors": [
+        "chapter 80 has empty OutputRelPath"
+      ]
+    },
+    {
+      "episode_id": 79,
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "failed",
+      "new_episode_output": "episodes/79/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/79/chapters.json",
+      "bytes_touched": 0,
+      "hard_link_used": true,
+      "errors": [
+        "chapter 79 has empty OutputRelPath"
+      ]
+    },
+    {
+      "episode_id": 78,
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "failed",
+      "new_episode_output": "episodes/78/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/78/chapters.json",
+      "bytes_touched": 0,
+      "hard_link_used": true,
+      "errors": [
+        "chapter 78 has empty OutputRelPath"
+      ]
+    },
+    {
+      "episode_id": 77,
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "failed",
+      "new_episode_output": "episodes/77/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/77/chapters.json",
+      "bytes_touched": 0,
+      "hard_link_used": true,
+      "errors": [
+        "chapter 77 has empty OutputRelPath"
+      ]
+    },
+    {
+      "episode_id": 76,
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "failed",
+      "new_episode_output": "episodes/76/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/76/chapters.json",
+      "bytes_touched": 0,
+      "hard_link_used": true,
+      "errors": [
+        "chapter 76 has empty OutputRelPath"
+      ]
+    },
+    {
+      "episode_id": 75,
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "migrated",
+      "new_episode_output": "episodes/75/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/75/chapters.json",
+      "bytes_touched": 6882534,
+      "hard_link_used": true
+    },
+    {
+      "episode_id": 74,
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "migrated",
+      "new_episode_output": "episodes/74/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/74/chapters.json",
+      "bytes_touched": 59696882,
+      "hard_link_used": true
+    },
+    {
+      "episode_id": 73,
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "migrated",
+      "new_episode_output": "episodes/73/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/73/chapters.json",
+      "bytes_touched": 59689098,
+      "hard_link_used": true
+    },
+    {
+      "episode_id": 72,
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "failed",
+      "new_episode_output": "episodes/72/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/72/chapters.json",
+      "bytes_touched": 0,
+      "hard_link_used": true,
+      "errors": [
+        "chapter 72 has empty OutputRelPath"
+      ]
+    },
+    {
+      "episode_id": 71,
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "failed",
+      "new_episode_output": "episodes/71/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/71/chapters.json",
+      "bytes_touched": 0,
+      "hard_link_used": true,
+      "errors": [
+        "chapter 71 has empty OutputRelPath"
+      ]
+    },
+    {
+      "episode_id": 70,
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "migrated",
+      "new_episode_output": "episodes/70/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/70/chapters.json",
+      "bytes_touched": 58074484,
+      "hard_link_used": true
+    },
+    {
+      "episode_id": 69,
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "migrated",
+      "new_episode_output": "episodes/69/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/69/chapters.json",
+      "bytes_touched": 58074484,
+      "hard_link_used": true
+    },
+    {
+      "episode_id": 68,
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "migrated",
+      "new_episode_output": "episodes/68/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/68/chapters.json",
+      "bytes_touched": 11904,
+      "hard_link_used": true
+    },
+    {
+      "episode_id": 35,
+      "name": "productionization-regression",
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "failed",
+      "new_episode_output": "episodes/35/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/35/chapters.json",
+      "bytes_touched": 0,
+      "hard_link_used": true,
+      "errors": [
+        "chapter 35 has empty OutputRelPath"
+      ]
+    },
+    {
+      "episode_id": 34,
+      "name": "smoke-rerun-completed",
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "migrated",
+      "new_episode_output": "episodes/34/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/34/chapters.json",
+      "bytes_touched": 7110,
+      "hard_link_used": true
+    },
+    {
+      "episode_id": 2,
+      "name": "smoke-demo-2",
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "failed",
+      "new_episode_output": "episodes/2/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/2/chapters.json",
+      "bytes_touched": 0,
+      "hard_link_used": true,
+      "errors": [
+        "chapter 2 has empty OutputRelPath"
+      ]
+    },
+    {
+      "episode_id": 1,
+      "name": "smoke-demo",
+      "chapter_count": 1,
+      "pre_layout_version": 1,
+      "disposition": "failed",
+      "new_episode_output": "episodes/1/output/vp0/final.mp4",
+      "new_manifest_path": "episodes/1/chapters.json",
+      "bytes_touched": 0,
+      "hard_link_used": true,
+      "errors": [
+        "chapter 1 has empty OutputRelPath"
+      ]
+    }
+  ]
+}
