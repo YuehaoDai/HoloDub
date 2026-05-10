@@ -28,6 +28,8 @@ type Client struct {
 	retranslationTemperature float64
 	thinkingModel            string
 	segmentReviewModel       string
+	segmentReviewUseTools    bool
+	judgeModel               string // OPT-002; "" disables judging
 	thinkingHTTPClient       *http.Client
 	httpClient               *http.Client
 }
@@ -51,6 +53,8 @@ func New(cfg config.Config) *Client {
 		retranslationTemperature: retranslationTemp,
 		thinkingModel:            cfg.RetranslationThinkingModel,
 		segmentReviewModel:       cfg.SegmentReviewModel,
+		segmentReviewUseTools:    cfg.SegmentReviewUseTools,
+		judgeModel:               cfg.JudgeModel,
 		thinkingHTTPClient: &http.Client{
 			Timeout: thinkingTimeout,
 		},
@@ -173,12 +177,12 @@ func (c *Client) SummarizeTranslation(ctx context.Context, sourceLanguage, targe
 	payload := chatCompletionRequest{
 		Model:       model,
 		Temperature: 0.3,
-		Messages: []map[string]string{
-			{"role": "system", "content": systemPrompt},
-			{"role": "user", "content": "Please produce the reference card now."},
+		Messages: []chatMessage{
+			{Role: "system", Content: systemPrompt},
+			{Role: "user", Content: "Please produce the reference card now."},
 		},
 	}
-	return c.doChat(ctx, payload)
+	return c.doChat(ctx, OpSummary, payload)
 }
 
 // RetranslateWithConstraint re-translates using the configured retranslation model
@@ -439,9 +443,9 @@ func (c *Client) RetranslateWithConstraint(
 	requestPayload := chatCompletionRequest{
 		Model:       model,
 		Temperature: c.retranslationTemperature,
-		Messages: []map[string]string{
-			{"role": "system", "content": systemPrompt},
-			{"role": "user", "content": fmt.Sprintf(
+		Messages: []chatMessage{
+			{Role: "system", Content: systemPrompt},
+			{Role: "user", Content: fmt.Sprintf(
 				"Source (%s):\n%s\n\nCurrent translation (%s) — make minimal edits to THIS text, "+
 					"do NOT re-translate from scratch, do NOT revert to any previous version, "+
 					"and ensure the result faithfully conveys ALL key information from the source:\n%s",
@@ -449,9 +453,9 @@ func (c *Client) RetranslateWithConstraint(
 		},
 	}
 	if useThinking {
-		return c.doChatStream(ctx, requestPayload)
+		return c.doChatStream(ctx, OpRetranslateThinking, requestPayload)
 	}
-	return c.doChat(ctx, requestPayload)
+	return c.doChat(ctx, OpRetranslate, requestPayload)
 }
 
 func mockTranslate(targetLanguage, text string) string {
@@ -461,26 +465,123 @@ func mockTranslate(targetLanguage, text string) string {
 	return fmt.Sprintf("[%s] %s", targetLanguage, text)
 }
 
+// chatMessage is one OpenAI-compatible chat message. The fields cover both
+// the "plain prompt" path (Role + Content) and the function-calling path
+// (assistant returning ToolCalls or our caller echoing back ToolCallID).
+// All optional fields use omitempty so the wire payload stays minimal and
+// byte-stable for prompt-prefix caching purposes (OPT-001).
+type chatMessage struct {
+	Role       string     `json:"role"`
+	Content    string     `json:"content,omitempty"`
+	ToolCalls  []toolCall `json:"tool_calls,omitempty"`
+	ToolCallID string     `json:"tool_call_id,omitempty"`
+}
+
+// toolDef advertises a callable function to the model. Used by OPT-003 to
+// turn ad-hoc "respond with JSON" prompts into strict-schema tool calls.
+type toolDef struct {
+	Type     string      `json:"type"` // always "function"
+	Function functionDef `json:"function"`
+}
+
+type functionDef struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description,omitempty"`
+	Parameters  json.RawMessage `json:"parameters"`
+	Strict      bool            `json:"strict,omitempty"`
+}
+
+// toolCall is the assistant's response when it picks a tool. The actual
+// arguments are a JSON-encoded string (NOT a nested object) per the
+// OpenAI / DashScope wire contract — callers must json.Unmarshal them.
+type toolCall struct {
+	ID       string           `json:"id"`
+	Type     string           `json:"type"`
+	Function toolCallFunction `json:"function"`
+}
+
+type toolCallFunction struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
+}
+
 type chatCompletionRequest struct {
-	Model          string              `json:"model"`
-	Temperature    float64             `json:"temperature"`
-	Messages       []map[string]string `json:"messages"`
-	ResponseFormat map[string]string   `json:"response_format,omitempty"`
-	Stream         bool                `json:"stream,omitempty"`
+	Model          string            `json:"model"`
+	Temperature    float64           `json:"temperature"`
+	Messages       []chatMessage     `json:"messages"`
+	Tools          []toolDef         `json:"tools,omitempty"`
+	ToolChoice     any               `json:"tool_choice,omitempty"`
+	ResponseFormat map[string]string `json:"response_format,omitempty"`
+	Stream         bool              `json:"stream,omitempty"`
+}
+
+// forceToolChoice builds the OpenAI-compatible "force this exact function"
+// directive used by OPT-003. Some providers also accept "required" (any of
+// the declared tools); we always force the specific one to keep parsing
+// deterministic.
+func forceToolChoice(name string) any {
+	return map[string]any{
+		"type": "function",
+		"function": map[string]string{
+			"name": name,
+		},
+	}
+}
+
+// providerUsage carries provider-reported token counts. We accept THREE
+// shapes because the OpenAI-compatible ecosystem has not converged:
+//   - DeepSeek emits `usage.prompt_cache_hit_tokens`
+//   - OpenAI new + DashScope (Qwen) emit `usage.prompt_tokens_details.cached_tokens`
+//   - some legacy / alpha paths emit a top-level `usage.cached_tokens`
+//
+// effectiveCached() returns the max so whichever field is populated becomes
+// the effective cached count. Add a new field here when a new provider lands.
+type providerUsage struct {
+	PromptTokens         int `json:"prompt_tokens"`
+	CompletionTokens     int `json:"completion_tokens"`
+	TotalTokens          int `json:"total_tokens"`
+	CachedTokens         int `json:"cached_tokens"`
+	PromptCacheHitTokens int `json:"prompt_cache_hit_tokens"`
+	PromptTokensDetails  struct {
+		CachedTokens int `json:"cached_tokens"`
+	} `json:"prompt_tokens_details"`
+}
+
+func (u providerUsage) effectiveCached() int {
+	return maxInt(maxInt(u.CachedTokens, u.PromptCacheHitTokens), u.PromptTokensDetails.CachedTokens)
 }
 
 type chatCompletionResponse struct {
 	Choices []struct {
 		Message struct {
-			Content string `json:"content"`
+			Content   string     `json:"content"`
+			ToolCalls []toolCall `json:"tool_calls,omitempty"`
 		} `json:"message"`
+		FinishReason string `json:"finish_reason,omitempty"`
 	} `json:"choices"`
-	Usage struct {
-		PromptTokens     int `json:"prompt_tokens"`
-		CompletionTokens int `json:"completion_tokens"`
-		TotalTokens      int `json:"total_tokens"`
-	} `json:"usage"`
+	Usage providerUsage `json:"usage"`
 }
+
+// usageStats is the normalised token accounting returned by doChatOnce /
+// doChatStream so doChat can emit a single observability.ObserveLLMTokens
+// call per request, regardless of which upstream cache field was populated.
+type usageStats struct {
+	PromptTokens     int
+	CompletionTokens int
+	CachedTokens     int // max(Usage.CachedTokens, Usage.PromptCacheHitTokens)
+}
+
+// LLM operation labels used by metrics. Keep this list small and stable;
+// Prometheus cardinality grows linearly with len(operations) * len(models).
+// Adding a new value requires updating the corresponding doc and rules.
+const (
+	OpTranslate            = "translate"
+	OpRetranslate          = "retranslate"
+	OpRetranslateThinking  = "retranslate_thinking"
+	OpSummary              = "summary"
+	OpReview               = "review"
+	OpJudge                = "judge" // reserved for OPT-002
+)
 
 func (c *Client) translateViaOpenAI(ctx context.Context, sourceLanguage, targetLanguage, text string) (string, error) {
 	if c.baseURL == "" || c.apiKey == "" || c.model == "" {
@@ -490,19 +591,19 @@ func (c *Client) translateViaOpenAI(ctx context.Context, sourceLanguage, targetL
 	requestPayload := chatCompletionRequest{
 		Model:       c.model,
 		Temperature: c.temperature,
-		Messages: []map[string]string{
+		Messages: []chatMessage{
 			{
-				"role":    "system",
-				"content": "You translate subtitle segments for dubbing. Keep the meaning, stay natural, keep length close to the source, and respond with plain text only.",
+				Role:    "system",
+				Content: "You translate subtitle segments for dubbing. Keep the meaning, stay natural, keep length close to the source, and respond with plain text only.",
 			},
 			{
-				"role":    "user",
-				"content": fmt.Sprintf("Source language: %s\nTarget language: %s\nText: %s", sourceLanguage, targetLanguage, text),
+				Role:    "user",
+				Content: fmt.Sprintf("Source language: %s\nTarget language: %s\nText: %s", sourceLanguage, targetLanguage, text),
 			},
 		},
 	}
 
-	return c.doChat(ctx, requestPayload)
+	return c.doChat(ctx, OpTranslate, requestPayload)
 }
 
 func (c *Client) translateWithDurationViaOpenAI(ctx context.Context, sourceLanguage, targetLanguage, text string, targetSec float64, charsPerSecHint float64, contextBefore []ContextSegment, translationSummary string) (string, error) {
@@ -519,6 +620,46 @@ func (c *Client) translateWithDurationViaOpenAI(ctx context.Context, sourceLangu
 		limit = 1
 	}
 
+	systemPrompt := buildTranslateSystemPrompt(targetSec, targetLanguage, limit, rate, translationSummary)
+
+	// Inject preceding translated segments for local consistency.
+	// IMPORTANT (OPT-001): we put this in the user message, NOT system,
+	// because contextBefore changes for every segment within a job and
+	// would otherwise break the system prompt prefix cache.
+	var userMsg strings.Builder
+	if len(contextBefore) > 0 {
+		userMsg.WriteString("[Preceding segments — for terminology and style reference]\n")
+		for i, seg := range contextBefore {
+			label := fmt.Sprintf("-%d", len(contextBefore)-i)
+			userMsg.WriteString(fmt.Sprintf("(%s) %s: %s\n     %s: %s\n", label, sourceLanguage, seg.SrcText, targetLanguage, seg.TgtText))
+		}
+		userMsg.WriteString("\n[Segment to translate now]\n")
+	}
+	userMsg.WriteString(fmt.Sprintf("Source language: %s\nText: %s", sourceLanguage, text))
+
+	requestPayload := chatCompletionRequest{
+		Model:       c.model,
+		Temperature: c.temperature,
+		Messages: []chatMessage{
+			{Role: "system", Content: systemPrompt},
+			{Role: "user", Content: userMsg.String()},
+		},
+	}
+
+	return c.doChat(ctx, OpTranslate, requestPayload)
+}
+
+// buildTranslateSystemPrompt is a pure function that assembles the system
+// prompt for translateWithDurationViaOpenAI. Extracted for OPT-001 so
+// (1) the byte-stable invariant can be unit-tested directly, and
+// (2) downstream call sites (judge, ensemble, retranslate) can share the
+// same template piece-by-piece without breaking prefix cache reuse.
+//
+// Within a single job, all per-segment calls receive identical
+// (targetSec, targetLanguage, limit, rate, translationSummary) — this
+// guarantees the returned prompt is byte-stable, which is exactly what
+// the provider's prefix cache requires to hit.
+func buildTranslateSystemPrompt(targetSec float64, targetLanguage string, limit int, rate float64, translationSummary string) string {
 	systemPrompt := fmt.Sprintf(
 		"You are a professional dubbing translator. Translate the given source segment accurately and concisely.\n\n"+
 			"[Constraints]\n"+
@@ -541,33 +682,10 @@ func (c *Client) translateWithDurationViaOpenAI(ctx context.Context, sourceLangu
 		targetSec, targetLanguage, limit, rate, limit,
 	)
 
-	// Inject episode-level reference card if available.
 	if translationSummary != "" {
 		systemPrompt += "\n\n[Episode reference — use this glossary and style guide]\n" + translationSummary + "\n[End of episode reference]"
 	}
-
-	// Inject preceding translated segments for local consistency.
-	var userMsg strings.Builder
-	if len(contextBefore) > 0 {
-		userMsg.WriteString("[Preceding segments — for terminology and style reference]\n")
-		for i, seg := range contextBefore {
-			label := fmt.Sprintf("-%d", len(contextBefore)-i)
-			userMsg.WriteString(fmt.Sprintf("(%s) %s: %s\n     %s: %s\n", label, sourceLanguage, seg.SrcText, targetLanguage, seg.TgtText))
-		}
-		userMsg.WriteString("\n[Segment to translate now]\n")
-	}
-	userMsg.WriteString(fmt.Sprintf("Source language: %s\nText: %s", sourceLanguage, text))
-
-	requestPayload := chatCompletionRequest{
-		Model:       c.model,
-		Temperature: c.temperature,
-		Messages: []map[string]string{
-			{"role": "system", "content": systemPrompt},
-			{"role": "user", "content": userMsg.String()},
-		},
-	}
-
-	return c.doChat(ctx, requestPayload)
+	return systemPrompt
 }
 
 // llmRetryConfig is the default policy for LLM chat calls. Translation
@@ -597,50 +715,147 @@ func classifyResult(err error) string {
 // text. Retries are applied automatically for transient failures (429/5xx,
 // network errors). Permanent errors (e.g. 400 invalid request) abort
 // immediately.
-func (c *Client) doChat(ctx context.Context, payload chatCompletionRequest) (string, error) {
+//
+// operation is the metric label (translate / review / summary / ...). It is
+// also used in observability spans / logs to attribute cost to a use-case.
+// Use the Op* constants — never pass a literal string at the call site.
+func (c *Client) doChat(ctx context.Context, operation string, payload chatCompletionRequest) (string, error) {
 	started := time.Now()
 	var content string
+	var usage usageStats
 	err := httpx.Do(ctx, llmRetryConfig, func(ctx context.Context, attempt int) error {
 		var inner error
-		content, inner = c.doChatOnce(ctx, payload)
+		content, usage, inner = c.doChatOnce(ctx, payload)
 		return inner
 	})
-	observability.ObserveExternalCall("llm", "chat.completions", classifyResult(err), time.Since(started))
+	observability.ObserveExternalCall("llm", operation, classifyResult(err), time.Since(started))
+	if err == nil {
+		// Only attribute tokens for successful calls — retried-then-failed
+		// attempts are already counted as "retryable" / "permanent" via
+		// ObserveExternalCall and we don't want to double-charge cost.
+		observability.ObserveLLMTokens(payload.Model, operation,
+			usage.PromptTokens, usage.CompletionTokens, usage.CachedTokens)
+	}
 	return content, err
 }
 
-func (c *Client) doChatOnce(ctx context.Context, payload chatCompletionRequest) (string, error) {
+// doChatTool sends a chat completion request that REQUIRES the model to call
+// a specific function, then returns the function-call arguments JSON string.
+//
+// Returns "" without error if the model returned a content message instead
+// of a tool call (some providers may bypass tool_choice under load) — the
+// caller can then either retry or fall back to the prompt path.
+//
+// Token / latency observability is handled the same way as doChat.
+func (c *Client) doChatTool(ctx context.Context, operation string, payload chatCompletionRequest, expectedToolName string) (string, error) {
+	started := time.Now()
+	var args string
+	var usage usageStats
+	err := httpx.Do(ctx, llmRetryConfig, func(ctx context.Context, attempt int) error {
+		var inner error
+		args, usage, inner = c.doChatToolOnce(ctx, payload, expectedToolName)
+		return inner
+	})
+	observability.ObserveExternalCall("llm", operation, classifyResult(err), time.Since(started))
+	if err == nil {
+		observability.ObserveLLMTokens(payload.Model, operation,
+			usage.PromptTokens, usage.CompletionTokens, usage.CachedTokens)
+	}
+	return args, err
+}
+
+func (c *Client) doChatToolOnce(ctx context.Context, payload chatCompletionRequest, expectedToolName string) (string, usageStats, error) {
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return "", fmt.Errorf("marshal request: %w", err)
+		return "", usageStats{}, fmt.Errorf("marshal request: %w", err)
 	}
-
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/chat/completions", bytes.NewReader(body))
 	if err != nil {
-		return "", fmt.Errorf("build request: %w", err)
+		return "", usageStats{}, fmt.Errorf("build request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return "", httpx.Wrap("llm", "chat.completions", err)
+		return "", usageStats{}, httpx.Wrap("llm", "chat.completions", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= http.StatusBadRequest {
 		raw, _ := io.ReadAll(resp.Body)
-		return "", httpx.FromHTTPStatus("llm", "chat.completions", resp.StatusCode, raw)
+		return "", usageStats{}, httpx.FromHTTPStatus("llm", "chat.completions", resp.StatusCode, raw)
 	}
 
 	var result chatCompletionResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", fmt.Errorf("decode translation response: %w", err)
+		return "", usageStats{}, fmt.Errorf("decode tool response: %w", err)
 	}
 	if len(result.Choices) == 0 {
-		return "", errors.New("translation provider returned no choices")
+		return "", usageStats{}, errors.New("provider returned no choices")
 	}
-	return strings.TrimSpace(result.Choices[0].Message.Content), nil
+	usage := usageStats{
+		PromptTokens:     result.Usage.PromptTokens,
+		CompletionTokens: result.Usage.CompletionTokens,
+		CachedTokens:     result.Usage.effectiveCached(),
+	}
+
+	// Pick the first matching tool call. Strict tool_choice should yield
+	// exactly one, but be defensive: ignore non-matching names so a
+	// provider that hallucinates a different tool name doesn't crash us.
+	for _, tc := range result.Choices[0].Message.ToolCalls {
+		if tc.Function.Name == expectedToolName {
+			return tc.Function.Arguments, usage, nil
+		}
+	}
+	// No matching tool call — return empty args, caller decides what to do.
+	return "", usage, nil
+}
+
+func (c *Client) doChatOnce(ctx context.Context, payload chatCompletionRequest) (string, usageStats, error) {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return "", usageStats{}, fmt.Errorf("marshal request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/chat/completions", bytes.NewReader(body))
+	if err != nil {
+		return "", usageStats{}, fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", usageStats{}, httpx.Wrap("llm", "chat.completions", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= http.StatusBadRequest {
+		raw, _ := io.ReadAll(resp.Body)
+		return "", usageStats{}, httpx.FromHTTPStatus("llm", "chat.completions", resp.StatusCode, raw)
+	}
+
+	var result chatCompletionResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", usageStats{}, fmt.Errorf("decode translation response: %w", err)
+	}
+	if len(result.Choices) == 0 {
+		return "", usageStats{}, errors.New("translation provider returned no choices")
+	}
+	usage := usageStats{
+		PromptTokens:     result.Usage.PromptTokens,
+		CompletionTokens: result.Usage.CompletionTokens,
+		CachedTokens:     result.Usage.effectiveCached(),
+	}
+	return strings.TrimSpace(result.Choices[0].Message.Content), usage, nil
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 // doChatStream sends a chat completion request with stream=true and assembles the
@@ -648,16 +863,24 @@ func (c *Client) doChatOnce(ctx context.Context, payload chatCompletionRequest) 
 // the "content" delta chunks and silently discards "reasoning_content" chunks
 // (Kimi thinking tokens).  This is required for DashScope thinking models
 // (e.g. kimi-k2-thinking) which reject non-streaming calls with enable_thinking.
-func (c *Client) doChatStream(ctx context.Context, payload chatCompletionRequest) (string, error) {
+//
+// operation is the metric label, used the same way as in doChat. Many
+// streaming providers ALSO emit a final SSE chunk containing usage stats
+// (DashScope and OpenAI both do); we capture it for ObserveLLMTokens so
+// thinking-mode retranslations are not invisible in the cost dashboard.
+func (c *Client) doChatStream(ctx context.Context, operation string, payload chatCompletionRequest) (string, error) {
+	started := time.Now()
 	payload.Stream = true
 
 	body, err := json.Marshal(payload)
 	if err != nil {
+		observability.ObserveExternalCall("llm", operation, classifyResult(err), time.Since(started))
 		return "", fmt.Errorf("marshal stream request: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/chat/completions", bytes.NewReader(body))
 	if err != nil {
+		observability.ObserveExternalCall("llm", operation, classifyResult(err), time.Since(started))
 		return "", fmt.Errorf("build stream request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
@@ -666,20 +889,28 @@ func (c *Client) doChatStream(ctx context.Context, payload chatCompletionRequest
 
 	resp, err := c.thinkingHTTPClient.Do(req)
 	if err != nil {
-		return "", httpx.Wrap("llm", "chat.completions.stream", err)
+		wrapped := httpx.Wrap("llm", operation, err)
+		observability.ObserveExternalCall("llm", operation, classifyResult(wrapped), time.Since(started))
+		return "", wrapped
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= http.StatusBadRequest {
 		raw, _ := io.ReadAll(resp.Body)
-		return "", httpx.FromHTTPStatus("llm", "chat.completions.stream", resp.StatusCode, raw)
+		statusErr := httpx.FromHTTPStatus("llm", operation, resp.StatusCode, raw)
+		observability.ObserveExternalCall("llm", operation, classifyResult(statusErr), time.Since(started))
+		return "", statusErr
 	}
 
 	// Parse SSE: each line is either "data: {json}" or "data: [DONE]".
 	// Each JSON chunk has choices[0].delta which may contain "content" or
-	// "reasoning_content".  We collect only "content".
+	// "reasoning_content".  We collect only "content".  The final chunk often
+	// contains a top-level "usage" field with token counts.
 	var sb strings.Builder
+	var usage usageStats
 	scanner := bufio.NewScanner(resp.Body)
+	// Allow large lines: thinking models can emit multi-KB usage chunks.
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for scanner.Scan() {
 		line := scanner.Text()
 		if !strings.HasPrefix(line, "data: ") {
@@ -696,6 +927,7 @@ func (c *Client) doChatStream(ctx context.Context, payload chatCompletionRequest
 					ReasoningContent string `json:"reasoning_content"`
 				} `json:"delta"`
 			} `json:"choices"`
+			Usage *providerUsage `json:"usage,omitempty"`
 		}
 		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
 			continue
@@ -703,14 +935,28 @@ func (c *Client) doChatStream(ctx context.Context, payload chatCompletionRequest
 		if len(chunk.Choices) > 0 {
 			sb.WriteString(chunk.Choices[0].Delta.Content)
 		}
+		if chunk.Usage != nil {
+			// Final chunks may carry usage; keep the latest seen.
+			usage = usageStats{
+				PromptTokens:     chunk.Usage.PromptTokens,
+				CompletionTokens: chunk.Usage.CompletionTokens,
+				CachedTokens:     chunk.Usage.effectiveCached(),
+			}
+		}
 	}
 	if err := scanner.Err(); err != nil {
+		observability.ObserveExternalCall("llm", operation, classifyResult(err), time.Since(started))
 		return "", fmt.Errorf("read stream: %w", err)
 	}
 	result := strings.TrimSpace(sb.String())
 	if result == "" {
-		return "", errors.New("thinking provider returned empty content")
+		emptyErr := errors.New("thinking provider returned empty content")
+		observability.ObserveExternalCall("llm", operation, classifyResult(emptyErr), time.Since(started))
+		return "", emptyErr
 	}
+	observability.ObserveExternalCall("llm", operation, "ok", time.Since(started))
+	observability.ObserveLLMTokens(payload.Model, operation,
+		usage.PromptTokens, usage.CompletionTokens, usage.CachedTokens)
 	return result, nil
 }
 
@@ -737,47 +983,64 @@ type SegmentReviewSuggestion struct {
 	Confidence float64 // 0–1
 }
 
-// ReviewSegmentation analyses the ASR-produced segments and returns a list of
-// merge suggestions.  It returns an empty slice (no error) when running in
-// mock/offline mode or when the LLM finds no problems.
-func (c *Client) ReviewSegmentation(
-	ctx context.Context,
-	sourceLanguage string,
-	segments []SegmentInfo,
-) ([]SegmentReviewSuggestion, error) {
-	if c.baseURL == "" || c.apiKey == "" {
-		return nil, nil // offline / mock mode — no suggestions
-	}
-	if len(segments) == 0 {
-		return nil, nil
-	}
+// reviewRawSuggestion is the JSON wire shape returned by the LLM both via
+// the prompt path AND via the tool-call function arguments. Centralising the
+// type lets parseReviewSuggestions() consume both routes identically.
+type reviewRawSuggestion struct {
+	Ordinals   []int   `json:"ordinals"`
+	Reason     string  `json:"reason"`
+	Confidence float64 `json:"confidence"`
+}
 
-	// Build a compact JSON representation of all segments for the prompt.
-	type segJSON struct {
-		Ordinal     int    `json:"ordinal"`
-		ID          int    `json:"id"` // placeholder — actual DB IDs added by caller
-		Text        string `json:"text"`
-		DurationMs  int64  `json:"duration_ms"`
-		GapAfterMs  int64  `json:"gap_after_ms"`
-		SplitReason string `json:"split_reason"`
-	}
-	segList := make([]segJSON, len(segments))
-	for i, s := range segments {
-		segList[i] = segJSON{
-			Ordinal:     s.Ordinal,
-			ID:          s.Ordinal, // ordinal used as reference in suggestions
-			Text:        s.Text,
-			DurationMs:  s.EndMs - s.StartMs,
-			GapAfterMs:  s.GapAfterMs,
-			SplitReason: s.SplitReason,
-		}
-	}
-	segJSON2, err := json.Marshal(segList)
+// reviewToolArgs is the argument schema for the emit_segment_suggestions
+// tool. Wrapping the array in an object is required by OpenAI / DashScope
+// strict-mode tool calling — top-level arrays are not allowed.
+type reviewToolArgs struct {
+	Suggestions []reviewRawSuggestion `json:"suggestions"`
+}
+
+// reviewToolSchema is the JSON Schema sent to the LLM. Marshalled once at
+// init() to fail loudly on a typo rather than at first request.
+var reviewToolSchema = mustMarshalJSON(map[string]any{
+	"type": "object",
+	"properties": map[string]any{
+		"suggestions": map[string]any{
+			"type": "array",
+			"items": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"ordinals": map[string]any{
+						"type":  "array",
+						"items": map[string]any{"type": "integer"},
+					},
+					"reason":     map[string]any{"type": "string"},
+					"confidence": map[string]any{"type": "number"},
+				},
+				"required":             []string{"ordinals", "reason", "confidence"},
+				"additionalProperties": false,
+			},
+		},
+	},
+	"required":             []string{"suggestions"},
+	"additionalProperties": false,
+})
+
+func mustMarshalJSON(v any) json.RawMessage {
+	b, err := json.Marshal(v)
 	if err != nil {
-		return nil, err
+		panic(fmt.Sprintf("static JSON schema marshal failed: %v", err))
 	}
+	return b
+}
 
-	systemPrompt := fmt.Sprintf(
+// reviewSystemPrompt is the system prompt for the segment_review LLM. It is
+// the SAME content for both the prompt-only path and the tool-call path —
+// the tool path simply skips the "Respond with a JSON array … return ONLY
+// the JSON array" closing instruction, since strict tool calling enforces
+// the shape at the protocol level. Returning it from a single function keeps
+// the system prompt cache-stable across the two routes (OPT-001 friendly).
+func reviewSystemPrompt(sourceLanguage string, toolMode bool) string {
+	base := fmt.Sprintf(
 		"You are an expert ASR post-processing agent for a video dubbing pipeline.\n"+
 			"Source language: %s.\n\n"+
 			"You will receive a list of ASR segments.  Each segment has:\n"+
@@ -795,33 +1058,125 @@ func (c *Client) ReviewSegmentation(
 			"Do NOT suggest merges when:\n"+
 			"  - There is a clear topic or sentence boundary\n"+
 			"  - The gap_after_ms is large (>2000 ms) indicating a deliberate pause\n"+
-			"  - The merged segment would exceed ~20 seconds\n\n"+
-			"Respond with a JSON array of suggestions.  Each element:\n"+
-			"  { \"ordinals\": [<ordinal_a>, <ordinal_b>], \"reason\": \"<short reason>\", \"confidence\": <0.0-1.0> }\n"+
-			"Only adjacent segments may be merged (consecutive ordinals).\n"+
-			"If there are no problems, return an empty array: []\n"+
-			"Return ONLY the JSON array, no other text.",
+			"  - The merged segment would exceed ~20 seconds\n\n",
 		sourceLanguage,
 	)
-
-	model := c.segmentReviewModel
-	if model == "" {
-		model = c.retranslationModel
+	if toolMode {
+		// Strict tool call path: structure enforced by schema, just describe semantics.
+		return base + "Call the emit_segment_suggestions function with your suggestions. " +
+			"Return an empty suggestions array if there are no problems. " +
+			"Only adjacent segments (consecutive ordinals) may be merged."
 	}
-	if model == "" {
-		model = c.model
+	// Legacy prompt path: explicit JSON shape + format directives.
+	return base +
+		"Respond with a JSON array of suggestions.  Each element:\n" +
+		"  { \"ordinals\": [<ordinal_a>, <ordinal_b>], \"reason\": \"<short reason>\", \"confidence\": <0.0-1.0> }\n" +
+		"Only adjacent segments may be merged (consecutive ordinals).\n" +
+		"If there are no problems, return an empty array: []\n" +
+		"Return ONLY the JSON array, no other text."
+}
+
+// ReviewSegmentation analyses the ASR-produced segments and returns a list of
+// merge suggestions.  It returns an empty slice (no error) when running in
+// mock/offline mode or when the LLM finds no problems.
+//
+// OPT-003: when c.segmentReviewUseTools is true, the call goes through a
+// strict function-calling path with a JSON Schema. If the tool call returns
+// nothing parseable the call automatically falls back to the legacy
+// "respond with a JSON array" prompt — both modes are kept in tree until the
+// tool path proves stable across providers.
+func (c *Client) ReviewSegmentation(
+	ctx context.Context,
+	sourceLanguage string,
+	segments []SegmentInfo,
+) ([]SegmentReviewSuggestion, error) {
+	if c.baseURL == "" || c.apiKey == "" {
+		return nil, nil // offline / mock mode — no suggestions
+	}
+	if len(segments) == 0 {
+		return nil, nil
 	}
 
+	if c.segmentReviewUseTools {
+		suggestions, err := c.reviewSegmentationViaTools(ctx, sourceLanguage, segments)
+		if err == nil {
+			return suggestions, nil
+		}
+		// Tool path failed (network / unparseable / provider rejected tools).
+		// Bump the strict-parse failed counter so a sustained regression is
+		// visible on a dashboard, then fall through to the legacy prompt path.
+		observability.IncLLMStrictParseFailed(OpReview)
+		// Note: error is silently absorbed; ml-service / pipeline already
+		// treats segment_review failures as non-fatal (see runSegmentReview).
+	}
+	return c.reviewSegmentationViaPrompt(ctx, sourceLanguage, segments)
+}
+
+func (c *Client) reviewSegmentationViaTools(
+	ctx context.Context,
+	sourceLanguage string,
+	segments []SegmentInfo,
+) ([]SegmentReviewSuggestion, error) {
+	segJSON2, err := marshalReviewSegments(segments)
+	if err != nil {
+		return nil, err
+	}
+
+	model := c.reviewModel()
 	payload := chatCompletionRequest{
 		Model:       model,
 		Temperature: 0.2,
-		Messages: []map[string]string{
-			{"role": "system", "content": systemPrompt},
-			{"role": "user", "content": string(segJSON2)},
+		Messages: []chatMessage{
+			{Role: "system", Content: reviewSystemPrompt(sourceLanguage, true)},
+			{Role: "user", Content: string(segJSON2)},
+		},
+		Tools: []toolDef{{
+			Type: "function",
+			Function: functionDef{
+				Name:        "emit_segment_suggestions",
+				Description: "Submit zero or more merge suggestions for adjacent ASR segments that were incorrectly split.",
+				Parameters:  reviewToolSchema,
+			},
+		}},
+		ToolChoice: forceToolChoice("emit_segment_suggestions"),
+	}
+
+	args, err := c.doChatTool(ctx, OpReview, payload, "emit_segment_suggestions")
+	if err != nil {
+		return nil, err
+	}
+	if args == "" {
+		return nil, errors.New("tool call returned empty arguments")
+	}
+
+	var parsed reviewToolArgs
+	if err := json.Unmarshal([]byte(args), &parsed); err != nil {
+		return nil, fmt.Errorf("parse tool arguments: %w (raw: %.200s)", err, args)
+	}
+	return finaliseReviewSuggestions(parsed.Suggestions, segments), nil
+}
+
+func (c *Client) reviewSegmentationViaPrompt(
+	ctx context.Context,
+	sourceLanguage string,
+	segments []SegmentInfo,
+) ([]SegmentReviewSuggestion, error) {
+	segJSON2, err := marshalReviewSegments(segments)
+	if err != nil {
+		return nil, err
+	}
+
+	model := c.reviewModel()
+	payload := chatCompletionRequest{
+		Model:       model,
+		Temperature: 0.2,
+		Messages: []chatMessage{
+			{Role: "system", Content: reviewSystemPrompt(sourceLanguage, false)},
+			{Role: "user", Content: string(segJSON2)},
 		},
 	}
 
-	raw, err := c.doChat(ctx, payload)
+	raw, err := c.doChat(ctx, OpReview, payload)
 	if err != nil {
 		return nil, fmt.Errorf("segment review LLM call: %w", err)
 	}
@@ -836,22 +1191,52 @@ func (c *Client) ReviewSegmentation(
 		raw = strings.TrimSuffix(strings.TrimSpace(raw), "```")
 	}
 
-	type rawSuggestion struct {
-		Ordinals   []int   `json:"ordinals"`
-		Reason     string  `json:"reason"`
-		Confidence float64 `json:"confidence"`
-	}
-	var rawItems []rawSuggestion
+	var rawItems []reviewRawSuggestion
 	if err := json.Unmarshal([]byte(raw), &rawItems); err != nil {
 		return nil, fmt.Errorf("parse segment review response: %w (raw: %.200s)", err, raw)
 	}
+	return finaliseReviewSuggestions(rawItems, segments), nil
+}
 
-	// Build an ordinal→ID map from the provided segments
+func (c *Client) reviewModel() string {
+	model := c.segmentReviewModel
+	if model == "" {
+		model = c.retranslationModel
+	}
+	if model == "" {
+		model = c.model
+	}
+	return model
+}
+
+func marshalReviewSegments(segments []SegmentInfo) ([]byte, error) {
+	type segJSON struct {
+		Ordinal     int    `json:"ordinal"`
+		ID          int    `json:"id"` // placeholder — actual DB IDs added by caller
+		Text        string `json:"text"`
+		DurationMs  int64  `json:"duration_ms"`
+		GapAfterMs  int64  `json:"gap_after_ms"`
+		SplitReason string `json:"split_reason"`
+	}
+	segList := make([]segJSON, len(segments))
+	for i, s := range segments {
+		segList[i] = segJSON{
+			Ordinal:     s.Ordinal,
+			ID:          s.Ordinal,
+			Text:        s.Text,
+			DurationMs:  s.EndMs - s.StartMs,
+			GapAfterMs:  s.GapAfterMs,
+			SplitReason: s.SplitReason,
+		}
+	}
+	return json.Marshal(segList)
+}
+
+func finaliseReviewSuggestions(rawItems []reviewRawSuggestion, segments []SegmentInfo) []SegmentReviewSuggestion {
 	ordinalToID := make(map[int]uint, len(segments))
 	for _, s := range segments {
-		ordinalToID[s.Ordinal] = uint(s.Ordinal) // placeholder; pipeline caller injects real IDs
+		ordinalToID[s.Ordinal] = uint(s.Ordinal) // pipeline caller resolves real DB IDs
 	}
-
 	suggestions := make([]SegmentReviewSuggestion, 0, len(rawItems))
 	for _, item := range rawItems {
 		if len(item.Ordinals) < 2 {
@@ -868,5 +1253,5 @@ func (c *Client) ReviewSegmentation(
 			Confidence: item.Confidence,
 		})
 	}
-	return suggestions, nil
+	return suggestions
 }

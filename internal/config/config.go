@@ -75,12 +75,31 @@ type Config struct {
 	// Segment review: LLM-powered merge suggestions after asr_smart, before translate.
 	SegmentReviewEnabled bool   // default true
 	SegmentReviewModel   string // model name; falls back to RetranslationModel then OpenAIModel
+	// SegmentReviewUseTools: OPT-003. When true, ReviewSegmentation uses
+	// strict-schema function calling instead of "describe JSON in prompt
+	// + json.Unmarshal" fallback. Default false during gradual rollout.
+	SegmentReviewUseTools bool
+
+	// JudgeModel: OPT-002. Empty = LLM-as-Judge disabled. When non-empty,
+	// every TTS segment is scored asynchronously after synthesis.
+	JudgeModel string
+	// JudgeObserveOnly: OPT-002 MVP. true = score is recorded but does NOT
+	// influence retry/break decisions. Flipping to false at L4 rollout
+	// hands the judge verdict to the agent loop (see OPT-201).
+	JudgeObserveOnly bool
 
 	FFmpegBin  string
 	FFprobeBin string
 
 	// TTSConcurrency: max parallel TTS requests per job (1=sequential, 2+=parallel).
 	TTSConcurrency int
+
+	// WorkerMetricsAddr is the listen address for the worker's /metrics
+	// endpoint. Default ":8081"; set to empty string to disable. Worker
+	// emits its own LLM token / cost / cache hit metrics that are NOT
+	// visible from the api container's /metrics — exposing this lets
+	// Prometheus / curl scrape worker-side counters (OPT-001).
+	WorkerMetricsAddr string
 }
 
 func Load() (Config, error) {
@@ -250,6 +269,16 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("parse SEGMENT_REVIEW_ENABLED: %w", err)
 	}
 	cfg.SegmentReviewModel = getEnv("SEGMENT_REVIEW_MODEL", "")
+	cfg.SegmentReviewUseTools, err = getEnvBool("SEGMENT_REVIEW_USE_TOOLS", false)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse SEGMENT_REVIEW_USE_TOOLS: %w", err)
+	}
+
+	cfg.JudgeModel = getEnv("JUDGE_MODEL", "")
+	cfg.JudgeObserveOnly, err = getEnvBool("JUDGE_OBSERVE_ONLY", true)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse JUDGE_OBSERVE_ONLY: %w", err)
+	}
 
 	cfg.TTSConcurrency, err = getEnvInt("TTS_CONCURRENCY", 2)
 	if err != nil {
@@ -258,6 +287,8 @@ func Load() (Config, error) {
 	if cfg.TTSConcurrency < 1 {
 		cfg.TTSConcurrency = 1
 	}
+
+	cfg.WorkerMetricsAddr = getEnv("WORKER_METRICS_ADDR", ":8081")
 
 	cfg.RequestRateLimitRPS, err = getEnvFloat("REQUEST_RATE_LIMIT_RPS", 20.0)
 	if err != nil {
