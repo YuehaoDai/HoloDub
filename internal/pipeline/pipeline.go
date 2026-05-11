@@ -21,6 +21,7 @@ import (
 	"holodub/internal/models"
 	"holodub/internal/observability"
 	"holodub/internal/queue"
+	"holodub/internal/rework"
 	"holodub/internal/storage"
 	"holodub/internal/store"
 	"holodub/internal/webhook"
@@ -35,10 +36,14 @@ type Service struct {
 	ml       *ml.Client
 	llm      *llm.Client
 	notifier *webhook.Notifier
+	// rework is the OPT-407 closed-loop rework engine. Always non-nil after
+	// NewService; gates its own dispatches on cfg.ReworkEngineLevel so a
+	// caller never has to nil-check before calling MaybeRework*.
+	rework *rework.Engine
 }
 
 func NewService(cfg config.Config, st *store.Store, q *queue.Queue, mlClient *ml.Client, llmClient *llm.Client) *Service {
-	return &Service{
+	svc := &Service{
 		cfg:      cfg,
 		store:    st,
 		queue:    q,
@@ -46,6 +51,12 @@ func NewService(cfg config.Config, st *store.Store, q *queue.Queue, mlClient *ml
 		llm:      llmClient,
 		notifier: webhook.New(cfg),
 	}
+	// Engine depends on Service via the narrow rework.RetryJobAPI interface
+	// (RetryJob + EnqueueEpisodeStage). Wired in after construction so the
+	// circular reference (Service → Engine → Service) is captured by the
+	// interface, NOT by an import cycle.
+	svc.rework = rework.NewEngine(cfg, st, svc)
+	return svc
 }
 
 func (s *Service) MLHealth(ctx context.Context) (map[string]any, error) {
@@ -1483,6 +1494,10 @@ func (s *Service) handleEpisodeStage(ctx context.Context, task models.TaskPayloa
 		stageErr = s.runEpisodeChapterize(stageCtx, task)
 	case models.EpisodeStageEpisodeMerge:
 		stageErr = s.runEpisodeMerge(stageCtx, task)
+	case models.EpisodeStageGlossaryBroadcast:
+		// OPT-407 episode-level rework action. Triggered on demand by
+		// rework.Engine, NEVER part of the canonical EpisodeStageOrder.
+		stageErr = s.runEpisodeGlossaryBroadcast(stageCtx, task)
 	default:
 		stageErr = fmt.Errorf("unsupported episode stage %q", task.EpisodeStage)
 	}

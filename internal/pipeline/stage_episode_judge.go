@@ -190,6 +190,21 @@ func (s *Service) maybeJudgeEpisodeAsync(ep *models.Episode, chapters []models.J
 			"segment_count", len(epSegs),
 			"chapter_count", len(epChapters),
 		)
+
+		// OPT-407 closed-loop rework hook (episode level). Engine decides
+		// whether to dispatch broadcast_glossary, escalate to human review,
+		// or noop — gated by REWORK_ENGINE_LEVEL >= episode and the
+		// per-episode cost ceiling. The episode-level engine path uses the
+		// terminology / narrative axes directly (sub-rule selectors) so we
+		// pass them through unmodified.
+		s.rework.MaybeReworkEpisode(
+			ctx,
+			epCopy.ID,
+			result.Verdict,
+			result.OverallScore(),
+			result.TerminologyConsistency,
+			result.NarrativeCoherence,
+		)
 	}()
 }
 

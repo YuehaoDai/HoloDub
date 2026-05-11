@@ -642,6 +642,20 @@ func (s *Service) maybeJudgeSegmentAsync(job *models.Job, segCopy models.Segment
 			"fluency", result.Fluency,
 			"coherence", result.Coherence,
 		)
+
+		// OPT-407 closed-loop rework hook. Always called — the engine
+		// decides internally whether to dispatch (REWORK_ENGINE_LEVEL gate)
+		// or just record the attempt as observe-only. Engine swallows its
+		// own errors, so this is fire-and-forget. EpisodeID == 0 (older
+		// jobs without an episode) is handled inside MaybeReworkSegment.
+		s.rework.MaybeReworkSegment(
+			ctx,
+			job.ID,
+			job.EpisodeID,
+			segCopy.ID,
+			result.Verdict,
+			result.OverallScore(),
+		)
 	}()
 }
 
@@ -755,6 +769,25 @@ func (s *Service) maybeJudgeChapterAsync(job *models.Job, segments []models.Segm
 			"terminology_consistency", result.TerminologyConsistencyWithinChapter,
 			"register_consistency", result.RegisterConsistencyWithinChapter,
 			"weakest_count", len(result.Top3WeakestSegments),
+		)
+
+		// OPT-407 closed-loop rework hook (chapter level). Engine resolves
+		// 1-indexed in-chapter ordinals to real DB segment IDs and gates
+		// dispatch on REWORK_ENGINE_LEVEL >= chapter. Same fire-and-forget
+		// contract as the segment hook above.
+		weakestOrdinals := make([]int, 0, len(result.Top3WeakestSegments))
+		for _, ws := range result.Top3WeakestSegments {
+			if ws.Ordinal > 0 {
+				weakestOrdinals = append(weakestOrdinals, ws.Ordinal)
+			}
+		}
+		s.rework.MaybeReworkChapter(
+			ctx,
+			jobCopy.ID,
+			jobCopy.EpisodeID,
+			result.Verdict,
+			result.OverallScore(),
+			weakestOrdinals,
 		)
 	}()
 }

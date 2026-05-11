@@ -494,6 +494,28 @@ type Episode struct {
 	// episode-level judge stage. Both nil until that stage runs.
 	EpisodeJudgeScore *float64       `json:"episode_judge_score,omitempty" gorm:"type:numeric"`
 	EpisodeJudgeMeta  datatypes.JSON `json:"episode_judge_meta,omitempty" gorm:"type:jsonb"`
+	// ReworkAttempts is the OPT-407 closed-loop rework history. Each entry
+	// is a rework.ReworkAttempt JSON record describing one decision the
+	// rework engine made on this episode (level, target, verdict, action
+	// type, dispatched yes/no, estimated cost). Append-only — Decide reads
+	// the full history every time to detect oscillation and enforce the
+	// per-level retry caps. Nil / empty means "no rework engine activity
+	// yet on this episode" (typical of any pre-OPT-407 row).
+	ReworkAttempts datatypes.JSON `json:"rework_attempts,omitempty" gorm:"type:jsonb"`
+	// ReworkStatus is the OPT-407 escalation flag. Empty means "no
+	// special state" (default and the only state the rework engine sets
+	// when it is happily dispatching). Non-empty values: in_progress,
+	// escalated_human, escalated_oscillation, escalated_chapter,
+	// halted_cost — each blocks any further auto-rework dispatch on this
+	// episode until an operator clears the column.
+	ReworkStatus string `json:"rework_status,omitempty" gorm:"size:64;index"`
+	// AccumulatedCostUSD is the running total of estimated LLM cost the
+	// rework engine has dispatched against this episode (sum of the
+	// CostUSDDelta fields in ReworkAttempts). Compared to
+	// EPISODE_REWORK_COST_CEILING_USD before each new dispatch decision —
+	// once exceeded, the rework engine emits ActionHaltCost and stops.
+	// Nil = never charged; *0 = charged but ledger reset by an operator.
+	AccumulatedCostUSD *float64       `json:"accumulated_cost_usd,omitempty" gorm:"type:numeric"`
 	Status        EpisodeStatus `json:"status" gorm:"size:32;index"`
 	OutputRelPath string        `json:"output_relpath"`
 	// OutputLayoutVersion distinguishes pre-OPT-403 layout (1 = jobs/{id}/output/...)
@@ -594,6 +616,13 @@ const (
 	EpisodeStageEpisodeMerge EpisodeStage = "ep_episode_merge"
 	// OPT-406 placeholder — episode-level judge that scores the full output.
 	EpisodeStageEpisodeJudge EpisodeStage = "ep_episode_judge"
+	// OPT-407 episode-level rework stage — re-runs the glossary extractor,
+	// diffs the new vs old terminology, and re-translates segments that
+	// reference any added/changed terms. Triggered ON DEMAND by the rework
+	// engine when an episode judge returns needs_minor_revision with
+	// terminology_consistency below threshold; deliberately NOT in
+	// EpisodeStageOrder so it never runs as part of a normal flow.
+	EpisodeStageGlossaryBroadcast EpisodeStage = "ep_glossary_broadcast"
 )
 
 // EpisodeStageOrder is the canonical sequence the OPT-402 worker walks when

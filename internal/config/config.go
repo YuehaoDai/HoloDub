@@ -231,6 +231,38 @@ type Config struct {
 	// links keep working).
 	EpisodeMergeEnabled bool
 
+	// ReworkEngineLevel: OPT-407. Selects the highest level at which the
+	// closed-loop rework engine actually dispatches actions. Lower levels
+	// are still evaluated and persisted to episodes.rework_attempts for
+	// observability, but no RetryJob / EnqueueEpisodeStage is issued.
+	// Values:
+	//   "none"    (default) — observe-only at every level (legacy behaviour).
+	//   "segment"           — segment retries are dispatched.
+	//   "chapter"           — segment + chapter (revise weakest) dispatched.
+	//   "episode"           — segment + chapter + episode (broadcast glossary).
+	// Unknown values collapse to "none" so a typo never silently enables.
+	ReworkEngineLevel string
+	// EpisodeReworkCostCeilingUSD: OPT-407 cost-ceiling guard. Once the
+	// accumulated rework LLM cost on one episode exceeds this value, the
+	// engine emits ActionHaltCost and refuses further dispatch until the
+	// rework_status column is manually cleared. Default 2.0 USD.
+	EpisodeReworkCostCeilingUSD float64
+	// SegmentRetryMaxAttempts: OPT-407 cap on the number of times the
+	// rework engine will dispatch ActionSegmentRetry on a single segment
+	// before escalating to thinking-mode and ultimately accept-with-borrow.
+	// Default 3 (matches the existing TTS retry budget intuition).
+	SegmentRetryMaxAttempts int
+	// ChapterReworkMaxRounds: OPT-407 cap on the number of full chapter
+	// rework rounds (each dispatches the top-3 weakest segments). Default
+	// 1 — a chapter that still flags needs_revision after one round
+	// escalates to operator review.
+	ChapterReworkMaxRounds int
+	// ReworkOscillationThreshold: OPT-407 oscillation cut-off. Same target
+	// returning the same verdict N consecutive times triggers
+	// ActionEscalateOscillation. Default 2 — once you've decided "retry"
+	// twice in a row, a third retry is unlikely to help.
+	ReworkOscillationThreshold int
+
 	FFmpegBin  string
 	FFprobeBin string
 
@@ -521,6 +553,29 @@ func Load() (Config, error) {
 	cfg.EpisodeMergeEnabled, err = getEnvBool("EPISODE_MERGE_ENABLED", true)
 	if err != nil {
 		return Config{}, fmt.Errorf("parse EPISODE_MERGE_ENABLED: %w", err)
+	}
+
+	// OPT-407 closed-loop rework engine. Defaults are conservative —
+	// REWORK_ENGINE_LEVEL=none means the engine evaluates verdicts and
+	// records observe-only attempts but never dispatches a retry. Operators
+	// flip this knob to "segment" / "chapter" / "episode" once the per-
+	// level wiring has been verified on staging.
+	cfg.ReworkEngineLevel = strings.TrimSpace(getEnv("REWORK_ENGINE_LEVEL", "none"))
+	cfg.EpisodeReworkCostCeilingUSD, err = getEnvFloat("EPISODE_REWORK_COST_CEILING_USD", 2.0)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse EPISODE_REWORK_COST_CEILING_USD: %w", err)
+	}
+	cfg.SegmentRetryMaxAttempts, err = getEnvInt("SEGMENT_RETRY_MAX_ATTEMPTS", 3)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse SEGMENT_RETRY_MAX_ATTEMPTS: %w", err)
+	}
+	cfg.ChapterReworkMaxRounds, err = getEnvInt("CHAPTER_REWORK_MAX_ROUNDS", 1)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse CHAPTER_REWORK_MAX_ROUNDS: %w", err)
+	}
+	cfg.ReworkOscillationThreshold, err = getEnvInt("REWORK_OSCILLATION_THRESHOLD", 2)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse REWORK_OSCILLATION_THRESHOLD: %w", err)
 	}
 
 	cfg.TTSConcurrency, err = getEnvInt("TTS_CONCURRENCY", 2)

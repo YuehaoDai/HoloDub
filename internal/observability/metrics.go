@@ -74,6 +74,27 @@ var (
 		Name: "holodub_llm_strict_parse_failed_total",
 		Help: "Times the strict JSON / tool-call parse failed and the caller fell back to legacy parsing.",
 	}, []string{"operation"})
+
+	// OPT-407: dollar cost per LLM call, derived from token counts via the
+	// hardcoded model price table in internal/llm/pricing.go. Lets us
+	// dashboard the production cost of every LLM use case independently
+	// and compare against the per-episode rework cost ceiling. Cardinality
+	// stays at model × operation (same as the token counters above).
+	llmCostUSDTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "holodub_llm_cost_usd_total",
+		Help: "Estimated USD cost of LLM calls, derived from token usage and the per-model price table.",
+	}, []string{"model", "operation"})
+
+	// OPT-407: count of rework engine decisions broken down by level
+	// (segment / chapter / episode), action type, and whether the action
+	// was actually dispatched (vs persisted-only). Lets a dashboard
+	// alert on "rework engine refusing to dispatch because of cost
+	// ceiling" or "thousands of segment retries" without inspecting the
+	// rework_attempts JSONB column row-by-row.
+	reworkActionsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "holodub_rework_actions_total",
+		Help: "Count of OPT-407 rework engine decisions by level, action type, and whether dispatched.",
+	}, []string{"level", "action", "dispatched"})
 )
 
 // ObserveExternalCall records the outcome of an outbound HTTP call to a
@@ -136,6 +157,46 @@ func IncLLMStrictParseFailed(operation string) {
 		operation = "unknown"
 	}
 	llmStrictParseFailedTotal.WithLabelValues(operation).Inc()
+}
+
+// AddLLMCostUSD records the estimated dollar cost of one LLM call. usdCost
+// is computed by internal/llm/pricing.ComputeUSD using the per-model price
+// table — kept out of this file to avoid the import cycle the price table
+// would otherwise trigger (pricing depends on observability for the
+// counter, observability would otherwise depend on pricing for the math).
+//
+// Failures are swallowed (non-positive cost is dropped) — observability
+// MUST NOT block the main flow.
+func AddLLMCostUSD(model, operation string, usdCost float64) {
+	if usdCost <= 0 {
+		return
+	}
+	if model == "" {
+		model = "unknown"
+	}
+	if operation == "" {
+		operation = "unknown"
+	}
+	llmCostUSDTotal.WithLabelValues(model, operation).Add(usdCost)
+}
+
+// IncReworkAction records one OPT-407 rework engine decision. dispatched
+// is "true" when the engine actually called RetryJob / EnqueueEpisodeStage,
+// "false" when it persisted the attempt as observe-only (level disabled,
+// halt, escalation, or noop).
+//
+// Cardinality stays low: 3 levels × ~10 action types × 2 dispatch states.
+func IncReworkAction(level, action, dispatched string) {
+	if level == "" {
+		level = "unknown"
+	}
+	if action == "" {
+		action = "unknown"
+	}
+	if dispatched == "" {
+		dispatched = "false"
+	}
+	reworkActionsTotal.WithLabelValues(level, action, dispatched).Inc()
 }
 
 func MetricsHandler() http.Handler {

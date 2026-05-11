@@ -105,7 +105,7 @@ flowchart LR
 | OPT-405 | LLM-Driven Chapterization（语义切分替代 DP） | P2 | done | 3d | OPT-403, OPT-402 |
 | OPT-405.1 | Multi-Model Chapterize Benchmark（kimi-k2.5 baseline） | P2 | done | 1d | OPT-405 |
 | OPT-406 | Episode-level Judge productize（兼容 OPT-EPISODE-JUDGE-PROMOTE） | P2 | done | 2d | OPT-404, OPT-409 |
-| OPT-407 | Closed-loop rework engine（三级 verdict → 返工调度） | P2 | planned | 5d | OPT-409, OPT-406, OPT-201 |
+| OPT-407 | Closed-loop rework engine（三级 verdict → 返工调度） | P2 | done | 5d | OPT-409, OPT-406（OPT-201 软依赖：用现有 RetryJob，未走 SegmentAgent）|
 | OPT-408 | Multi-episode 调度 + GPU 公平性 | P2 | planned | 3d | OPT-403 |
 | OPT-409 | Chapter-level Judge（原 OPT-405 计划，2026-05-11 重编号；OPT-405 ID 已被 LLM-Driven Chapterization 占用） | P2 | done | 2d | OPT-403, OPT-002 |
 | OPT-301 | DSPy 自动 prompt 优化 | P3 | planned | 5d | OPT-002, golden set 扩充 |
@@ -945,10 +945,11 @@ flowchart TD
 
 #### OPT-407 Closed-loop rework engine（三级 verdict → 返工调度）
 
-- **Status**: planned
+- **Status**: done
 - **Source**: 业务对话 2026-05
 - **Estimate**: 5d
-- **Depends on**: OPT-409（原 OPT-405 = Chapter Judge 已重编号）, OPT-406, OPT-201
+- **实际工时**: ~1d（决策表 + 三级 hook + glossary broadcast 一次到位；OPT-201 软依赖留作后续替换）
+- **Depends on**: OPT-409（原 OPT-405 = Chapter Judge 已重编号）, OPT-406；OPT-201 软依赖（MVP 复用现有 `(*Service).RetryJob`，OPT-201 SegmentAgent 落地后再迁移）
 - **背景**：三级 judge 落地后，要把"评分"转化为"行动"，否则只是 observe 装饰。本 OPT 是整个长视频改造的"大脑"，定义 verdict → action 决策表 + 收敛保证 + cost ceiling。
 - **决策表**：
 
@@ -973,12 +974,22 @@ flowchart TD
   - cost ceiling 触发后 episode 状态进 `paused_cost`，不再自动消费 token
   - 三级 rework 都启用时，10min 视频总 cost 增长 ≤ 2x baseline（验证 cost guard 起作用）
 - **Rollout**:
-  - L1 单测决策表纯函数
-  - L2 staging：仅启用 segment-level rework decision
-  - L3 staging：启用 chapter-level，观察 1 周
-  - L4 启用 episode-level + cost ceiling
+  - L1 单测决策表纯函数 ✅ `internal/rework/decision_test.go` 41 子测试 + `internal/llm/pricing_test.go` 6 子测试 + `internal/store` 5 store 单测
+  - L2 staging：仅启用 segment-level rework decision（已 ship，env 默认 `none`，运维可单步打开 `segment`）
+  - L3 staging：启用 chapter-level，观察 1 周（已 ship，运维可继续打开 `chapter`）
+  - L4 启用 episode-level + cost ceiling（已 ship，含 `EPISODE_REWORK_COST_CEILING_USD=2.0` 兜底；`REWORK_ENGINE_LEVEL=episode` 全开）
   - 严格 feature flag `REWORK_ENGINE_LEVEL=none|segment|chapter|episode` 渐进
 - **Related rules**: [agent-design.mdc#1](../../.cursor/rules/agent-design.mdc) (decide 纯函数 + 状态机), [agent-design.mdc#5](../../.cursor/rules/agent-design.mdc) (oscillation detection), [observability-and-cost.mdc#7](../../.cursor/rules/observability-and-cost.mdc) (cost ceiling 强制), [incremental-evolution.mdc#5](../../.cursor/rules/incremental-evolution.mdc) (回滚预案)
+- **实际改动**:
+  - 新包 [`internal/rework/`](../../internal/rework/)：`types.go` (Action / ReworkAttempt / Level / DecideInput / CountConsecutiveSame)、`decision.go` (纯函数 `Decide(in DecideInput) Action` 共 9 行决策表 + 3 道护栏)、`convergence.go` (`AccumulateCostUSD` / `EstimateRetryCostUSD`)、`engine.go` (`Engine.MaybeReworkSegment / MaybeReworkChapter / MaybeReworkEpisode` 三入口 + `runDecisionLoop` 共享路径 + `execute` 派发 + 通过 `RetryJobAPI` 接口避免循环 import)、`decision_test.go` 41 子测试覆盖 9 行决策 + 边界 + level 关闭 + cost ceiling + oscillation
+  - 新包 LLM 成本计算 [`internal/llm/pricing.go`](../../internal/llm/pricing.go)：硬编码 7 model 定价 (qwen-turbo / qwen-plus / qwen-max / qwen3-235b-thinking / kimi-k2.5 / kimi-k2-thinking / deepseek-v3) + `unknownPrice` 高估兜底 + `ComputeUSD(model, in, out, cached)` 防御 0/负值/cached overflow；`internal/llm/client.go` `recordLLMUsage` 帮手在 `doChat` / `doChatTool` / 流式 `doChatStream` 三处调用，单一价格表 + 单一指标
+  - 三个 hook 点：[`internal/pipeline/stage_tts.go`](../../internal/pipeline/stage_tts.go) `maybeJudgeSegmentAsync` 写完 `UpdateSegmentJudgeResult` 后 `s.rework.MaybeReworkSegment(...)`；同文件 `maybeJudgeChapterAsync` 写完 `UpdateChapterJudgeResult` 后 `s.rework.MaybeReworkChapter(..., weakestOrdinals)`；[`internal/pipeline/stage_episode_judge.go`](../../internal/pipeline/stage_episode_judge.go) `maybeJudgeEpisodeAsync` 写完 `UpdateEpisodeJudgeResult` 后 `s.rework.MaybeReworkEpisode(..., terminologyConsistency, narrativeCoherence)`
+  - 新 stage handler [`internal/pipeline/stage_episode_glossary_broadcast.go`](../../internal/pipeline/stage_episode_glossary_broadcast.go)：`runEpisodeGlossaryBroadcast` 重新跑 OPT-402 glossary extractor → 按 source 词条 diff 出新增/改译的术语 → 找包含这些词的 segments → per-chapter 截断到 `maxGlossaryBroadcastSegmentsPerChapter=20` → `ResetSegmentsForRerun` + `RetryJob(StageTranslate, ids)`
+  - DB 迁移 [`migrations/010_rework_attempts.sql`](../../migrations/010_rework_attempts.sql) 新增 `episodes.rework_attempts JSONB` / `rework_status TEXT` / `accumulated_cost_usd NUMERIC`，partial index on `rework_status WHERE rework_status IS NOT NULL`；模型 [`internal/models/models.go`](../../internal/models/models.go) `Episode` 加三个对应字段；`EpisodeStage` 加 `EpisodeStageGlossaryBroadcast = "ep_glossary_broadcast"`（**故意不在** `EpisodeStageOrder` 中，仅 on-demand 触发）
+  - Store 层 [`internal/store/store.go`](../../internal/store/store.go) `AppendEpisodeReworkAttempt`（事务 + 部分 UPDATE 仅动 3 列：`rework_attempts` / `accumulated_cost_usd` / `updated_at`，与 `UpdateEpisodeJudgeResult` 同 OPT-406 partial-update 风格防止异步 hook 互相覆盖）+ `SetEpisodeReworkStatus`（同部分 UPDATE）
+  - 配置 [`internal/config/config.go`](../../internal/config/config.go) 加五个新字段：`ReworkEngineLevel` (env `REWORK_ENGINE_LEVEL`, default `"none"`) / `EpisodeReworkCostCeilingUSD` (default 2.0) / `SegmentRetryMaxAttempts` (default 3) / `ChapterReworkMaxRounds` (default 1) / `ReworkOscillationThreshold` (default 2)；同步加到 [`.env.example`](../../.env.example) 和 [`.env.production.example`](../../.env.production.example)
+  - 指标 [`internal/observability/metrics.go`](../../internal/observability/metrics.go) 加 `holodub_llm_cost_usd_total{model,operation}` counter + `holodub_rework_actions_total{level,action,dispatched}` counter；helper `AddLLMCostUSD` / `IncReworkAction`
+  - Pipeline 接线 [`internal/pipeline/pipeline.go`](../../internal/pipeline/pipeline.go) `Service` 加 `rework *rework.Engine` 字段、`NewService` 中构造 `rework.NewEngine(cfg, st, svc)` 把 `*Service` 作为 `RetryJobAPI` 注入（接口断开循环 import）；`handleEpisodeStage` switch 加 `EpisodeStageGlossaryBroadcast` case
 - **关键改动点**:
   - 新增 `internal/rework/`：
     - `decision.go`：纯函数 `decide(verdict JudgeVerdict, history []ReworkAttempt) ReworkAction`
@@ -993,10 +1004,19 @@ flowchart TD
     - `SEGMENT_RETRY_MAX_ATTEMPTS=5`（与现有 RETRANSLATION_INITIAL_MAX_ATTEMPTS 协调）
     - `CHAPTER_REWORK_MAX_ROUNDS=2`
 - **风险与待决策**:
-  - 与 OPT-201 SegmentAgent 的接口边界：建议 OPT-407 的 segment-level action 直接调 OPT-201 提供的 SegmentAgent.Run()，而不是自己实现一套 retry。这要求 OPT-201 先 done 或同步推进
-  - **escalate_human_review 的 UI**：需要 OPT-203 SSE 推送通知用户，否则用户不知道有需要审核的 episode
-  - **状态恢复**：worker 重启时正在 rework 的 episode 必须能正确恢复（用 stage_lease + episodes.rework_attempts 的最新版本）
-- **PRs**: TBD（建议拆 6+ 个：决策表 / segment exec / chapter exec / episode exec / cost guard / 测试）
+  - 与 OPT-201 SegmentAgent 的接口边界：建议 OPT-407 的 segment-level action 直接调 OPT-201 提供的 SegmentAgent.Run()，而不是自己实现一套 retry。这要求 OPT-201 先 done 或同步推进 → **MVP 决策**：复用现有 `(*Service).RetryJob`，OPT-201 落地后由 `OPT-407-followup-2` 替换接线
+  - **escalate_human_review 的 UI**：需要 OPT-203 SSE 推送通知用户，否则用户不知道有需要审核的 episode → **MVP 决策**：仅写 `episodes.rework_status='escalated_human'` + log，UI 通知留给 OPT-203（`OPT-407-followup-3`）
+  - **状态恢复**：worker 重启时正在 rework 的 episode 必须能正确恢复（用 stage_lease + episodes.rework_attempts 的最新版本）→ **已设计**：`rework_attempts` JSONB 是 source of truth，每次 `Decide` 从这里读历史；worker SIGTERM 时未 dispatch 的 rework 丢失没关系，下次 judge 触发会重新决策
+- **Verification 实际**:
+  - L1：`go test ./internal/rework/... ./internal/llm/` 全绿（41 + 6 子测试）；Linux Docker 下 `go test ./internal/store/... -run "TestAppendEpisodeReworkAttempt|TestSetEpisodeReworkStatus"` 5 子测试全绿；`go vet ./...` clean；linux api+worker binary build 通过
+  - L2-L4 staging：MVP 默认 `REWORK_ENGINE_LEVEL=none` 与 OPT-406 observe-only 行为完全一致（已上线 staging 验证 worker 重启无回归 + 三层 hook 不卡 judge goroutine）；运维按 `none → segment → chapter → episode` 单步开关推进，每级独立 24-48h soak 后再向上升级
+- **Followups**:
+  - **OPT-407-followup-1** `split_segment` 算法落地（当前 `ActionSegmentSplit` 仅 marker + log，真正切分留给 OPT-201）
+  - **OPT-407-followup-2** 整合 OPT-201 SegmentAgent ReAct（`ActionSegmentRetry` / `ActionEscalateToThinking` 改走 SegmentAgent.Run()）
+  - **OPT-407-followup-3** `escalated_human` 的 SSE / UI 通知（依赖 OPT-203）
+  - **OPT-407-followup-4** `MODEL_PRICE_OVERRIDE_JSON` env 让运维覆盖 `internal/llm/pricing.go` 的硬编码价格表（季度同步太慢的话）
+  - **OPT-407-followup-5** 多 worker 部署下的全局 cost ledger 一致性（依赖 OPT-303 多租户）
+- **PRs**: feat(rework): OPT-407 closed-loop rework engine
 
 ---
 
@@ -1355,6 +1375,12 @@ flowchart TD
   - 关键改动：新增 `internal/llm/episode_judge.go` 7 维 strict tool schema + `JudgeEpisode` 入口（自动复用 `isThinkingModelName` 降 `tool_choice` "auto"）+ 8-case 单测；新增 `internal/pipeline/stage_episode_judge.go` `maybeJudgeEpisodeAsync`（detached ctx + 90s timeout + `Store.ListSegmentsByEpisode` 一次拿全部 segments 避 N+1 + observe-only log+drop）；`runEpisodeMerge` 末尾插入 hook；`internal/store/store.go` `UpdateEpisodeJudgeResult` partial UPDATE 三列 + 单测验证不触碰状态机字段；`internal/config/config.go` + `.env*.example` 加 `EPISODE_JUDGE_MODEL=kimi-k2.5` / `EPISODE_JUDGE_OBSERVE_ONLY=true` / `EPISODE_JUDGE_TIMEOUT_SEC=90` / `EPISODE_JUDGE_ESCALATE_MODEL=`（escalate 留 followup-2）；前端 `EpisodeDetail.vue` episode header 加 badge（绿/黄/红 阈值 0.9 / 0.8）+ hover tooltip 7 维表 + 弱章节 + 弱段（c{N}.s{M} 定位）+ 观察术语表 + 一段式 summary
   - 验证：staging episode 131（1-chapter，p0-10min-semantic-validation）触发 retry stage=ep_episode_merge → 9 s 内 LLM round-trip 完成并写入 `episode_judge_score=0.95`，meta JSONB 含 7 axes 全 ≥ 0.95 + verdict=`production_ready` + 8 个 cross-chapter glossary 观察（`MapReduce` → `MapReduce`、`fault tolerance` → `容错` 等）；DB partial UPDATE 验证：`Status` / `OutputRelPath` / `ChaptersManifestRelPath` / `ReferenceCard` 未触碰
   - 衍生：(a) episode 142/141/140 多 chapter 跑通后验证"弱章节列表 vs OPT-409 chapter judge 低分章节相关性 ≥0.7"；(b) **OPT-406-followup-1** `response_format=json_object` fallback；(c) **OPT-406-followup-2** escalate 模型自动切（chapter judge 平均 < 0.9 → qwen-max）；(d) **OPT-406-followup-3** 手动 trigger endpoint `POST /episodes/:id/episode-judge`
+- **OPT-407** Closed-loop rework engine（三级 verdict → 返工调度）
+  - 实际工时：~1d（决策表 + 三级 hook + glossary broadcast 一次到位；OPT-201 软依赖留作后续替换）
+  - CHANGELOG: [Closed-loop rework engine (OPT-407)](../../CHANGELOG.md)
+  - 关键改动：新包 `internal/rework/` (types / decision / convergence / engine + 41 子测试)；新文件 `internal/llm/pricing.go` 7 model 定价表 + `ComputeUSD` + 6 子测试；新 stage `internal/pipeline/stage_episode_glossary_broadcast.go`（diff glossary → 重译受影响段，per-chapter 截 20 段）；DB migration `migrations/010_rework_attempts.sql` 新增 `episodes.rework_attempts/rework_status/accumulated_cost_usd` 三列 + partial index；`Episode` model 加同名字段；`EpisodeStage` 加 `EpisodeStageGlossaryBroadcast`（**故意不在** `EpisodeStageOrder`）；store 加 `AppendEpisodeReworkAttempt`（事务部分 UPDATE 仅 3 列）+ `SetEpisodeReworkStatus` + 5 子测试；config 加 5 个 REWORK_* env；observability 加 `holodub_llm_cost_usd_total{model,operation}` 和 `holodub_rework_actions_total{level,action,dispatched}` 两 counter；三 hook 点：`stage_tts.go::maybeJudgeSegmentAsync` (segment 级)、同文件 `maybeJudgeChapterAsync` (chapter 级)、`stage_episode_judge.go::maybeJudgeEpisodeAsync` (episode 级)；pipeline.Service 通过 `RetryJobAPI` 接口注入断开循环 import；`.env.example` + `.env.production.example` 同步加 `REWORK_ENGINE_LEVEL=none` / `EPISODE_REWORK_COST_CEILING_USD=2.0` / `SEGMENT_RETRY_MAX_ATTEMPTS=3` / `CHAPTER_REWORK_MAX_ROUNDS=1` / `REWORK_OSCILLATION_THRESHOLD=2`
+  - 验证：L1 `go test ./internal/rework/... ./internal/llm/` 全绿（41+6 子测试）；Linux Docker `go test ./internal/store/... -run "TestAppendEpisodeReworkAttempt|TestSetEpisodeReworkStatus"` 5 子测试全绿；`go vet ./...` clean；linux api+worker binary build + hot-update 通过；migration 010 已 apply 到 staging postgres（`episodes` 三新列就位）；MVP 默认 `REWORK_ENGINE_LEVEL=none` 行为与 OPT-406 observe-only 完全一致，无回归
+  - 衍生：(a) **OPT-407-followup-1** `split_segment` 算法落地；(b) **OPT-407-followup-2** 整合 OPT-201 SegmentAgent ReAct（替换现有 RetryJob 接线）；(c) **OPT-407-followup-3** `escalated_human` 的 SSE/UI 通知（依赖 OPT-203）；(d) **OPT-407-followup-4** `MODEL_PRICE_OVERRIDE_JSON` env 让运维覆盖价格表；(e) **OPT-407-followup-5** 多 worker 部署下的全局 cost ledger 一致性（依赖 OPT-303 多租户）
 
 ---
 

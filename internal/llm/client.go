@@ -736,6 +736,22 @@ func classifyResult(err error) string {
 	return "permanent"
 }
 
+// recordLLMUsage emits both the (token-level) ObserveLLMTokens metric and
+// the (USD-level) AddLLMCostUSD metric for ONE successful LLM call. Always
+// call this from the success branch of a doChat / doChatTool / streaming
+// helper so the OPT-407 rework cost ceiling sees a consistent ledger.
+//
+// USD cost is computed via pricing.ComputeUSD which silently returns 0 for
+// unknown models — the metric path stays reliable even if the model name
+// drifts from the price table.
+func recordLLMUsage(model, operation string, promptTokens, completionTokens, cachedTokens int) {
+	observability.ObserveLLMTokens(model, operation, promptTokens, completionTokens, cachedTokens)
+	usd := ComputeUSD(model, promptTokens, completionTokens, cachedTokens)
+	if usd > 0 {
+		observability.AddLLMCostUSD(model, operation, usd)
+	}
+}
+
 // doChat sends a chat completion request and returns the first choice's
 // text. Retries are applied automatically for transient failures (429/5xx,
 // network errors). Permanent errors (e.g. 400 invalid request) abort
@@ -758,7 +774,7 @@ func (c *Client) doChat(ctx context.Context, operation string, payload chatCompl
 		// Only attribute tokens for successful calls — retried-then-failed
 		// attempts are already counted as "retryable" / "permanent" via
 		// ObserveExternalCall and we don't want to double-charge cost.
-		observability.ObserveLLMTokens(payload.Model, operation,
+		recordLLMUsage(payload.Model, operation,
 			usage.PromptTokens, usage.CompletionTokens, usage.CachedTokens)
 	}
 	return content, err
@@ -783,7 +799,7 @@ func (c *Client) doChatTool(ctx context.Context, operation string, payload chatC
 	})
 	observability.ObserveExternalCall("llm", operation, classifyResult(err), time.Since(started))
 	if err == nil {
-		observability.ObserveLLMTokens(payload.Model, operation,
+		recordLLMUsage(payload.Model, operation,
 			usage.PromptTokens, usage.CompletionTokens, usage.CachedTokens)
 	}
 	return args, err
@@ -992,7 +1008,7 @@ func (c *Client) doChatStream(ctx context.Context, operation string, payload cha
 		return "", emptyErr
 	}
 	observability.ObserveExternalCall("llm", operation, "ok", time.Since(started))
-	observability.ObserveLLMTokens(payload.Model, operation,
+	recordLLMUsage(payload.Model, operation,
 		usage.PromptTokens, usage.CompletionTokens, usage.CachedTokens)
 	return result, nil
 }

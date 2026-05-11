@@ -15,6 +15,61 @@ once we cut a tagged release.
 
 ### Added
 
+- **Closed-loop rework engine (OPT-407)**: the three-tier judge stack
+  (segment OPT-002 / chapter OPT-409 / episode OPT-406) is now the input
+  side of an automatic rework loop instead of an observe-only signal.
+  After each judge writes its verdict, a new package
+  [`internal/rework`](internal/rework/) runs a pure decision function
+  (`Decide(DecideInput) Action`, exhaustively unit-tested via
+  `internal/rework/decision_test.go`) that maps `(level, verdict,
+  history, accumulated cost)` to a concrete `Action`: `segment_retry`,
+  `escalate_to_thinking`, `accept_with_borrow`, `revise_weakest_segments`,
+  `escalate_chapter`, `broadcast_glossary`, `escalate_human_review`,
+  `escalate_oscillation`, or `halt_cost`. The engine
+  ([`internal/rework/engine.go`](internal/rework/engine.go)) loads the
+  episode's history, calls `Decide`, persists the resulting attempt onto
+  three new `episodes.*` columns
+  (`migrations/010_rework_attempts.sql`: `rework_attempts JSONB`,
+  `rework_status TEXT`, `accumulated_cost_usd NUMERIC`), then dispatches
+  the side-effect through a narrow `RetryJobAPI` interface implemented by
+  `pipeline.Service` (`RetryJob` + `EnqueueEpisodeStage`) — no circular
+  import. Segment- and chapter-level actions reuse the existing
+  `(*Service).RetryJob`; episode-level glossary broadcast goes through a
+  new on-demand `EpisodeStageGlossaryBroadcast` stage handler
+  (`internal/pipeline/stage_episode_glossary_broadcast.go`) that
+  re-extracts the OPT-402 glossary, diffs old vs new term targets, and
+  re-translates segments containing changed source terms (capped at
+  20/chapter via `maxGlossaryBroadcastSegmentsPerChapter` to bound the
+  blast radius). The decision logic is gated by three independent safety
+  rails in priority order: a feature flag (`REWORK_ENGINE_LEVEL`,
+  default `none` for backward-compatible observe-only behaviour, can be
+  raised one notch at a time `none`→`segment`→`chapter`→`episode`), a
+  per-episode USD cost ceiling (`EPISODE_REWORK_COST_CEILING_USD`,
+  default 2.0; computed live from `internal/llm/pricing.go`'s
+  per-model price table feeding the new `holodub_llm_cost_usd_total`
+  Prometheus counter), and oscillation detection
+  (`REWORK_OSCILLATION_THRESHOLD`, default 2 — same target+verdict
+  consecutive escalates immediately). The three judge hook points
+  (`stage_tts.go::maybeJudgeSegmentAsync` post
+  `UpdateSegmentJudgeResult`, `stage_tts.go::maybeJudgeChapterAsync`
+  post `UpdateChapterJudgeResult`, and
+  `stage_episode_judge.go::maybeJudgeEpisodeAsync` post
+  `UpdateEpisodeJudgeResult`) call the engine fire-and-forget; the
+  engine swallows its own errors so a rework failure can never fail the
+  surrounding judge goroutine or the original chapter / episode
+  pipeline. Async safety is preserved by gating dispatch on the parent
+  job already being `Completed` (the lease is released before the judge
+  goroutine fires) and by an additional `isHaltedStatus` short-circuit
+  that refuses any further dispatch once an episode is escalated. New
+  store helpers `AppendEpisodeReworkAttempt` (transactional, partial
+  UPDATE on three columns only) and `SetEpisodeReworkStatus` (also
+  partial UPDATE) prevent the rework goroutine from clobbering
+  unrelated episode columns written by the parallel state machine, and
+  every metric / log carries the level + action so dashboards can alert
+  on `holodub_rework_actions_total{level,action,dispatched}` without
+  inspecting the JSONB column. Rolling back is one env flip
+  (`REWORK_ENGINE_LEVEL=none`); promoting to a higher level can be
+  staged independently per environment.
 - **Episode-level LLM-as-Judge (OPT-406)**: every `Episode` is now
   scored asynchronously after `pipeline.runEpisodeMerge` transitions
   it to `Completed`. The new `internal/llm/episode_judge.go`

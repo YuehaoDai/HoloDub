@@ -625,3 +625,245 @@ func TestUpdateEpisodeJudgeResult_PartialUpdateOnly(t *testing.T) {
 		t.Fatalf("DurationMs was clobbered: %d → %d", before.DurationMs, after.DurationMs)
 	}
 }
+
+// TestAppendEpisodeReworkAttempt_AppendsAndAccumulates verifies the OPT-407
+// store hook does the four things the engine relies on:
+//  1. The first call seeds the JSONB array (was nil).
+//  2. The second call APPENDS rather than overwrites.
+//  3. accumulated_cost_usd is the running sum across all calls.
+//  4. Other episode columns (Status, OutputRelPath, EpisodeJudgeScore)
+//     remain untouched — same partial-update guarantee as
+//     UpdateEpisodeJudgeResult, since rework hooks fire async and may race
+//     with the episode state machine.
+func TestAppendEpisodeReworkAttempt_AppendsAndAccumulates(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+
+	prevScore := 0.84
+	ep := &models.Episode{
+		TenantKey:               "default",
+		Name:                    "ep-rework-target",
+		SourceLanguage:          "ja",
+		TargetLanguage:          "zh",
+		TotalChapters:           1,
+		Status:                  models.EpisodeStatusCompleted,
+		OutputRelPath:           "episodes/9100/output/vp0/final.mp4",
+		ChaptersManifestRelPath: "episodes/9100/chapters.json",
+		OutputLayoutVersion:     2,
+		ReferenceCard:           "EXISTING_REFERENCE_CARD",
+		DurationMs:              123456,
+		EpisodeJudgeScore:       &prevScore,
+	}
+	if err := st.CreateEpisode(ctx, ep); err != nil {
+		t.Fatalf("create episode: %v", err)
+	}
+
+	// First attempt — seeds the array, sets cost from nil → 0.0125.
+	first := map[string]any{
+		"level":      "segment",
+		"verdict":    "retry",
+		"action":     "segment_retry",
+		"target_id":  uint(7),
+		"dispatched": true,
+	}
+	if err := st.AppendEpisodeReworkAttempt(ctx, ep.ID, first, 0.0125); err != nil {
+		t.Fatalf("first append: %v", err)
+	}
+
+	mid, err := st.GetEpisode(ctx, ep.ID)
+	if err != nil {
+		t.Fatalf("get episode after first append: %v", err)
+	}
+	if len(mid.ReworkAttempts) == 0 {
+		t.Fatalf("ReworkAttempts should be populated after first append")
+	}
+	if !strings.Contains(string(mid.ReworkAttempts), "segment_retry") {
+		t.Fatalf("ReworkAttempts should contain first attempt action, got %q",
+			string(mid.ReworkAttempts))
+	}
+	if mid.AccumulatedCostUSD == nil || *mid.AccumulatedCostUSD != 0.0125 {
+		t.Fatalf("AccumulatedCostUSD want 0.0125, got %v", mid.AccumulatedCostUSD)
+	}
+
+	// Second attempt — appends to the array, cost should accumulate.
+	second := map[string]any{
+		"level":      "chapter",
+		"verdict":    "needs_revision",
+		"action":     "revise_weakest_segments",
+		"target_id":  uint(42),
+		"dispatched": true,
+	}
+	if err := st.AppendEpisodeReworkAttempt(ctx, ep.ID, second, 0.0500); err != nil {
+		t.Fatalf("second append: %v", err)
+	}
+
+	after, err := st.GetEpisode(ctx, ep.ID)
+	if err != nil {
+		t.Fatalf("get episode after second append: %v", err)
+	}
+	// Both action strings should now be in the JSONB array.
+	if !strings.Contains(string(after.ReworkAttempts), "segment_retry") {
+		t.Fatalf("ReworkAttempts should still contain first action, got %q",
+			string(after.ReworkAttempts))
+	}
+	if !strings.Contains(string(after.ReworkAttempts), "revise_weakest_segments") {
+		t.Fatalf("ReworkAttempts should contain second action, got %q",
+			string(after.ReworkAttempts))
+	}
+	if after.AccumulatedCostUSD == nil {
+		t.Fatalf("AccumulatedCostUSD nil after second append")
+	}
+	wantCost := 0.0125 + 0.0500
+	if *after.AccumulatedCostUSD < wantCost-1e-9 || *after.AccumulatedCostUSD > wantCost+1e-9 {
+		t.Fatalf("AccumulatedCostUSD want %v, got %v", wantCost, *after.AccumulatedCostUSD)
+	}
+
+	// Critical: state-machine columns and the prior episode-judge data
+	// MUST NOT be clobbered, because rework dispatch runs async after
+	// ep_episode_merge has set them.
+	if after.Status != ep.Status {
+		t.Fatalf("Status clobbered: %q → %q", ep.Status, after.Status)
+	}
+	if after.OutputRelPath != ep.OutputRelPath {
+		t.Fatalf("OutputRelPath clobbered: %q → %q", ep.OutputRelPath, after.OutputRelPath)
+	}
+	if after.ReferenceCard != ep.ReferenceCard {
+		t.Fatalf("ReferenceCard clobbered: %q → %q", ep.ReferenceCard, after.ReferenceCard)
+	}
+	if after.EpisodeJudgeScore == nil || *after.EpisodeJudgeScore != prevScore {
+		t.Fatalf("EpisodeJudgeScore clobbered: %v → %v", &prevScore, after.EpisodeJudgeScore)
+	}
+}
+
+// TestAppendEpisodeReworkAttempt_ZeroCostStillPersists verifies the engine
+// can record an "observe-only" / non-dispatched attempt by passing
+// costDelta=0 and still get the JSONB row appended. Without this path,
+// observe-only mode (REWORK_ENGINE_LEVEL=none with engine still wired up)
+// would silently lose its audit trail.
+func TestAppendEpisodeReworkAttempt_ZeroCostStillPersists(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+
+	ep := &models.Episode{
+		TenantKey:      "default",
+		Name:           "ep-observe-only",
+		SourceLanguage: "ja",
+		TargetLanguage: "zh",
+		TotalChapters:  1,
+		Status:         models.EpisodeStatusCompleted,
+	}
+	if err := st.CreateEpisode(ctx, ep); err != nil {
+		t.Fatalf("create episode: %v", err)
+	}
+
+	attempt := map[string]any{
+		"level":      "segment",
+		"action":     "noop",
+		"dispatched": false,
+		"skip":       "level_disabled",
+	}
+	if err := st.AppendEpisodeReworkAttempt(ctx, ep.ID, attempt, 0); err != nil {
+		t.Fatalf("zero-cost append: %v", err)
+	}
+	got, err := st.GetEpisode(ctx, ep.ID)
+	if err != nil {
+		t.Fatalf("get episode: %v", err)
+	}
+	if len(got.ReworkAttempts) == 0 {
+		t.Fatalf("ReworkAttempts should be populated even when costDelta=0")
+	}
+	if got.AccumulatedCostUSD == nil || *got.AccumulatedCostUSD != 0 {
+		t.Fatalf("AccumulatedCostUSD want 0, got %v", got.AccumulatedCostUSD)
+	}
+}
+
+// TestAppendEpisodeReworkAttempt_RejectsZeroID is a defensive guard: the
+// engine must never call this with a synthetic / unset episode ID.
+func TestAppendEpisodeReworkAttempt_RejectsZeroID(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+
+	err := st.AppendEpisodeReworkAttempt(ctx, 0, map[string]any{"x": 1}, 0.1)
+	if err == nil {
+		t.Fatalf("expected error for episode_id=0, got nil")
+	}
+	if !strings.Contains(err.Error(), "episode id is zero") {
+		t.Fatalf("error should mention zero id, got %v", err)
+	}
+}
+
+// TestSetEpisodeReworkStatus_PartialUpdateOnly verifies the OPT-407
+// escalation hook (a) writes the requested status and (b) does NOT
+// clobber unrelated columns. Same async-safety guarantee as
+// AppendEpisodeReworkAttempt — escalation can happen long after
+// ep_episode_merge has populated OutputRelPath et al.
+func TestSetEpisodeReworkStatus_PartialUpdateOnly(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+
+	prevScore := 0.62
+	ep := &models.Episode{
+		TenantKey:               "default",
+		Name:                    "ep-escalate",
+		SourceLanguage:          "ja",
+		TargetLanguage:          "zh",
+		TotalChapters:           1,
+		Status:                  models.EpisodeStatusCompleted,
+		OutputRelPath:           "episodes/9200/output/vp0/final.mp4",
+		ChaptersManifestRelPath: "episodes/9200/chapters.json",
+		OutputLayoutVersion:     2,
+		ReferenceCard:           "REF",
+		DurationMs:              98765,
+		EpisodeJudgeScore:       &prevScore,
+	}
+	if err := st.CreateEpisode(ctx, ep); err != nil {
+		t.Fatalf("create episode: %v", err)
+	}
+
+	if err := st.SetEpisodeReworkStatus(ctx, ep.ID, "escalated_human"); err != nil {
+		t.Fatalf("SetEpisodeReworkStatus: %v", err)
+	}
+	got, err := st.GetEpisode(ctx, ep.ID)
+	if err != nil {
+		t.Fatalf("get episode: %v", err)
+	}
+	if got.ReworkStatus != "escalated_human" {
+		t.Fatalf("ReworkStatus want %q, got %q", "escalated_human", got.ReworkStatus)
+	}
+	if got.Status != ep.Status {
+		t.Fatalf("Status clobbered: %q → %q", ep.Status, got.Status)
+	}
+	if got.OutputRelPath != ep.OutputRelPath {
+		t.Fatalf("OutputRelPath clobbered: %q → %q", ep.OutputRelPath, got.OutputRelPath)
+	}
+	if got.EpisodeJudgeScore == nil || *got.EpisodeJudgeScore != prevScore {
+		t.Fatalf("EpisodeJudgeScore clobbered: %v → %v", prevScore, got.EpisodeJudgeScore)
+	}
+
+	// Operator clear path: empty string MUST clear the flag without raising.
+	if err := st.SetEpisodeReworkStatus(ctx, ep.ID, ""); err != nil {
+		t.Fatalf("clear escalation: %v", err)
+	}
+	cleared, err := st.GetEpisode(ctx, ep.ID)
+	if err != nil {
+		t.Fatalf("get episode after clear: %v", err)
+	}
+	if cleared.ReworkStatus != "" {
+		t.Fatalf("ReworkStatus want empty after clear, got %q", cleared.ReworkStatus)
+	}
+}
+
+// TestSetEpisodeReworkStatus_RejectsZeroID — same defensive guard as
+// AppendEpisodeReworkAttempt.
+func TestSetEpisodeReworkStatus_RejectsZeroID(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+
+	err := st.SetEpisodeReworkStatus(ctx, 0, "halted_cost")
+	if err == nil {
+		t.Fatalf("expected error for episode_id=0, got nil")
+	}
+	if !strings.Contains(err.Error(), "episode id is zero") {
+		t.Fatalf("error should mention zero id, got %v", err)
+	}
+}

@@ -791,6 +791,95 @@ func (s *Store) UpdateEpisodeJudgeResult(ctx context.Context, episodeID uint, sc
 	return s.db.WithContext(ctx).Model(&models.Episode{}).Where("id = ?", episodeID).Updates(updates).Error
 }
 
+// AppendEpisodeReworkAttempt is the OPT-407 rework-engine persistence hook.
+// It atomically:
+//  1. loads the current rework_attempts JSONB (an array of decisions),
+//  2. appends one entry (the engine's most recent decision),
+//  3. bumps accumulated_cost_usd by `costDelta` (may be 0 for non-dispatched
+//     attempts so observability rows always land),
+//  4. writes both columns + updated_at.
+//
+// The transaction is required because the array append + cost increment
+// MUST be a single atomic action against the row — without it, two
+// concurrent rework hooks (rare but possible during the brief window
+// between a chapter judge and the immediately-following episode judge on
+// a 1-chapter episode) could clobber each other's appends.
+//
+// `attempt` carries an `any` JSON-encodable rework.ReworkAttempt; the
+// store layer takes any to avoid circular import (rework imports store).
+//
+// Same partial-update guarantee as UpdateEpisodeJudgeResult: only three
+// columns are touched (rework_attempts / accumulated_cost_usd / updated_at)
+// so concurrent writes from the episode state machine, episode judge, or
+// loudnorm bookkeeping are not clobbered.
+func (s *Store) AppendEpisodeReworkAttempt(ctx context.Context, episodeID uint, attempt any, costDelta float64) error {
+	if episodeID == 0 {
+		return errors.New("AppendEpisodeReworkAttempt: episode id is zero")
+	}
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var ep models.Episode
+		if err := tx.Select(
+			"id", "rework_attempts", "accumulated_cost_usd",
+		).First(&ep, episodeID).Error; err != nil {
+			return err
+		}
+		// Decode existing array (nil/empty = first attempt).
+		var entries []json.RawMessage
+		if len(ep.ReworkAttempts) > 0 {
+			if err := json.Unmarshal(ep.ReworkAttempts, &entries); err != nil {
+				// Corrupt history is logged-and-replaced rather than
+				// crashing the engine. The single-row blast radius here
+				// is small enough that recovery is preferred over
+				// preserving unreadable bytes.
+				entries = nil
+			}
+		}
+		newEntry, err := json.Marshal(attempt)
+		if err != nil {
+			return fmt.Errorf("marshal rework attempt: %w", err)
+		}
+		entries = append(entries, newEntry)
+		merged, err := json.Marshal(entries)
+		if err != nil {
+			return fmt.Errorf("marshal rework attempts array: %w", err)
+		}
+
+		newCost := costDelta
+		if ep.AccumulatedCostUSD != nil {
+			newCost += *ep.AccumulatedCostUSD
+		}
+
+		updates := map[string]any{
+			"rework_attempts":      datatypes.JSON(merged),
+			"accumulated_cost_usd": newCost,
+			"updated_at":           time.Now().UTC(),
+		}
+		return tx.Model(&models.Episode{}).
+			Where("id = ?", episodeID).
+			Updates(updates).Error
+	})
+}
+
+// SetEpisodeReworkStatus is the OPT-407 escalation hook. Engine calls it
+// when an Action's ReworkStatus field is non-empty (escalated_human,
+// escalated_oscillation, escalated_chapter, halted_cost, in_progress).
+//
+// Pass empty string to clear the flag (operator manually unblocks an
+// escalated episode). The partial UPDATE only touches rework_status +
+// updated_at so concurrent writes from anywhere else are not clobbered.
+func (s *Store) SetEpisodeReworkStatus(ctx context.Context, episodeID uint, status string) error {
+	if episodeID == 0 {
+		return errors.New("SetEpisodeReworkStatus: episode id is zero")
+	}
+	updates := map[string]any{
+		"rework_status": status,
+		"updated_at":    time.Now().UTC(),
+	}
+	return s.db.WithContext(ctx).Model(&models.Episode{}).
+		Where("id = ?", episodeID).
+		Updates(updates).Error
+}
+
 // ListSegmentsAwaitingJudge returns at most `limit` segments that have been
 // synthesised but never received a judge verdict (OPT-002-followup-2 worker
 // startup back-fill source). Filters out empty source / target text so the
