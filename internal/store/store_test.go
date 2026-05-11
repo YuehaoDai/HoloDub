@@ -408,3 +408,137 @@ func TestRunBackfillIfNeeded(t *testing.T) {
 		t.Fatalf("re-run created episodes: before=%d after=%d", len(before), len(after))
 	}
 }
+
+// TestListSegmentsAwaitingJudge_FiltersAndOrdersCorrectly verifies the
+// OPT-002-followup-2 backfill source query: returns synthesised segments
+// that have not been judged yet, ordered most-recent-first, capped at the
+// caller's limit, and skipping rows with empty source/target text or with
+// an existing judge_score (regardless of value, including zero).
+func TestListSegmentsAwaitingJudge_FiltersAndOrdersCorrectly(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+
+	job := &models.Job{
+		Name:           "judge-backfill-fixture",
+		Status:         models.JobStatusRunning,
+		CurrentStage:   models.StageTTSDuration,
+		SourceLanguage: "ja",
+		TargetLanguage: "zh",
+	}
+	if err := st.CreateJob(ctx, job); err != nil {
+		t.Fatalf("create job: %v", err)
+	}
+
+	scoreZero := 0.0
+	scorePositive := 0.7
+	now := time.Now().UTC()
+	rows := []models.Segment{
+		{ // EXPECTED: synthesised, no judge yet, both texts present
+			JobID:      job.ID,
+			Ordinal:    1,
+			StartMs:    0,
+			EndMs:      4000,
+			SourceText: "1番目",
+			TargetText: "第一段",
+			Status:     models.SegmentStatusSynthesized,
+			CreatedAt:  now.Add(-3 * time.Minute),
+			UpdatedAt:  now.Add(-3 * time.Minute),
+		},
+		{ // EXPECTED: synthesised, no judge, more recent — should come first
+			JobID:      job.ID,
+			Ordinal:    2,
+			StartMs:    4000,
+			EndMs:      8000,
+			SourceText: "2番目",
+			TargetText: "第二段",
+			Status:     models.SegmentStatusSynthesized,
+			CreatedAt:  now.Add(-1 * time.Minute),
+			UpdatedAt:  now.Add(-1 * time.Minute),
+		},
+		{ // FILTERED: not yet synthesised
+			JobID:      job.ID,
+			Ordinal:    3,
+			StartMs:    8000,
+			EndMs:      12000,
+			SourceText: "3番目",
+			TargetText: "第三段",
+			Status:     models.SegmentStatusTranslated,
+		},
+		{ // FILTERED: synthesised but already judged (even score=0 counts as judged)
+			JobID:      job.ID,
+			Ordinal:    4,
+			StartMs:    12000,
+			EndMs:      16000,
+			SourceText: "4番目",
+			TargetText: "第四段",
+			Status:     models.SegmentStatusSynthesized,
+			JudgeScore: &scoreZero,
+		},
+		{ // FILTERED: synthesised, judged with high score
+			JobID:      job.ID,
+			Ordinal:    5,
+			StartMs:    16000,
+			EndMs:      20000,
+			SourceText: "5番目",
+			TargetText: "第五段",
+			Status:     models.SegmentStatusSynthesized,
+			JudgeScore: &scorePositive,
+		},
+		{ // FILTERED: empty source text (cannot be judged anyway)
+			JobID:      job.ID,
+			Ordinal:    6,
+			StartMs:    20000,
+			EndMs:      24000,
+			SourceText: "",
+			TargetText: "第六段",
+			Status:     models.SegmentStatusSynthesized,
+		},
+		{ // FILTERED: empty target text (synthesis produced silence?)
+			JobID:      job.ID,
+			Ordinal:    7,
+			StartMs:    24000,
+			EndMs:      28000,
+			SourceText: "7番目",
+			TargetText: "",
+			Status:     models.SegmentStatusSynthesized,
+		},
+	}
+	if err := st.db.Create(&rows).Error; err != nil {
+		t.Fatalf("seed segments: %v", err)
+	}
+
+	// Limit larger than match count: should return both expected rows,
+	// most-recent-first by id (ordinal 2 before ordinal 1 because we
+	// inserted them later).
+	got, err := st.ListSegmentsAwaitingJudge(ctx, 100)
+	if err != nil {
+		t.Fatalf("ListSegmentsAwaitingJudge: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected 2 rows, got %d: %+v", len(got), got)
+	}
+	if got[0].Ordinal != 2 || got[1].Ordinal != 1 {
+		t.Fatalf("ordering wrong (want most-recent first by id): got ordinals %d,%d",
+			got[0].Ordinal, got[1].Ordinal)
+	}
+
+	// Limit smaller than match count: only the most recent.
+	got1, err := st.ListSegmentsAwaitingJudge(ctx, 1)
+	if err != nil {
+		t.Fatalf("ListSegmentsAwaitingJudge limit=1: %v", err)
+	}
+	if len(got1) != 1 {
+		t.Fatalf("expected 1 row when limit=1, got %d", len(got1))
+	}
+	if got1[0].Ordinal != 2 {
+		t.Fatalf("limit=1 must pick most recent (ordinal 2), got %d", got1[0].Ordinal)
+	}
+
+	// Limit zero / negative → no work, no error.
+	if got0, err := st.ListSegmentsAwaitingJudge(ctx, 0); err != nil || got0 != nil {
+		t.Fatalf("limit=0 must short-circuit (got %d rows, err=%v)", len(got0), err)
+	}
+	if gotNeg, err := st.ListSegmentsAwaitingJudge(ctx, -5); err != nil || gotNeg != nil {
+		t.Fatalf("limit<0 must short-circuit (got %d rows, err=%v)", len(gotNeg), err)
+	}
+}

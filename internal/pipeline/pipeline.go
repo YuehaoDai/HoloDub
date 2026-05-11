@@ -988,6 +988,13 @@ func (s *Service) runMerge(ctx context.Context, task models.TaskPayload) error {
 	if err := s.store.SaveJob(ctx, job); err != nil {
 		return err
 	}
+	// OPT-409 chapter-level judge. Asynchronous, observe-only, never blocks
+	// or fails the pipeline. Uses a detached background context internally
+	// so a worker shutdown signal does not silently lose the verdict mid-
+	// flight (mirrors maybeJudgeSegmentAsync). MUST run BEFORE
+	// maybeEnqueueEpisodeMerge so its goroutine starts even when the
+	// episode merge is enqueued in the same task batch.
+	s.maybeJudgeChapterAsync(job, segments)
 	// OPT-404 trigger: chapter just finished merging. If every chapter under
 	// this episode is completed, kick off ep_episode_merge so the unified-
 	// layout episode-level final + chapters.json get written. The handler

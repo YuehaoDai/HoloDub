@@ -753,6 +753,48 @@ func (s *Store) UpdateSegmentJudgeResult(ctx context.Context, segmentID uint, sc
 	return s.db.WithContext(ctx).Model(&models.Segment{}).Where("id = ?", segmentID).Updates(updates).Error
 }
 
+// UpdateChapterJudgeResult writes the OPT-409 chapter-level judge verdict for
+// one chapter Job. score is the scalar overall (0..1, currently equal to
+// ChapterJudgeResult.OverallFidelityChapter); metaJSON is the full structured
+// verdict serialised to JSON (per-axis sub-scores, top-3 weakest segments,
+// observed glossary, verdict enum).
+//
+// Same observe-only contract as UpdateSegmentJudgeResult: MUST NOT run inside
+// the main pipeline transaction. The partial UPDATE only touches two columns
+// so concurrent writes from other paths (chapter_title, output_relpath, etc.)
+// are not clobbered.
+func (s *Store) UpdateChapterJudgeResult(ctx context.Context, jobID uint, score float64, metaJSON []byte) error {
+	updates := map[string]any{
+		"chapter_judge_score": score,
+		"chapter_judge_meta":  metaJSON,
+		"updated_at":          time.Now().UTC(),
+	}
+	return s.db.WithContext(ctx).Model(&models.Job{}).Where("id = ?", jobID).Updates(updates).Error
+}
+
+// ListSegmentsAwaitingJudge returns at most `limit` segments that have been
+// synthesised but never received a judge verdict (OPT-002-followup-2 worker
+// startup back-fill source). Filters out empty source / target text so the
+// caller can short-circuit; orders by id DESC so the most recent (likely the
+// most relevant) segments get judged first when limit is hit.
+//
+// The Job association is preloaded because BackfillSegmentJudges needs the
+// parent's SourceLanguage / TargetLanguage / TranslationSummary to build the
+// judge prompt (mirrors the inline maybeJudgeSegmentAsync caller in stage_tts).
+func (s *Store) ListSegmentsAwaitingJudge(ctx context.Context, limit int) ([]models.Segment, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	var segments []models.Segment
+	err := s.db.WithContext(ctx).
+		Where("status = ? AND judge_score IS NULL AND source_text <> '' AND target_text <> ''",
+			models.SegmentStatusSynthesized).
+		Order("id DESC").
+		Limit(limit).
+		Find(&segments).Error
+	return segments, err
+}
+
 func (s *Store) UpsertBindings(ctx context.Context, jobID uint, inputs []BindingInput) ([]uint, error) {
 	if len(inputs) == 0 {
 		return nil, nil

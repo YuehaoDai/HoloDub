@@ -186,6 +186,50 @@
           <div class="text-[10px] text-[#9db0c9] truncate">
             #{{ ch.id }} · {{ ch.current_stage }}
           </div>
+          <!-- OPT-409 chapter judge score: shown only when CHAPTER_JUDGE_MODEL
+               wrote a verdict for this chapter. Hover the badge for the full
+               7-axis breakdown + top-3 weakest segments. -->
+          <div
+            v-if="ch.chapter_judge_score !== undefined && ch.chapter_judge_score !== null"
+            class="mt-1.5 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono cursor-help relative group"
+            :class="chapterJudgeBadgeClass(ch.chapter_judge_score)"
+            :title="`Chapter judge score · ${chapterJudgeVerdictLabel(ch.chapter_judge_meta?.verdict)}`"
+          >
+            <span class="font-semibold">judge {{ ch.chapter_judge_score.toFixed(2) }}</span>
+            <span
+              v-if="ch.chapter_judge_meta?.verdict"
+              class="text-[9px] opacity-80"
+            >· {{ chapterJudgeVerdictBadge(ch.chapter_judge_meta.verdict) }}</span>
+            <!-- Tooltip on hover: structured 7-axis breakdown + weakest segments. -->
+            <div
+              class="hidden group-hover:block absolute z-30 left-0 top-full mt-1 w-72 max-w-[90vw] p-2.5 rounded-lg bg-[#0f1420] border border-[#273246] shadow-xl text-left text-[11px] text-[#cbd6e4] font-sans normal-case"
+              @click.stop
+            >
+              <div class="font-semibold text-white mb-1.5">章节级 Judge · {{ chapterJudgeVerdictLabel(ch.chapter_judge_meta?.verdict) }}</div>
+              <table class="w-full text-[10px] mb-1.5">
+                <tbody>
+                  <tr v-for="row in chapterJudgeAxes(ch.chapter_judge_meta)" :key="row.label" class="leading-snug">
+                    <td class="text-[#9db0c9] pr-1.5">{{ row.label }}</td>
+                    <td class="text-right font-mono" :class="chapterJudgeAxisColor(row.value)">{{ row.value !== undefined ? row.value.toFixed(2) : "—" }}</td>
+                  </tr>
+                </tbody>
+              </table>
+              <div v-if="ch.chapter_judge_meta?.top_3_weakest_segments && ch.chapter_judge_meta.top_3_weakest_segments.length > 0">
+                <div class="font-semibold text-white mt-1.5 mb-1">弱段 (top {{ ch.chapter_judge_meta.top_3_weakest_segments.length }})</div>
+                <ul class="space-y-1 text-[10px]">
+                  <li v-for="w in ch.chapter_judge_meta.top_3_weakest_segments" :key="w.ordinal" class="border-l-2 border-amber-700 pl-1.5">
+                    <div class="text-amber-300 font-mono">seg{{ w.ordinal }}</div>
+                    <div class="text-[#cbd6e4]">{{ w.issue }}</div>
+                    <div class="text-[#9db0c9] italic">→ {{ w.recommended_fix }}</div>
+                  </li>
+                </ul>
+              </div>
+              <div
+                v-if="ch.chapter_judge_meta?.one_paragraph_summary"
+                class="mt-1.5 pt-1.5 border-t border-[#273246] text-[10px] text-[#cbd6e4]"
+              >{{ ch.chapter_judge_meta.one_paragraph_summary }}</div>
+            </div>
+          </div>
           <div
             v-if="ch.chapter_start_ms !== undefined && ch.chapter_end_ms"
             class="text-[10px] text-[#9db0c9] mt-1 font-mono"
@@ -222,7 +266,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { api, type Episode, type Job } from "../api";
+import { api, type Episode, type Job, type ChapterJudgeMeta } from "../api";
 
 const route = useRoute();
 const router = useRouter();
@@ -316,6 +360,57 @@ function chapterSubtitle(ch: Job): string {
     return ch.chapter_title.trim();
   }
   return "";
+}
+
+// OPT-409 chapter judge UI helpers. Rendering rules:
+//   ≥0.85 → green  (chapter ready, glanceable confidence signal)
+//   0.7 .. 0.85 → amber (needs revision; review-worthy but not blocking)
+//   <0.7 → red    (needs major rework; surfaced visually so editors triage)
+function chapterJudgeBadgeClass(score: number): string {
+  if (score >= 0.85) return "bg-emerald-900/60 text-emerald-300 border border-emerald-700";
+  if (score >= 0.7) return "bg-amber-900/40 text-amber-300 border border-amber-700";
+  return "bg-red-900/50 text-red-300 border border-red-700";
+}
+
+function chapterJudgeAxisColor(value: number | undefined): string {
+  if (value === undefined) return "text-[#9db0c9]";
+  if (value >= 0.85) return "text-emerald-300";
+  if (value >= 0.7) return "text-amber-300";
+  return "text-red-300";
+}
+
+function chapterJudgeVerdictBadge(verdict?: string): string {
+  switch (verdict) {
+    case "chapter_ready": return "ready";
+    case "needs_revision": return "revise";
+    case "needs_major_rework": return "rework";
+    default: return verdict || "";
+  }
+}
+
+function chapterJudgeVerdictLabel(verdict?: string): string {
+  switch (verdict) {
+    case "chapter_ready": return "可发布";
+    case "needs_revision": return "需修订";
+    case "needs_major_rework": return "需重做";
+    default: return verdict || "—";
+  }
+}
+
+// Flatten the structured meta into the table rows shown in the tooltip.
+// Order matches what an editor scans top-down: cross-segment axes first
+// (the ones segment-level judge cannot see), then aggregate fidelity /
+// fluency last for context.
+function chapterJudgeAxes(meta: ChapterJudgeMeta | undefined): Array<{ label: string; value: number | undefined }> {
+  if (!meta) return [];
+  return [
+    { label: "叙事连贯", value: meta.narrative_coherence_within_chapter },
+    { label: "音色稳定", value: meta.speaker_voice_stability_within_chapter },
+    { label: "术语一致", value: meta.terminology_consistency_within_chapter },
+    { label: "语域一致", value: meta.register_consistency_within_chapter },
+    { label: "整体保真", value: meta.overall_fidelity_chapter },
+    { label: "整体流畅", value: meta.overall_fluency_chapter },
+  ];
 }
 
 function statusClass(status: string) {

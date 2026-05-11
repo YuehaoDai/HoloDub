@@ -91,6 +91,30 @@ func main() {
 		"poll_interval", cfg.WorkerPollInterval.String(),
 	)
 
+	// OPT-002-followup-2: scan for synthesised segments missing a judge
+	// verdict and dispatch them through the same observe-only goroutine
+	// path that runs at synthesis time. Closes the gap where segments
+	// finalised during a worker restart window stay permanently unjudged
+	// (judged_ratio sinks → OPT-409 / OPT-407 lose correlation data).
+	//
+	// 15s sleep gives the rest of the worker (Redis ping, store, ml health)
+	// a chance to settle before we add ~limit×LLM-calls of additional load.
+	// Caps via JUDGE_BACKFILL_LIMIT (default 500 ≈ ~$0.25 with qwen-turbo).
+	if cfg.JudgeModel != "" && cfg.JudgeBackfillOnStart && cfg.JudgeBackfillLimit > 0 {
+		go func() {
+			select {
+			case <-rootCtx.Done():
+				return
+			case <-time.After(15 * time.Second):
+			}
+			if err := service.BackfillSegmentJudges(rootCtx, cfg.JudgeBackfillLimit, 3); err != nil {
+				if !errors.Is(err, context.Canceled) {
+					slog.Warn("judge backfill failed", "error", err)
+				}
+			}
+		}()
+	}
+
 	for {
 		if rootCtx.Err() != nil {
 			slog.Info("worker shutting down", "reason", "signal received")

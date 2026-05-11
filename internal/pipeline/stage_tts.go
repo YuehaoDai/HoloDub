@@ -644,3 +644,117 @@ func (s *Service) maybeJudgeSegmentAsync(job *models.Job, segCopy models.Segment
 		)
 	}()
 }
+
+// maybeJudgeChapterAsync fires off a background chapter-level judge call
+// for the just-merged chapter when CHAPTER_JUDGE_MODEL is configured. The
+// function returns immediately; the goroutine has its own deadline + writes
+// results via store.UpdateChapterJudgeResult on a fresh background context
+// so a worker SIGTERM cancelling the merge ctx does NOT silently lose the
+// verdict (mirrors maybeJudgeSegmentAsync's contract).
+//
+// Failure modes (network / parse / provider error / DB write) are logged
+// and dropped — chapter judging is observe-only in the OPT-409 MVP and
+// must never fail the chapter or the downstream episode merge. The DB
+// UPDATE only touches chapter_judge_score / chapter_judge_meta, so it is
+// safe against concurrent writes that may rewrite chapter_title or
+// output_relpath later.
+//
+// Why we accept []models.Segment by value: SaveJob just persisted the Job
+// and runMerge holds the loaded segments slice already; reusing it spares
+// a redundant DB read. The judge goroutine treats the slice as immutable
+// (only reads).
+func (s *Service) maybeJudgeChapterAsync(job *models.Job, segments []models.Segment) {
+	if s.cfg.ChapterJudgeModel == "" {
+		return
+	}
+	if len(segments) == 0 {
+		return
+	}
+	// Snapshot fields the goroutine needs so callers can mutate the Job
+	// after we return without racing the async judge call.
+	jobCopy := *job
+	chapterOrdinal := jobCopy.ChapterOrdinal
+	// Build the LLM-side segment slice with text + per-segment judge hint
+	// (when available) so the chapter judge can correlate with OPT-002
+	// signals. Skip empty pairs — they would dilute the chapter score
+	// without carrying useful information.
+	chapterSegs := make([]llm.ChapterJudgeSegment, 0, len(segments))
+	for _, seg := range segments {
+		if seg.SourceText == "" || seg.TargetText == "" {
+			continue
+		}
+		var segScore *float64
+		if seg.JudgeScore != nil {
+			v := *seg.JudgeScore
+			segScore = &v
+		}
+		chapterSegs = append(chapterSegs, llm.ChapterJudgeSegment{
+			Ordinal:       seg.Ordinal,
+			StartMs:       seg.StartMs,
+			EndMs:         seg.EndMs,
+			SourceText:    seg.SourceText,
+			TargetText:    seg.TargetText,
+			SegJudgeScore: segScore,
+		})
+	}
+	if len(chapterSegs) == 0 {
+		return
+	}
+	go func() {
+		// Detached background context: a SIGTERM during the chapter judge
+		// must not silently swallow the verdict. 60s ceiling — chapter
+		// judge prompts are larger than segment judge prompts (≤8k tokens
+		// in/300 out vs ≤500/30) and reasoning models can take 10-15s.
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+
+		result, err := s.llm.JudgeChapter(ctx, llm.ChapterJudgeArgs{
+			SourceLang:     jobCopy.SourceLanguage,
+			TargetLang:     jobCopy.TargetLanguage,
+			ChapterOrdinal: chapterOrdinal,
+			ChapterTitle:   jobCopy.ChapterTitle,
+			EpisodeSummary: jobCopy.TranslationSummary,
+			Segments:       chapterSegs,
+		})
+		if err != nil {
+			slog.Warn("chapter judge call failed",
+				"job_id", jobCopy.ID,
+				"chapter_ordinal", chapterOrdinal,
+				"error", err,
+			)
+			return
+		}
+		if result == nil {
+			return // judging disabled or empty inputs — should not reach here
+		}
+
+		metaJSON, err := json.Marshal(result)
+		if err != nil {
+			slog.Warn("chapter judge result marshal failed",
+				"job_id", jobCopy.ID,
+				"chapter_ordinal", chapterOrdinal,
+				"error", err,
+			)
+			return
+		}
+		if err := s.store.UpdateChapterJudgeResult(ctx, jobCopy.ID, result.OverallScore(), metaJSON); err != nil {
+			slog.Warn("chapter judge result persist failed",
+				"job_id", jobCopy.ID,
+				"chapter_ordinal", chapterOrdinal,
+				"error", err,
+			)
+			return
+		}
+		slog.Info("chapter judge result recorded",
+			"job_id", jobCopy.ID,
+			"chapter_ordinal", chapterOrdinal,
+			"verdict", result.Verdict,
+			"overall_fidelity", result.OverallFidelityChapter,
+			"narrative_coherence", result.NarrativeCoherenceWithinChapter,
+			"speaker_voice_stability", result.SpeakerVoiceStabilityWithinChapter,
+			"terminology_consistency", result.TerminologyConsistencyWithinChapter,
+			"register_consistency", result.RegisterConsistencyWithinChapter,
+			"weakest_count", len(result.Top3WeakestSegments),
+		)
+	}()
+}

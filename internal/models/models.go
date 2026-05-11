@@ -87,6 +87,18 @@ type Job struct {
 	ChapterTitle           string        `json:"chapter_title" gorm:"size:256"`
 	ChapterTitleTranslated string        `json:"chapter_title_translated" gorm:"size:256"`
 	ChapterSummaryMD       string        `json:"chapter_summary_md" gorm:"type:text"`
+	// ChapterJudgeScore + ChapterJudgeMeta are populated asynchronously by the
+	// OPT-409 chapter-level judge that runs after runMerge completes a chapter.
+	// Both nil when chapter judging is disabled (CHAPTER_JUDGE_MODEL="") or
+	// when the judge call has not yet run for this chapter (including every
+	// historical Job — chapter judge writes are gated behind the new env flag,
+	// so OPT-401 back-filled rows naturally stay NULL until re-merged).
+	// ChapterJudgeScore is the scalar overall score (0..1, currently equal to
+	// ChapterJudgeResult.OverallFidelityChapter) suitable for the UI heat map;
+	// ChapterJudgeMeta carries the full structured verdict (per-axis sub-scores,
+	// top-3 weakest segments, observed glossary, verdict enum).
+	ChapterJudgeScore *float64       `json:"chapter_judge_score,omitempty" gorm:"type:numeric"`
+	ChapterJudgeMeta  datatypes.JSON `json:"chapter_judge_meta,omitempty" gorm:"type:jsonb"`
 	RetryCount             int           `json:"retry_count"`
 	MaxRetries             int           `json:"max_retries"`
 	WebhookURL             string        `json:"webhook_url"`

@@ -51,6 +51,32 @@ export interface Job {
   chapter_title?: string;
   chapter_title_translated?: string;
   chapter_summary_md?: string;
+  // OPT-409 chapter-level judge. Both undefined when CHAPTER_JUDGE_MODEL
+  // is empty (judging disabled) or when the async chapter judge call has
+  // not yet completed for this chapter (legacy 1-chapter Jobs back-filled
+  // by OPT-401 also stay undefined — the judge fires only at runMerge,
+  // which never re-ran on those rows).
+  chapter_judge_score?: number; // 0..1, currently equal to ChapterJudgeResult.overall_fidelity_chapter
+  chapter_judge_meta?: ChapterJudgeMeta;
+}
+
+// ChapterJudgeMeta is the structured chapter-level judge verdict written
+// by the OPT-409 hook in pipeline.runMerge. Mirrors the Go schema in
+// internal/llm/chapter_judge.go (ChapterJudgeResult).
+export interface ChapterJudgeMeta {
+  narrative_coherence_within_chapter?: number;
+  speaker_voice_stability_within_chapter?: number;
+  terminology_consistency_within_chapter?: number;
+  register_consistency_within_chapter?: number;
+  overall_fidelity_chapter?: number;
+  overall_fluency_chapter?: number;
+  top_3_weakest_segments?: Array<{
+    ordinal: number;
+    issue: string;
+    recommended_fix: string;
+  }>;
+  verdict?: "chapter_ready" | "needs_revision" | "needs_major_rework";
+  one_paragraph_summary?: string;
 }
 
 // GlossaryEntry is one (source -> target) translation pair the canonical

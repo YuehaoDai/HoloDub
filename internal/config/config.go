@@ -88,6 +88,28 @@ type Config struct {
 	// hands the judge verdict to the agent loop (see OPT-201).
 	JudgeObserveOnly bool
 
+	// JudgeBackfillOnStart: OPT-002-followup-2. true = on worker boot, scan
+	// for synthesised segments missing judge_score and dispatch them through
+	// maybeJudgeSegmentAsync (bounded concurrency). Closes the gap where
+	// segments synthesised during a worker restart window never get judged.
+	// Default true; only effective when JudgeModel is also set.
+	JudgeBackfillOnStart bool
+	// JudgeBackfillLimit: cap on segments scanned per worker boot. Default
+	// 500 keeps the wakeup-time judge cost ≤ ~$0.25 with qwen-turbo.
+	JudgeBackfillLimit int
+
+	// ChapterJudgeModel: OPT-409. Empty = chapter-level judging disabled.
+	// When non-empty, every chapter (= one Job under a multi-chapter Episode)
+	// is scored asynchronously after runMerge persists the chapter outputs.
+	// Recommended: kimi-k2.5 (~$0.005 per chapter at ~3k input tokens).
+	ChapterJudgeModel string
+	// ChapterJudgeObserveOnly: OPT-409 MVP. true = chapter judge score is
+	// persisted on jobs.chapter_judge_score / chapter_judge_meta but does
+	// NOT influence episode_merge or any other downstream decision. OPT-407
+	// closed-loop rework will flip this to false once verdict thresholds
+	// are calibrated against operator labels.
+	ChapterJudgeObserveOnly bool
+
 	// GlossaryModel: OPT-402. The model used by ExtractEpisodeGlossary
 	// to derive the canonical episode-level term sheet from the full ASR
 	// text. Empty = fall back to OpenAIModel. Recommended: qwen-turbo
@@ -373,6 +395,20 @@ func Load() (Config, error) {
 	cfg.JudgeObserveOnly, err = getEnvBool("JUDGE_OBSERVE_ONLY", true)
 	if err != nil {
 		return Config{}, fmt.Errorf("parse JUDGE_OBSERVE_ONLY: %w", err)
+	}
+	cfg.JudgeBackfillOnStart, err = getEnvBool("JUDGE_BACKFILL_ON_START", true)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse JUDGE_BACKFILL_ON_START: %w", err)
+	}
+	cfg.JudgeBackfillLimit, err = getEnvInt("JUDGE_BACKFILL_LIMIT", 500)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse JUDGE_BACKFILL_LIMIT: %w", err)
+	}
+
+	cfg.ChapterJudgeModel = getEnv("CHAPTER_JUDGE_MODEL", "kimi-k2.5")
+	cfg.ChapterJudgeObserveOnly, err = getEnvBool("CHAPTER_JUDGE_OBSERVE_ONLY", true)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse CHAPTER_JUDGE_OBSERVE_ONLY: %w", err)
 	}
 
 	cfg.GlossaryModel = getEnv("GLOSSARY_MODEL", "")
