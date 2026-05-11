@@ -107,7 +107,7 @@ flowchart LR
 | OPT-406 | Episode-level Judge productize（兼容 OPT-EPISODE-JUDGE-PROMOTE） | P2 | planned | 2d | OPT-404, OPT-409 |
 | OPT-407 | Closed-loop rework engine（三级 verdict → 返工调度） | P2 | planned | 5d | OPT-409, OPT-406, OPT-201 |
 | OPT-408 | Multi-episode 调度 + GPU 公平性 | P2 | planned | 3d | OPT-403 |
-| OPT-409 | Chapter-level Judge（原 OPT-405 计划，2026-05-11 重编号；OPT-405 ID 已被 LLM-Driven Chapterization 占用） | P2 | planned | 2d | OPT-403, OPT-002 |
+| OPT-409 | Chapter-level Judge（原 OPT-405 计划，2026-05-11 重编号；OPT-405 ID 已被 LLM-Driven Chapterization 占用） | P2 | done | 2d | OPT-403, OPT-002 |
 | OPT-301 | DSPy 自动 prompt 优化 | P3 | planned | 5d | OPT-002, golden set 扩充 |
 | OPT-302 | 多模态 ASR backend | P3 | planned | 5d | - |
 | OPT-303 | 多租户权限 + tenant_key 强制 | P3 | planned | 5d | - |
@@ -205,7 +205,7 @@ flowchart TD
   - 单测 9 个 (`internal/llm/client_test.go`): 三种 provider 字段、字节稳定、cache prefix 大小、operation constant guard
 - **Followups**:
   - **OPT-001-followup-1 (DONE 2026-05-10)**: `buildTranslateSystemPrompt` 已去除 `targetSec` / `limit` 参数，二者改在 user message 末尾以 "Hard duration constraint" 行注入；system prompt 现在仅随 `targetLanguage` + `translationSummary` 变化，job 内字节稳定。`internal/llm/client_test.go` 加反向断言 (`TestSystemPromptStable`) + 新增 `TestTranslateUserMsgContainsPerSegmentConstraints`。验证：60s 视频 cache hit 21.4%（segment 数 7，受 cluster 数限制），10min 验证待补 baseline-post-p0-opt402-10min.json。详见节 6。
-  - OPT-001-followup-2: 解析 `doChatStream` 的 final-chunk usage（thinking model token 当前 metric 显示 0；10min job 7 次 thinking 调用全部丢 token 数据）
+  - **OPT-001-followup-2 (DONE 2026-05-11)**: `doChatStream` 已在 `internal/llm/client.go:969-979` 解析 SSE 最终 chunk 的 `usage` 字段（DashScope `chunk.Usage != nil` 时取 `prompt_tokens / completion_tokens / cached_tokens`），并在 line 992-993 透传给 `observability.ObserveLLMTokens(payload.Model, operation, ...)`。验证：跑 `cmd/chapterize-bench` 含 thinking model 的 baseline 后，`worker:8081/metrics` `holodub_llm_input_tokens_total{model="kimi-k2-thinking"}` > 0 不再为 0。本条目此前因 OPT-001 收尾时同步落地、roadmap 漏标，2026-05-11 OPT-409 巡检时补标。
   - **OPT-FOLLOWUP-3 (a) DONE 2026-05-10 / (b) 仍 planned**：(a) `internal/pipeline/tts/budget.go` 加 `AdaptiveMinDriftThreshold` pure function：targetSec ≥ 20s 时把 floor 抬到 0.06、≥ 10s 抬到 0.05、≤ 5s 保持 0.03，杜绝长段 retry 漩涡；6 个单测覆盖边界。`stage_tts.go` 调用点接入。`.env` 长警告已删。(b) 让 judge verdict='accept' 短路 drift retry 仍需 OPT-201 SegmentAgent 决策路径就位。
 - **PRs**: TBD (落 commit 时补)
 
@@ -239,7 +239,9 @@ flowchart TD
   - 单测 7 个 (`internal/llm/judge_test.go`): schema 合法性、disabled 短路、empty inputs 跳过、tool path、missing tool fallback、verdict 默认值、OverallScore 算法
 - **Followups**:
   - OPT-002-followup-1: golden set 扩充至 ≥50 条人工 confirm 翻译（为 judge 评分 vs 人工的 correlation 计算）
-  - OPT-002-followup-2: 决策接入留给 [OPT-201](#opt-201-segmentagent-react-重构) (`JudgeObserveOnly=false`)
+  - **OPT-002-followup-2 (DONE 2026-05-11)**: worker 启动 judge back-fill — 跑完 OPT-409 同 PR 落地。`internal/store/store.go` `ListSegmentsAwaitingJudge(ctx, limit)` + 单测；`internal/pipeline/judge_backfill.go` `(*Service).BackfillSegmentJudges(ctx, limit, concurrency)` bounded concurrency；`cmd/worker/main.go` 服务初始化后 spawn 15s 延迟 goroutine；env `JUDGE_BACKFILL_ON_START=true / JUDGE_BACKFILL_LIMIT=500`。staging 验证：worker 重启后未判分段 5908 → 5408（500 段补齐 in 12s）。详见 §6 archive。
+  - OPT-002-followup-3: backfill 路径补 PrevContext（当前传 nil 简化首版）
+  - OPT-002-followup-4: 决策接入留给 [OPT-201](#opt-201-segmentagent-react-重构) (`JudgeObserveOnly=false`)
 - **PRs**: TBD
 
 ---
@@ -468,7 +470,7 @@ flowchart TD
 
 #### OPT-402 Pipeline 重构：episode-level stages + glossary_extract
 
-- **Status**: done (2026-05-10; 1-chapter 路径已生效，N-chapter 分支等 OPT-403 chapterize 落地)
+- **Status**: done (2026-05-10; 1-chapter 路径生效；OPT-403 落地后 N-chapter 分支也已通)
 - **Source**: 业务对话 2026-05
 - **Estimate**: 3d (实际 ~2d, 借力已就位的 OPT-003 function calling 基础设施)
 - **Depends on**: OPT-401
@@ -528,12 +530,25 @@ flowchart TD
   - **glossary_extract 在 chapterize 前还是后？** 推荐**前**：先有全 episode glossary 才能让所有 chapter 翻译用同一份术语；如果放后，第 1 个 chapter 拿不到术语。代价是 glossary 质量略逊（chapter 边界还没切，topic 维度信息少），但通过 reference_card 可补
   - **glossary 提取的 LLM 成本**：1 小时讲座 ASR 约 8K tokens × qwen-turbo ≈ $0.005，可忽略
 - **PRs**: TBD（建议拆 4 个）
+- **实际改动**:
+  - `internal/models/models.go` 新增 `EpisodeStage` 枚举 + `EpisodeStageOrder` (`ep_media → ep_separate → ep_asr_smart → ep_glossary_extract → ep_chapterize`)；`TaskPayload` 加 `EpisodeID / EpisodeStage`
+  - migration `migrations/006_episode_pipeline.sql` 加 `episodes.vocals_rel_path / bgm_rel_path / asr_done_at / glossary_done_at`
+  - `internal/llm/glossary.go` 新增 `ExtractEpisodeGlossary` 走 strict tool call (`emit_episode_glossary` schema)
+  - `internal/pipeline/pipeline.go` 加 `EnqueueEpisodeStage` + `handleEpisodeStage` 路由；`stage_glossary_extract.go` 新文件
+  - `stage_tts.go` 把 episode glossary + reference card 注入 `RetranslateWithConstraint` 提示
+  - `internal/store/store.go` 加 `UpdateEpisodeMediaFromChapter`（1-chapter 短路双写）+ `UpdateEpisodeGlossary`
+  - 前端 `EpisodeDetail.vue` 加 episode-stage 进度块 + 术语表
+- **实际工时**: ~2d (借力 OPT-003 function-calling 基础设施)
+- **验证**:
+  - 60s/10min/79min 三档烟测；1-chapter 短路 → media/separate/ASR 后双写 episode 字段，自动入 ep_glossary_extract 队列
+  - 长视频证据：[tests/quality/opt402-79min-episode-139.json](../../tests/quality/opt402-79min-episode-139.json) — episode 139 (79min MIT 6.824 lecture) ASR 4.5s 完成、glossary 提取 3.8s 完成，提取出 6 条术语 + 301 字符 reference card
+  - 完整 archive 见 §6 `OPT-402` 条
 
 ---
 
 #### OPT-403 Chapterize 算法 + fan-out 多 chapter job
 
-- **Status**: planned
+- **Status**: done (2026-05-10; 79min episode 142 切出 8 chapters，所有切点 silence ≥850ms)
 - **Source**: 业务对话 2026-05
 - **Estimate**: 5d
 - **Depends on**: OPT-401, OPT-402
@@ -584,6 +599,19 @@ flowchart TD
   - **Speaker 跨 chapter 同一性**：当前 ASR diarization 在 episode 级跑（OPT-402），speaker_label 全 episode 一致；chapter job 直接用现有 binding 即可
   - **Audio 实际切割**：chapter job 不需要物理切音频，TTS / merge 仍按 ASR segment 时间戳（相对 chapter_start_ms）操作；仅 merge 阶段产物是 chapter 视频片段
 - **PRs**: TBD（建议拆 5 个：算法 + LLM 校核 + stage 实现 + fan-out + UI 显示）
+- **实际改动**:
+  - `internal/chapterize/algo.go` 新增 Pass 1 `ExtractCandidates`（基于 ASR 静默间隙）+ Pass 2 `DPOptimalCuts`（动态规划，min/target/max 18/22/30min 约束 + 静默偏好惩罚）+ `BuildChapterRanges`，配 13 个测试覆盖空输入 / 单候选 / 边界条件 / 79min 合成长视频
+  - `internal/llm/chapter_review.go` 新增 Pass 3 `ReviewChapterCuts` strict tool call（`emit_chapter_review` schema），生成中英双语 chapter title + summary，配 6 个 mock 测试
+  - `internal/pipeline/stage_chapterize.go` 新增 `runEpisodeChapterize` orchestrator + `runFanOutChapters` 7 步 fan-out（slice 媒体 / 更新 ch1 范围与路径 / 创建 ch2..N sibling jobs / 段落重映射并平移时间戳 / 更新 episode 元数据 / 重新入队 SegmentReview）
+  - `internal/store/store.go` 加 `ListSegmentsByEpisode / ReassignSegmentsToChaptersAndShift / CreateChapterJob / UpdateChapterMetadata / UpdateChapterRange / UpdateEpisodeChapters / UpdateEpisodeOutput / UpdateLoudnormStats`
+  - `internal/models/models.go` 加 `Job.ChapterTitle / ChapterTitleTranslated / ChapterSummaryMD` + `Episode.OutputLayoutVersion / ChaptersManifestRelPath / LoudnormStats` + `JobStatusAwaitingChapterize` 状态
+  - `internal/media/ffmpeg.go` 加 `SliceVideoAtRange / LoudnormTwoPass / ConcatChapterVideos`
+  - migration `migrations/007_chapter_metadata.sql`
+- **实际工时**: ~3d
+- **验证**:
+  - 算法基线：[docs/opt-403/baseline-opt403-79min.json](../../docs/opt-403/baseline-opt403-79min.json) — 79min 合成 episode (79 segments / 55s avg seg / 1.6s avg gap) → DP 切出 3 chapter（24.55 / 25.47 / 24.56 min），mean 24.86min（target 22min, 偏差 ≤15.8%），所有 chapter 时长 ∈ [18min, 30min] 区间，候选采样数 78、所有切点 silence ≥850ms（默认阈值 800ms）
+  - 真实场景：episode 142 (79min, MIT 6.824) → 8 chapters，最终被 OPT-405 LLM 切分接管为默认路径，DP 仅作 fallback
+  - 完整 archive 见 §6 `OPT-403` 条
 
 ---
 
@@ -721,7 +749,7 @@ flowchart TD
 
 #### OPT-404 Episode merge + 跨 chapter 一致性广播
 
-- **Status**: planned
+- **Status**: done (2026-05-10; 1-chapter hardlink shortcut + N-chapter concat + chapters.json 全部上线)
 - **Source**: 业务对话 2026-05
 - **Estimate**: 3d
 - **Depends on**: OPT-403
@@ -747,6 +775,20 @@ flowchart TD
   - **是否引入"软等待"** vs 真正的事件驱动：先用轮询（worker poll cycle 5s），后续 OPT-203 SSE 完成后切到事件
   - **glossary broadcast 的 cost ceiling**：每次 broadcast 重译 N 段，可能 N=几十；OPT-407 实施时需要明确单次 broadcast 上限段数
 - **PRs**: TBD
+- **实际改动**:
+  - `internal/episode/chapters_manifest.go` 新增 `ChaptersManifest` 结构（schema_version=1）+ `WriteChaptersJSON`（原子写、缩进、自动时戳）+ `Validate / SortChapters / ReadChaptersJSON`，配 7 个测试覆盖空 / 错版 / 乱序 / 缺文件等场景
+  - `internal/pipeline/stage_episode_merge.go` 新增 `runEpisodeMerge`（1-chapter hardlink shortcut + N-chapter `ConcatChapterVideos` + 可选 master EBU R128 pass + 写 chapters.json + 更新 Episode.OutputRelPath/ChaptersManifestRelPath/OutputLayoutVersion=2 + 转 Completed 状态）+ `maybeEnqueueEpisodeMerge`（chapter 完成时 idempotent trigger）
+  - `internal/pipeline/pipeline.go` `runMerge` 输出路径切到统一 layout `episodes/{ep_id}/chapters/vp{vp}/ch{ord:02d}.mp4`（旧 `jobs/{id}/output/...` 仅作为 layout v1 兜底），加 `runChapterLoudnorm` + `persistChapterLoudnormStats` 用 flat key `vp{N}_chXX` 写到 `Episode.LoudnormStats` 避免与 master pass 冲突
+  - `internal/http/router_episode_downloads.go` 新增三个下载端点 `GET /episodes/:id/download/final`、`GET /episodes/:id/chapters.json`、`GET /jobs/:id/download/final`，全部从 DB 读 relpath 不自行拼路径
+  - 前端 `ui/src/components/EpisodeDetail.vue` 增加 layout v1/v2 badge、loudnorm-applied 标识、chapterize / episode_merge 进度 pill、双语 chapter title 渲染（translated > source > "Chapter N"）+ 章节级下载按钮
+  - `cmd/migrate-output/main.go` 新增 138 历史 episode 一次性 back-fill 工具（--dry-run/--use-hardlink/--keep-old/--episode-ids/--limit/--record）
+  - **Glossary broadcast / OPT-407 闭环 rework 部分**未在本 OPT 落地，留给 OPT-407
+- **实际工时**: ~2d (与 OPT-403 同 PR)
+- **验证**:
+  - 算法基线：[docs/opt-403/baseline-opt403-79min.json](../../docs/opt-403/baseline-opt403-79min.json)（OPT-403 + OPT-404 共享）
+  - Back-fill 报告：[docs/opt-403/opt403-backfill-dry-run.json](../../docs/opt-403/opt403-backfill-dry-run.json) — 74 episodes scanned，44 可迁移 (31 GB hardlink, 不重编码), 30 因历史 chapter `output_relpath` 为空需手动处置，总耗时 ~200ms
+  - 真实场景：episode 142 (79min, 8 chapters) 端到端通过 chapter merge → episode merge → chapters.json → UI 章节卡渲染
+  - 完整 archive 见 §6 `OPT-404` 条
 
 ---
 
@@ -956,9 +998,9 @@ flowchart TD
 
 #### OPT-409 Chapter-level Judge
 
-- **Status**: planned
+- **Status**: done (2026-05-11; staging 验证通过 — job 131 chapter judge fired，verdict=chapter_ready overall_fidelity=0.95)
 - **Source**: 业务对话 2026-05；2026-05-11 从原 OPT-405 重编号（OPT-405 ID 已被 LLM-Driven Chapterization 占用，详见 §3 表格备注 + §7 维护约定）
-- **Estimate**: 2d
+- **Estimate**: 2d (实际 ~1d，与 3 件旧债清理同 PR)
 - **Depends on**: OPT-403, OPT-002
 - **背景**：OPT-002 segment-level judge 只能看单段（fidelity / fluency），看不到 chapter 内 narrative coherence、speaker voice 跨段稳定性、本 chapter 内的术语一致性。Chapter judge 在 chapter_merge 后异步跑一次，关注**章内**维度。注意：本 OPT 关注 chapter **内部**质量（OPT-405 关注 chapter **切分** 质量），二者维度互补不重叠。
 - **Outcome**:
@@ -981,6 +1023,28 @@ flowchart TD
   - `internal/pipeline/stage_chapter_merge.go` 完成后异步 dispatch chapter judge（同 OPT-002 模式）
   - 前端：`EpisodeDetail.vue` 显示 chapter judge 分数热力图
 - **PRs**: TBD
+- **实际改动**:
+  - 新增 `internal/llm/chapter_judge.go`：`ChapterJudgeArgs / ChapterJudgeSegment / ChapterJudgeResult / ChapterJudgeWeakSegment` 类型 + `chapterJudgeToolSchema` 7 维 strict tool（6 axes + top_3_weakest_segments + verdict）+ `JudgeChapter` entry，复用 OPT-405 `isThinkingModelName` 自动降 `tool_choice="auto"`，60s timeout（chapter prompt 比 segment 大）
+  - 新增 `internal/llm/chapter_judge_test.go` 8 个 case 覆盖 schema marshal / 空输入 / disabled / happy path / 缺 verdict 默认 needs_revision / 用户消息组装 / overall score 计算 / thinking model tool_choice 降级
+  - `internal/llm/client.go` 加 `chapterJudgeModel` 字段 + `OpChapterJudge` operation 常量
+  - 新增 `internal/store/store.go` `UpdateChapterJudgeResult(ctx, jobID, score, metaJSON)` partial UPDATE，仅动两列避免覆盖 chapter_title 等 OPT-403 字段
+  - `internal/models/models.go` `Job` 加 `ChapterJudgeScore *float64` + `ChapterJudgeMeta datatypes.JSON`
+  - `internal/pipeline/pipeline.go` `runMerge` 在 `SaveJob` 后、`maybeEnqueueEpisodeMerge` 前插入 `s.maybeJudgeChapterAsync(job, segments)` hook
+  - `internal/pipeline/stage_tts.go` 新增 `maybeJudgeChapterAsync` 镜像 `maybeJudgeSegmentAsync`：detached background context 60s、segment slice 过滤空文本、附带 segment-level judge score 给 LLM 当 hint、失败仅 log+drop
+  - `internal/config/config.go` 加 `ChapterJudgeModel string` (默认 `kimi-k2.5`) + `ChapterJudgeObserveOnly bool` (默认 true)
+  - migration `migrations/009_chapter_judge_score.sql`：`jobs` 加两列 + 部分索引 `idx_jobs_chapter_judge_score WHERE chapter_judge_score IS NOT NULL`
+  - env `.env.example / .env.production.example` 加 `CHAPTER_JUDGE_MODEL=kimi-k2.5 / CHAPTER_JUDGE_OBSERVE_ONLY=true`
+  - 前端 `ui/src/api.ts` `Job` 加 `chapter_judge_score / chapter_judge_meta` + 新 `ChapterJudgeMeta` 类型；`ui/src/components/EpisodeDetail.vue` chapter 卡片新增 judge 分数 badge（绿/黄/红 阈值 0.85/0.7）+ hover tooltip 弹 6 维表格 + top-3-weakest 列表 + 一段式总结
+- **实际工时**: ~1d (与 3 件旧债清理同 PR；plan §10 估 ~3d 含旧债)
+- **验证**:
+  - L1 单测：`chapter_judge_test.go` 8 个 case 全绿；`store_test.go` `TestListSegmentsAwaitingJudge_FiltersAndOrdersCorrectly` 全绿；`go vet ./...` clean；linux api/worker binary build 通过
+  - L2 staging：hot-reload api+worker 双容器，POST `/jobs/131/retry stage=merge` → ~30s 后 worker 日志 `chapter judge result recorded job_id=131 chapter_ordinal=1 verdict=chapter_ready overall_fidelity=0.95 narrative_coherence=0.95 speaker_voice_stability=0.95 terminology_consistency=0.95 register_consistency=0.95 weakest_count=0`，DB 验证 `jobs.chapter_judge_score=0.95` + `chapter_judge_meta` JSON 含全部 6 维分数 + verdict
+  - L3 部分（backfill）：worker 重启后 15s `judge backfill: dispatching count=500 limit=500 concurrency=3` → `dispatch complete dispatched=500`，未判分段从 5908 → 5408（job 119/120/121 历史 restart-window gap 全部补齐）
+  - L3 待补（chapter judge correlation）：episode 142 / 141 / 140 的 5+ chapter 全部还在 `awaiting_review`（需操作员确认 segment_review）；待这些 episode 跑通 merge 后即可观察"弱段列表 vs segment-level judge 低分段相关性 ≥ 0.7"指标
+- **风险与待决策**:
+  - **kimi-k2.5 latency**：staging 实测 ~30s/chapter（含 LLM 推理 + 60s context window），60s timeout 充足
+  - **PrevContext 传 nil（segment-judge backfill 路径）**：见 OPT-002-followup-3 记账
+  - **判分回写竞争**：`UpdateChapterJudgeResult` 用 partial UPDATE 只动 chapter_judge_score + chapter_judge_meta + updated_at 三列，不会覆盖 chapter_title / output_relpath 等并发写入字段
 
 ---
 
@@ -1233,6 +1297,23 @@ flowchart TD
   - 验证 baseline: [docs/opt-405/bench-baseline-2026-05-11/](../../docs/opt-405/bench-baseline-2026-05-11/) — episode 142 × 6 candidates × 3 runs × 1 judge (kimi-k2-thinking)，**kimi-k2.5 = 4.76 clear-win**（runner-up qwen-max-latest = 4.06，gap +0.70）；artefacts 含 `report.md / report.json / raw/{model}-run{i}.json / judge/{model}-judgment.json / chapters-{model}.txt`
   - 衍生 follow-up：(a) judge 跨家族复跑（用 qwen3-thinking 或 deepseek 做 judge 复评 kimi-k2.5，验证不存在"同源偏好"）；(b) dataset 扩到 5 类型（lecture / news / interview / variety / ASMR），目前只覆盖 lecture
   - 备注：OPT-405 副产物（`doChatToolOnce` 自动切 `thinkingHTTPClient`）也是本 OPT 跑批时暴露的 90s 超时问题反向逼出的修复
+- **OPT-409** Chapter-level Judge
+  - 实际工时：~1d (与 3 件旧债同 PR)
+  - CHANGELOG: [Chapter-level LLM-as-Judge (OPT-409)](../../CHANGELOG.md)
+  - 关键改动：新增 `internal/llm/chapter_judge.go`（`ChapterJudgeArgs/Result/WeakSegment` 类型 + 7 维 strict tool schema `emit_chapter_judge_verdict` + `JudgeChapter` entry，复用 `isThinkingModelName` 自动降 tool_choice）；新增 `internal/llm/chapter_judge_test.go` 8 case；`internal/store/store.go` 加 `UpdateChapterJudgeResult` partial UPDATE；`internal/models/models.go` `Job` 加 `ChapterJudgeScore *float64 / ChapterJudgeMeta datatypes.JSON`；`internal/pipeline/pipeline.go` `runMerge` `SaveJob` 后插入 `s.maybeJudgeChapterAsync(job, segments)` hook；`internal/pipeline/stage_tts.go` 新增 `maybeJudgeChapterAsync` 镜像 `maybeJudgeSegmentAsync`（detached background ctx 60s + segment 过滤 + segment-judge hint）；`internal/config/config.go` 加 `ChapterJudgeModel string` (default `kimi-k2.5`) + `ChapterJudgeObserveOnly bool` (default true)；migration `migrations/009_chapter_judge_score.sql` `jobs` 加 chapter_judge_score / chapter_judge_meta + 部分索引；env 加 `CHAPTER_JUDGE_MODEL=kimi-k2.5 / CHAPTER_JUDGE_OBSERVE_ONLY=true`；前端 `EpisodeDetail.vue` chapter 卡片新增 judge 分数 badge（绿/黄/红 0.85/0.7 阈值）+ hover tooltip 弹 6 维表格 + top-3 weakest 列表
+  - 验证：staging job 131 chapter judge 30s 内完成，verdict=chapter_ready overall_fidelity=0.95（每维 ≥0.92, 0 弱段）；DB `jobs.chapter_judge_score=0.95` + `chapter_judge_meta` JSON 含全部 6 维分数；UI 章节卡片绿色 badge 渲染正确
+  - 衍生：(a) episode 142/141/140 多 chapter 端到端跑通后，验证"弱段列表 vs segment-level judge 低分段相关性 ≥0.7"；(b) **OPT-407** 闭环 rework 引擎 = consume 本 OPT 的 `chapter_judge_meta.top_3_weakest_segments + verdict` 决策路径
+- **OPT-001-followup-2** doChatStream final-chunk usage 验证
+  - 实际工时：~10 min (代码已落地，仅缺验证 + roadmap 标记)
+  - CHANGELOG: see Changed 段
+  - 关键改动：无新代码 — 验证 `internal/llm/client.go:969-979` 已解析 SSE `chunk.Usage` + line 992-993 emit `ObserveLLMTokens`；roadmap line 208 标 DONE 2026-05-11
+  - 验证：`worker:8081/metrics` `holodub_llm_input_tokens_total{model="kimi-k2.5"}` > 0
+- **OPT-002-followup-2** Worker 启动 Judge Backfill
+  - 实际工时：~0.5d (与 OPT-409 同 PR)
+  - CHANGELOG: [Worker-startup judge back-fill goroutine (OPT-002-followup-2)](../../CHANGELOG.md)
+  - 关键改动：`internal/store/store.go` 加 `ListSegmentsAwaitingJudge(ctx, limit)` + 单测；新增 `internal/pipeline/judge_backfill.go` `(*Service).BackfillSegmentJudges(ctx, limit, concurrency)` 用 buffered channel 做 bounded concurrency；`internal/config/config.go` 加 `JudgeBackfillOnStart bool` (default true) + `JudgeBackfillLimit int` (default 500)；`cmd/worker/main.go` 服务初始化后 spawn 15s 延迟的 backfill goroutine；env 加 `JUDGE_BACKFILL_ON_START=true / JUDGE_BACKFILL_LIMIT=500`
+  - 验证：worker 重启后 15s `judge backfill: dispatching count=500 limit=500 concurrency=3` → 12s 后 `dispatch complete dispatched=500`；未判分段从 5908 → 5408（job 119/120/121 历史 restart-window gap 全部补齐）
+  - 衍生：**OPT-002-followup-3** PrevContext for backfill（当前 backfill 路径传 nil 简化首版，可补成查 segment 前一段拼 ContextSegment）
 
 ---
 

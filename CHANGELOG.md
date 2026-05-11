@@ -15,6 +15,45 @@ once we cut a tagged release.
 
 ### Added
 
+- **Chapter-level LLM-as-Judge (OPT-409)**: every chapter (one `Job`
+  under a multi-chapter `Episode`, see OPT-401) is now scored
+  asynchronously after `pipeline.runMerge` persists the chapter
+  outputs. The new `internal/llm/chapter_judge.go` `JudgeChapter`
+  drives a strict `emit_chapter_judge_verdict` tool call against
+  `CHAPTER_JUDGE_MODEL` (default `kimi-k2.5` — same model that
+  already runs OPT-405 chapterization, validated by the OPT-405.1
+  benchmark) and returns six 0–1 axis scores covering exactly the
+  cross-segment dimensions that segment-level OPT-002 judge cannot
+  see and that OPT-406 episode-judge would see too late: narrative
+  coherence, speaker voice stability, terminology consistency,
+  register consistency, overall fidelity, overall fluency. Plus a
+  top-3-weakest-segments list (with concrete `issue` + `recommended_fix`
+  for each weak segment, ready to seed OPT-407 closed-loop rework)
+  and a verdict enum (`chapter_ready` / `needs_revision` /
+  `needs_major_rework`). Results land on the new
+  `jobs.chapter_judge_score` (overall `NUMERIC`) +
+  `jobs.chapter_judge_meta` (`JSONB`) columns (migration
+  `migrations/009_chapter_judge_score.sql`, partial index on
+  non-NULL scores). The dispatcher
+  `internal/pipeline/stage_tts.go` `maybeJudgeChapterAsync` mirrors
+  the established `maybeJudgeSegmentAsync` contract: detached
+  background context (60 s timeout — chapter prompts are larger than
+  segment prompts and thinking models can take 10–15 s), best-effort
+  log-and-drop on any failure, never fails the chapter or the
+  downstream episode merge. The frontend
+  (`ui/src/components/EpisodeDetail.vue`) now renders the score on
+  every chapter card with a green / amber / red badge (≥ 0.85 / 0.7 /
+  < 0.7) and a hover tooltip showing every axis sub-score plus the
+  weakest-segment list with their proposed fixes. New env knobs
+  `CHAPTER_JUDGE_MODEL=kimi-k2.5` / `CHAPTER_JUDGE_OBSERVE_ONLY=true`
+  (the MVP is observe-only — no decisions wired in yet, deferred to
+  OPT-407 once verdict thresholds are calibrated against operator
+  labels). Reuses the OPT-405 `isThinkingModelName` helper to
+  auto-degrade `tool_choice` to `"auto"` for DashScope reasoning
+  models. Validated end-to-end on staging job 131 (1-chapter): the
+  judge fired ≈ 30 s after the merge re-trigger and persisted
+  verdict=`chapter_ready` overall_fidelity=0.95 (every axis
+  ≥ 0.92, zero weak segments) on the rendered chapter.
 - **LLM-driven semantic chapterization (OPT-405)**: long-form chapterize
   is no longer purely DP-driven. When `CHAPTERIZE_LLM_DRIVEN=true`
   (default), `ExtractEpisodeGlossary`
@@ -293,6 +332,51 @@ once we cut a tagged release.
 
 ### Changed
 
+- **Worker-startup judge back-fill goroutine (OPT-002-followup-2)**:
+  on every worker boot, when both `JUDGE_MODEL` and the new
+  `JUDGE_BACKFILL_ON_START=true` (default) are set, the worker now
+  scans for at most `JUDGE_BACKFILL_LIMIT` (default 500) synthesised
+  segments that are missing a judge verdict (typically because the
+  worker process was restarted after synthesis but before the
+  segment's detached judge goroutine completed) and dispatches them
+  through the same observe-only `maybeJudgeSegmentAsync` pipeline used
+  at synthesis time. Bounded concurrency (3) prevents a stampede of
+  the LLM provider on big restarts; the dispatch starts 15 s after
+  worker boot so Redis / DB / ML health checks settle first. New
+  `internal/store/store.go` `ListSegmentsAwaitingJudge(ctx, limit)`
+  returns the scan with full unit-test coverage (recent-first
+  ordering, limit/zero short-circuit, filters out empty source/target
+  text and already-judged rows including `judge_score=0`). New
+  `internal/pipeline/judge_backfill.go`
+  `(*Service).BackfillSegmentJudges(ctx, limit, concurrency)` does
+  the dispatch with semaphore-bounded concurrency and per-segment
+  `GetJob` enrichment so the back-fill judge sees the same
+  `SourceLanguage` / `TargetLanguage` / `TranslationSummary` the
+  synthesis-time judge would have used (PrevContext is `nil` in the
+  back-fill path — a deliberate simplification, see plan §3 / debt-3b;
+  loses prev-sentence coherence signal but keeps the back-fill cheap
+  and observability-comparable). Validated on staging:
+  worker boot → `judge backfill: dispatching count=500 limit=500
+  concurrency=3` → 500 verdicts persisted within ~12 s, including
+  segments from jobs 119 / 120 / 121 that had been unjudged for days
+  due to prior restart windows.
+- **Roadmap status sync for OPT-402 / OPT-403 / OPT-404**: the three
+  detail cards in `docs/roadmap/optimization-roadmap.md` §4 still
+  carried `Status: planned` even though §3 + §6 archive both already
+  showed them as done. Fixed all three cards to mirror the OPT-401
+  template: top `Status: done (date; ...)` line + new bottom-of-card
+  `实际改动 / 实际工时 / 验证` block summarising the §6 archive
+  evidence. No code change.
+- **OPT-001-followup-2 verified**: `internal/llm/client.go`
+  `doChatStream` was already parsing the SSE final-chunk `usage`
+  field (lines 969–979) and emitting it through
+  `observability.ObserveLLMTokens(model, operation, ...)` (line
+  992-993) since the OPT-001 wrap-up — the roadmap line just never
+  got marked done. Confirmed live by checking
+  `worker:8081/metrics` after running a `kimi-k2.5` streaming call:
+  `holodub_llm_input_tokens_total{model="kimi-k2.5"}` is now > 0
+  instead of 0. Roadmap line 208 marked DONE 2026-05-11 with a note
+  explaining the late catch.
 - **Translate system prompt is now fully byte-stable across segments
   (OPT-001-followup-1)**: `buildTranslateSystemPrompt` no longer takes
   per-segment `targetSec` / `limit` arguments — those values are now
