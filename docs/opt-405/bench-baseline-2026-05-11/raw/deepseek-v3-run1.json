@@ -1,0 +1,151 @@
+{
+  "model": "deepseek-v3",
+  "run_index": 1,
+  "wall_time_ms": 24574,
+  "raw_chapters": [
+    {
+      "start_segment_idx": 0,
+      "end_segment_idx": 16,
+      "title_source": "Introduction to Distributed Systems",
+      "title_translated": "分布式系统简介",
+      "summary_md": "介绍分布式系统的定义、核心概念及其在现代计算基础设施中的重要性。"
+    },
+    {
+      "start_segment_idx": 17,
+      "end_segment_idx": 38,
+      "title_source": "Reasons for Building Distributed Systems",
+      "title_translated": "构建分布式系统的原因",
+      "summary_md": "探讨构建分布式系统的动机，包括性能、容错和物理分布需求。"
+    },
+    {
+      "start_segment_idx": 39,
+      "end_segment_idx": 56,
+      "title_source": "Challenges in Distributed Systems",
+      "title_translated": "分布式系统的挑战",
+      "summary_md": "分析分布式系统中的并发、部分故障和性能优化等核心挑战。"
+    },
+    {
+      "start_segment_idx": 57,
+      "end_segment_idx": 82,
+      "title_source": "Course Structure and Logistics",
+      "title_translated": "课程结构与安排",
+      "summary_md": "介绍课程的组织结构，包括讲座、实验、考试和项目要求。"
+    },
+    {
+      "start_segment_idx": 83,
+      "end_segment_idx": 107,
+      "title_source": "Technical Topics in Distributed Systems",
+      "title_translated": "分布式系统的技术主题",
+      "summary_md": "深入讨论分布式系统中的实现工具、性能和容错等关键技术。"
+    },
+    {
+      "start_segment_idx": 108,
+      "end_segment_idx": 174,
+      "title_source": "Case Study: MapReduce",
+      "title_translated": "案例研究：MapReduce",
+      "summary_md": "详细分析MapReduce框架的设计、工作原理及其在分布式计算中的应用。"
+    }
+  ],
+  "validation_ok": true,
+  "final_ranges": [
+    {
+      "Ordinal": 1,
+      "StartMs": 0,
+      "EndMs": 462380,
+      "StartSegmentIdx": 0,
+      "EndSegmentIdx": 16,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    },
+    {
+      "Ordinal": 2,
+      "StartMs": 462380,
+      "EndMs": 1027025,
+      "StartSegmentIdx": 17,
+      "EndSegmentIdx": 38,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    },
+    {
+      "Ordinal": 3,
+      "StartMs": 1027025,
+      "EndMs": 1516060,
+      "StartSegmentIdx": 39,
+      "EndSegmentIdx": 56,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    },
+    {
+      "Ordinal": 4,
+      "StartMs": 1516060,
+      "EndMs": 2233680,
+      "StartSegmentIdx": 57,
+      "EndSegmentIdx": 82,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    },
+    {
+      "Ordinal": 5,
+      "StartMs": 2233680,
+      "EndMs": 2903950,
+      "StartSegmentIdx": 83,
+      "EndSegmentIdx": 107,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    },
+    {
+      "Ordinal": 6,
+      "StartMs": 2903950,
+      "EndMs": 4771470,
+      "StartSegmentIdx": 108,
+      "EndSegmentIdx": 174,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    }
+  ],
+  "final_titles": [
+    {
+      "TitleSource": "Introduction to Distributed Systems",
+      "TitleTranslated": "分布式系统简介",
+      "SummaryMD": "介绍分布式系统的定义、核心概念及其在现代计算基础设施中的重要性。"
+    },
+    {
+      "TitleSource": "Reasons for Building Distributed Systems",
+      "TitleTranslated": "构建分布式系统的原因",
+      "SummaryMD": "探讨构建分布式系统的动机，包括性能、容错和物理分布需求。"
+    },
+    {
+      "TitleSource": "Challenges in Distributed Systems",
+      "TitleTranslated": "分布式系统的挑战",
+      "SummaryMD": "分析分布式系统中的并发、部分故障和性能优化等核心挑战。"
+    },
+    {
+      "TitleSource": "Course Structure and Logistics",
+      "TitleTranslated": "课程结构与安排",
+      "SummaryMD": "介绍课程的组织结构，包括讲座、实验、考试和项目要求。"
+    },
+    {
+      "TitleSource": "Technical Topics in Distributed Systems",
+      "TitleTranslated": "分布式系统的技术主题",
+      "SummaryMD": "深入讨论分布式系统中的实现工具、性能和容错等关键技术。"
+    },
+    {
+      "TitleSource": "Case Study: MapReduce",
+      "TitleTranslated": "案例研究：MapReduce",
+      "SummaryMD": "详细分析MapReduce框架的设计、工作原理及其在分布式计算中的应用。"
+    }
+  ],
+  "static_metrics": {
+    "raw_chapter_count": 6,
+    "final_chapter_count": 6,
+    "mean_dur_ms": 795245,
+    "min_dur_ms": 462380,
+    "max_dur_ms": 1867520,
+    "merge_actions": 0,
+    "split_actions": 0,
+    "boundary_jitter_ms": 34575
+  },
+  "glossary_entry_count": 26,
+  "speaker_hint_count": 1,
+  "reference_card_chars": 294
+}

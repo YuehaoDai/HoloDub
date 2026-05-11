@@ -1,0 +1,32 @@
+model: kimi-k2-thinking
+best_run: 2 (validation_ok=true) chapters=4
+static metrics: mean=19.9min min=7.7min max=31.3min merge=1 split=0
+
+ch01 [0:00 — 7:42] 7.7min segs[0..16]
+  src: What Are Distributed Systems?
+  tgt: 什么是分布式系统？
+
+  first_seg: All right, let's get started. This is 6824, distributed systems.
+  last_seg:  When I first started teaching this course, it was... Distributed systems were something of an academic curiosity. You kn…
+
+ch02 [7:42 — 17:07] 9.4min segs[17..37]
+  src: Course Structure & Logistics
+  tgt: 课程结构与安排
+
+  first_seg: This means that there's been a lot of attention paid to them. A lot of problems have been solved. But there's still quit…
+  last_seg:  Okay. Back to labs. The lab grades. That we give you. You hand in your lab code. And we run some. Tests. And you're grad…
+
+ch03 [17:07 — 48:23] 31.3min segs[38..107]
+  src: Technical Foundations: Challenges & Concepts
+  tgt: 技术基础：挑战与核心概念
+
+  first_seg: And have a lot of concurrency. And communication. Sort of strange. Difficult to debug. Errors can crop up. So you really…
+  last_seg:  Any questions about this before I start talking about MapReduce? All right. I want to switch to MapReduce as a sort of d…
+
+ch04 [48:23 — 79:31] 31.1min segs[108..174]
+  src: MapReduce Case Study • Wrap-up & Next Steps
+  tgt: MapReduce案例研究 • 总结与后续安排
+
+  first_seg: I think the paper dates back to 2004. The problem they were faced with was that they were running huge computations on t…
+  last_seg:  We have a lab due at the end of next week in which you'll write your own somewhat simplified MapReduce. So have fun with…
+

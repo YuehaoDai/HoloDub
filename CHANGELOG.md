@@ -15,6 +15,72 @@ once we cut a tagged release.
 
 ### Added
 
+- **LLM-driven semantic chapterization (OPT-405)**: long-form chapterize
+  is no longer purely DP-driven. When `CHAPTERIZE_LLM_DRIVEN=true`
+  (default), `ExtractEpisodeGlossary`
+  (`internal/llm/glossary.go`) is invoked once per episode with the
+  full ASR transcript indexed as `EpisodeSegment[]` and now also emits
+  a top-level semantic chapter plan
+  (`chapters[{title, title_translated, summary_md, start_segment_index,
+  end_segment_index, theme}]`) via the same strict
+  `emit_episode_glossary` tool call. The plan is persisted to the new
+  `episodes.llm_chapters` JSONB column (migration
+  `migrations/008_llm_chapters.sql`) and consumed by
+  `internal/pipeline/stage_chapterize.go` `runEpisodeChapterize` →
+  `tryLLMChapterPlan` before the legacy DP path runs (DP becomes the
+  fall-back when the LLM plan is absent or rejected). The new
+  `internal/chapterize/llm_apply.go` package owns the post-processing:
+  `ValidateLLMPlan` rejects malformed / overlapping / out-of-range
+  segment indices, `SnapBoundariesToSilences` shifts every cut to the
+  nearest ASR silence ≥ `CHAPTERIZE_MIN_SILENCE_GAP_MS`,
+  `EnforceHardConstraints` merges chapters shorter than
+  `CHAPTERIZE_HARD_MIN_MS` (default 5 min) into their neighbour and
+  splits chapters longer than `CHAPTERIZE_HARD_MAX_MS` (default 45 min)
+  at the widest internal silence. Two new env knobs
+  (`CHAPTERIZE_LLM_DRIVEN`, `CHAPTERIZE_HARD_MAX_MS`,
+  `CHAPTERIZE_HARD_MIN_MS`) make the behaviour fully tuneable, and
+  `GLOSSARY_MODEL=kimi-k2.5` (now the production default per the
+  OPT-405.1 benchmark below) drives both the glossary AND the chapter
+  plan from a single LLM call. The same code path also taught
+  `internal/llm/client.go` `doChatToolOnce` to swap in
+  `c.thinkingHTTPClient` (10-min timeout) whenever the model name
+  contains `thinking` so DashScope reasoning models no longer time out
+  mid-tool-call (regression caught while running OPT-405.1 against
+  `kimi-k2-thinking`), and `glossary.go` to dynamically downgrade
+  `tool_choice` from `forceToolChoice("emit_episode_glossary")` to
+  `"auto"` for thinking models (DashScope rejects strict tool_choice on
+  reasoning endpoints). Validated end-to-end on episode 142 (79-min
+  lecture, 176 segments): kimi-k2.5 produced 8 chapters that scored
+  4.76 / 5 across boundary coherence + title quality + topic
+  completeness with `kimi-k2-thinking` as judge — see OPT-405.1 below.
+- **Multi-model chapterize benchmark CLI (OPT-405.1)**: the new
+  `cmd/chapterize-bench` tool runs the OPT-405 chapter plan against
+  N candidate models × M runs each, normalises every plan through the
+  full validate / snap-to-silence / hard-constraint pipeline, then
+  asks an LLM-as-judge to score every plan on three axes (boundary
+  coherence, title quality, topic completeness, 0–5) and emits a
+  ranked markdown leaderboard + machine-readable JSON. The runner
+  (`runner.go`) records per-model wall time, chapter count, target
+  duration deviation, snap displacement and merge / split events;
+  the judge (`judge.go`) drives a strict `score_chapter_cuts` tool
+  call, supports multiple judge runs averaged into a single verdict,
+  and skips re-runs when an existing valid
+  `judge/{model}-judgment.json` is present (cheap reruns after
+  transient errors). New helpers
+  in `internal/llm/bench.go` (`Client.RunBenchToolCall`) expose a
+  generic tool-call entry point so offline evaluation tools share the
+  same retry / observability / timeout transport as the production
+  pipeline. Baseline run pinned to
+  `docs/opt-405/bench-baseline-2026-05-11/`: 6 candidates ×
+  3 runs × 1 judge → **kimi-k2.5 wins 4.76 / 5** (clear gap of
+  +0.70 over runner-up `qwen-max-latest` at 4.06); supporting
+  artefacts include per-run raw plans (`raw/{model}-run{i}.json`),
+  per-model judgments (`judge/{model}-judgment.json`),
+  chapter-list snapshots (`chapters-{model}.txt`) and the rendered
+  `report.md` / `report.json`. Usage docs live in
+  `docs/opt-405/bench-README.md`. This locks in `kimi-k2.5` as the
+  recommended `GLOSSARY_MODEL` and provides a repeatable harness for
+  evaluating future chapterization model changes.
 - **Chapterize + fan-out 多 chapter job (OPT-403/404)**: long-form videos
   (≥ ~22 min by default) are now automatically split into 18–30 min
   chapters with bilingual LLM titles, then re-stitched into a single

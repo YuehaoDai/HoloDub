@@ -1,0 +1,221 @@
+{
+  "model": "deepseek-v3",
+  "run_index": 3,
+  "wall_time_ms": 29134,
+  "raw_chapters": [
+    {
+      "start_segment_idx": 0,
+      "end_segment_idx": 8,
+      "title_source": "Introduction to Distributed Systems",
+      "title_translated": "分布式系统简介",
+      "summary_md": "介绍分布式系统的定义、核心概念及其重要性，包括存储、计算和通信的基础设施。"
+    },
+    {
+      "start_segment_idx": 9,
+      "end_segment_idx": 18,
+      "title_source": "Course Structure and Logistics",
+      "title_translated": "课程结构与安排",
+      "summary_md": "概述课程结构，包括讲座、实验、考试和项目，以及课程网站和助教信息。"
+    },
+    {
+      "start_segment_idx": 19,
+      "end_segment_idx": 37,
+      "title_source": "Technical Challenges in Distributed Systems",
+      "title_translated": "分布式系统的技术挑战",
+      "summary_md": "探讨分布式系统中的性能、容错和一致性等核心挑战。"
+    },
+    {
+      "start_segment_idx": 38,
+      "end_segment_idx": 58,
+      "title_source": "Case Study: MapReduce",
+      "title_translated": "案例研究：MapReduce",
+      "summary_md": "深入分析MapReduce的设计、工作原理及其在分布式计算中的应用。"
+    },
+    {
+      "start_segment_idx": 59,
+      "end_segment_idx": 79,
+      "title_source": "MapReduce Implementation Details",
+      "title_translated": "MapReduce实现细节",
+      "summary_md": "讨论MapReduce的实现细节，包括数据分片、网络通信和性能优化。"
+    },
+    {
+      "start_segment_idx": 80,
+      "end_segment_idx": 100,
+      "title_source": "Fault Tolerance and Replication",
+      "title_translated": "容错与复制",
+      "summary_md": "讲解容错机制和复制技术，以及它们在分布式系统中的作用。"
+    },
+    {
+      "start_segment_idx": 101,
+      "end_segment_idx": 120,
+      "title_source": "Consistency Models",
+      "title_translated": "一致性模型",
+      "summary_md": "介绍强一致性和弱一致性模型，以及它们在分布式系统中的权衡。"
+    },
+    {
+      "start_segment_idx": 121,
+      "end_segment_idx": 140,
+      "title_source": "Network and Performance Considerations",
+      "title_translated": "网络与性能考量",
+      "summary_md": "分析网络通信对分布式系统性能的影响，以及优化策略。"
+    },
+    {
+      "start_segment_idx": 141,
+      "end_segment_idx": 160,
+      "title_source": "Modern Data Center Networks",
+      "title_translated": "现代数据中心网络",
+      "summary_md": "探讨现代数据中心网络的架构及其对分布式系统性能的提升。"
+    },
+    {
+      "start_segment_idx": 161,
+      "end_segment_idx": 174,
+      "title_source": "Conclusion and Lab Assignment",
+      "title_translated": "总结与实验任务",
+      "summary_md": "总结课程内容，并布置MapReduce实验任务。"
+    }
+  ],
+  "validation_ok": true,
+  "final_ranges": [
+    {
+      "Ordinal": 1,
+      "StartMs": 0,
+      "EndMs": 511605,
+      "StartSegmentIdx": 0,
+      "EndSegmentIdx": 18,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    },
+    {
+      "Ordinal": 2,
+      "StartMs": 511605,
+      "EndMs": 1027025,
+      "StartSegmentIdx": 19,
+      "EndSegmentIdx": 37,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    },
+    {
+      "Ordinal": 3,
+      "StartMs": 1027025,
+      "EndMs": 1516060,
+      "StartSegmentIdx": 38,
+      "EndSegmentIdx": 58,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    },
+    {
+      "Ordinal": 4,
+      "StartMs": 1516060,
+      "EndMs": 2223605,
+      "StartSegmentIdx": 59,
+      "EndSegmentIdx": 79,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    },
+    {
+      "Ordinal": 5,
+      "StartMs": 2223605,
+      "EndMs": 2714000,
+      "StartSegmentIdx": 80,
+      "EndSegmentIdx": 100,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    },
+    {
+      "Ordinal": 6,
+      "StartMs": 2714000,
+      "EndMs": 3293955,
+      "StartSegmentIdx": 101,
+      "EndSegmentIdx": 120,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    },
+    {
+      "Ordinal": 7,
+      "StartMs": 3293955,
+      "EndMs": 3765430,
+      "StartSegmentIdx": 121,
+      "EndSegmentIdx": 140,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    },
+    {
+      "Ordinal": 8,
+      "StartMs": 3765430,
+      "EndMs": 4299755,
+      "StartSegmentIdx": 141,
+      "EndSegmentIdx": 160,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    },
+    {
+      "Ordinal": 9,
+      "StartMs": 4299755,
+      "EndMs": 4771470,
+      "StartSegmentIdx": 161,
+      "EndSegmentIdx": 174,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    }
+  ],
+  "final_titles": [
+    {
+      "TitleSource": "Introduction to Distributed Systems • Course Structure and Logistics",
+      "TitleTranslated": "分布式系统简介 • 课程结构与安排",
+      "SummaryMD": "介绍分布式系统的定义、核心概念及其重要性，包括存储、计算和通信的基础设施。 • 概述课程结构，包括讲座、实验、考试和项目，以及课程网站和助教信息。"
+    },
+    {
+      "TitleSource": "Technical Challenges in Distributed Systems",
+      "TitleTranslated": "分布式系统的技术挑战",
+      "SummaryMD": "探讨分布式系统中的性能、容错和一致性等核心挑战。"
+    },
+    {
+      "TitleSource": "Case Study: MapReduce",
+      "TitleTranslated": "案例研究：MapReduce",
+      "SummaryMD": "深入分析MapReduce的设计、工作原理及其在分布式计算中的应用。"
+    },
+    {
+      "TitleSource": "MapReduce Implementation Details",
+      "TitleTranslated": "MapReduce实现细节",
+      "SummaryMD": "讨论MapReduce的实现细节，包括数据分片、网络通信和性能优化。"
+    },
+    {
+      "TitleSource": "Fault Tolerance and Replication",
+      "TitleTranslated": "容错与复制",
+      "SummaryMD": "讲解容错机制和复制技术，以及它们在分布式系统中的作用。"
+    },
+    {
+      "TitleSource": "Consistency Models",
+      "TitleTranslated": "一致性模型",
+      "SummaryMD": "介绍强一致性和弱一致性模型，以及它们在分布式系统中的权衡。"
+    },
+    {
+      "TitleSource": "Network and Performance Considerations",
+      "TitleTranslated": "网络与性能考量",
+      "SummaryMD": "分析网络通信对分布式系统性能的影响，以及优化策略。"
+    },
+    {
+      "TitleSource": "Modern Data Center Networks",
+      "TitleTranslated": "现代数据中心网络",
+      "SummaryMD": "探讨现代数据中心网络的架构及其对分布式系统性能的提升。"
+    },
+    {
+      "TitleSource": "Conclusion and Lab Assignment",
+      "TitleTranslated": "总结与实验任务",
+      "SummaryMD": "总结课程内容，并布置MapReduce实验任务。"
+    }
+  ],
+  "static_metrics": {
+    "raw_chapter_count": 10,
+    "final_chapter_count": 9,
+    "mean_dur_ms": 530163,
+    "min_dur_ms": 471475,
+    "max_dur_ms": 707545,
+    "merge_actions": 1,
+    "split_actions": 0,
+    "boundary_jitter_ms": 43602
+  },
+  "glossary_entry_count": 19,
+  "speaker_hint_count": 1,
+  "reference_card_chars": 344
+}

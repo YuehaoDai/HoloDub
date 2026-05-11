@@ -1,0 +1,116 @@
+{
+  "model": "kimi-k2-thinking",
+  "run_index": 2,
+  "wall_time_ms": 56369,
+  "raw_chapters": [
+    {
+      "start_segment_idx": 0,
+      "end_segment_idx": 16,
+      "title_source": "What Are Distributed Systems?",
+      "title_translated": "什么是分布式系统？",
+      "summary_md": "介绍分布式系统的定义（通过网络协作的计算机）、实例（大型网站存储、MapReduce、P2P文件共享）以及构建动机：高性能/并行性、容错、自然分布性和安全性。"
+    },
+    {
+      "start_segment_idx": 17,
+      "end_segment_idx": 37,
+      "title_source": "Course Structure \u0026 Logistics",
+      "title_translated": "课程结构与安排",
+      "summary_md": "阐述分布式系统在现代计算中的重要性，介绍课程团队（Robert Morris教授和四位助教），详细说明课程组成部分：讲座、研究论文、两次考试、四个编程实验（MapReduce、Raft、容错键值存储、分片）以及可选期末项目。"
+    },
+    {
+      "start_segment_idx": 38,
+      "end_segment_idx": 107,
+      "title_source": "Technical Foundations: Challenges \u0026 Concepts",
+      "title_translated": "技术基础：挑战与核心概念",
+      "summary_md": "深入探讨分布式系统的核心挑战：并发编程复杂性、部分故障模式、性能瓶颈。系统讲解三大关键概念：可扩展性（线性加速比）、容错机制（可用性与可恢复性、复制技术）以及一致性模型（强一致性与弱一致性的权衡）。"
+    },
+    {
+      "start_segment_idx": 108,
+      "end_segment_idx": 173,
+      "title_source": "MapReduce Case Study",
+      "title_translated": "MapReduce案例研究",
+      "summary_md": "详细剖析Google的MapReduce框架：处理TB级数据的动机、简单的map/reduce编程模型、实现架构（工作节点、主节点、GFS文件系统）、网络优化技巧（数据本地性、洗牌阶段）以及2004年至今的演进历程。"
+    },
+    {
+      "start_segment_idx": 174,
+      "end_segment_idx": 174,
+      "title_source": "Wrap-up \u0026 Next Steps",
+      "title_translated": "总结与后续安排",
+      "summary_md": "课程总结，提醒下周实验截止日期，并预告学生将动手实现简化版MapReduce框架。"
+    }
+  ],
+  "validation_ok": true,
+  "final_ranges": [
+    {
+      "Ordinal": 1,
+      "StartMs": 0,
+      "EndMs": 462380,
+      "StartSegmentIdx": 0,
+      "EndSegmentIdx": 16,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    },
+    {
+      "Ordinal": 2,
+      "StartMs": 462380,
+      "EndMs": 1027025,
+      "StartSegmentIdx": 17,
+      "EndSegmentIdx": 37,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    },
+    {
+      "Ordinal": 3,
+      "StartMs": 1027025,
+      "EndMs": 2903950,
+      "StartSegmentIdx": 38,
+      "EndSegmentIdx": 107,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    },
+    {
+      "Ordinal": 4,
+      "StartMs": 2903950,
+      "EndMs": 4771470,
+      "StartSegmentIdx": 108,
+      "EndSegmentIdx": 174,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    }
+  ],
+  "final_titles": [
+    {
+      "TitleSource": "What Are Distributed Systems?",
+      "TitleTranslated": "什么是分布式系统？",
+      "SummaryMD": "介绍分布式系统的定义（通过网络协作的计算机）、实例（大型网站存储、MapReduce、P2P文件共享）以及构建动机：高性能/并行性、容错、自然分布性和安全性。"
+    },
+    {
+      "TitleSource": "Course Structure \u0026 Logistics",
+      "TitleTranslated": "课程结构与安排",
+      "SummaryMD": "阐述分布式系统在现代计算中的重要性，介绍课程团队（Robert Morris教授和四位助教），详细说明课程组成部分：讲座、研究论文、两次考试、四个编程实验（MapReduce、Raft、容错键值存储、分片）以及可选期末项目。"
+    },
+    {
+      "TitleSource": "Technical Foundations: Challenges \u0026 Concepts",
+      "TitleTranslated": "技术基础：挑战与核心概念",
+      "SummaryMD": "深入探讨分布式系统的核心挑战：并发编程复杂性、部分故障模式、性能瓶颈。系统讲解三大关键概念：可扩展性（线性加速比）、容错机制（可用性与可恢复性、复制技术）以及一致性模型（强一致性与弱一致性的权衡）。"
+    },
+    {
+      "TitleSource": "MapReduce Case Study • Wrap-up \u0026 Next Steps",
+      "TitleTranslated": "MapReduce案例研究 • 总结与后续安排",
+      "SummaryMD": "详细剖析Google的MapReduce框架：处理TB级数据的动机、简单的map/reduce编程模型、实现架构（工作节点、主节点、GFS文件系统）、网络优化技巧（数据本地性、洗牌阶段）以及2004年至今的演进历程。 • 课程总结，提醒下周实验截止日期，并预告学生将动手实现简化版MapReduce框架。"
+    }
+  ],
+  "static_metrics": {
+    "raw_chapter_count": 5,
+    "final_chapter_count": 4,
+    "mean_dur_ms": 1192867,
+    "min_dur_ms": 462380,
+    "max_dur_ms": 1876925,
+    "merge_actions": 1,
+    "split_actions": 0,
+    "boundary_jitter_ms": 63448
+  },
+  "glossary_entry_count": 34,
+  "speaker_hint_count": 1,
+  "reference_card_chars": 800
+}

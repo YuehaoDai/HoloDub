@@ -1,0 +1,32 @@
+model: qwen-plus-latest
+best_run: 1 (validation_ok=true) chapters=4
+static metrics: mean=19.9min min=13.7min max=31.8min merge=0 split=0
+
+ch01 [0:00 — 17:07] 17.1min segs[0..38]
+  src: Course Introduction & What Is a Distributed System?
+  tgt: 课程导论与分布式系统定义
+
+  first_seg: All right, let's get started. This is 6824, distributed systems.
+  last_seg:  And have a lot of concurrency. And communication. Sort of strange. Difficult to debug. Errors can crop up. So you really…
+
+ch02 [17:07 — 33:59] 16.9min segs[39..77]
+  src: Why Build Distributed Systems? Core Challenges
+  tgt: 为何构建分布式系统？核心挑战
+
+  first_seg: So the question is. What is. How does. How do the different factors. These things factor in the grade. I forget. But it'…
+  last_seg:  usually what the way available systems are specced is that they're available until some number of failures have happened…
+
+ch03 [33:59 — 47:42] 13.7min segs[78..105]
+  src: Cross-Cutting Themes: Performance, Fault Tolerance, Consistency
+  tgt: 三大横切主题：性能、容错性、一致性
+
+  first_seg: this is what we'd love to obtain. The biggest hammer, what we'll see a number of, a pretty big hammer, you know, is that…
+  last_seg:  This is 10 or 20 or 30 milliseconds on machines that, after all, will execute like a billion instructions per second. So…
+
+ch04 [47:42 — 79:31] 31.8min segs[106..174]
+  src: Case Study: MapReduce Architecture & Design Trade-offs
+  tgt: 案例研究：MapReduce架构与设计权衡
+
+  first_seg: All right. So, that's a lightning sort of preview of the technical ideas in the course.
+  last_seg:  We have a lab due at the end of next week in which you'll write your own somewhat simplified MapReduce. So have fun with…
+

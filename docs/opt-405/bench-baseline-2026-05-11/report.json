@@ -1,0 +1,2786 @@
+{
+  "meta": {
+    "generated_at": "2026-05-11T04:21:59.275997127Z",
+    "judge_model": "kimi-k2-thinking",
+    "runs_per_candidate": 3,
+    "judge_runs_per_candidate": 1
+  },
+  "episode": {
+    "id": 142,
+    "name": "opt405-lec1-v2",
+    "source_language": "en",
+    "target_language": "zh-CN",
+    "segment_count": 175,
+    "total_duration_ms": 4771470,
+    "total_duration_min": 79.5245
+  },
+  "leaderboard": [
+    {
+      "rank": 1,
+      "model": "kimi-k2.5",
+      "judge_total": 4.7555555555555555,
+      "boundary_avg": 4.6,
+      "title_avg": 5,
+      "topic_avg": 4.666666666666667,
+      "avg_chapters": 6,
+      "mean_dur_min": 13.254083333333334,
+      "validation_pass_rate": 1,
+      "avg_wall_time_ms": 37525
+    },
+    {
+      "rank": 2,
+      "model": "qwen-max-latest",
+      "judge_total": 4.055555555555555,
+      "boundary_avg": 3.6666666666666665,
+      "title_avg": 4,
+      "topic_avg": 4.5,
+      "avg_chapters": 4.666666666666667,
+      "mean_dur_min": 17.672105555555554,
+      "validation_pass_rate": 1,
+      "avg_wall_time_ms": 34259
+    },
+    {
+      "rank": 3,
+      "model": "qwen3-235b-a22b-thinking-2507",
+      "judge_total": 3.444444444444444,
+      "boundary_avg": 3,
+      "title_avg": 4.333333333333333,
+      "topic_avg": 3,
+      "avg_chapters": 4.333333333333333,
+      "mean_dur_min": 19.43932222222222,
+      "validation_pass_rate": 1,
+      "avg_wall_time_ms": 106168
+    },
+    {
+      "rank": 4,
+      "model": "kimi-k2-thinking",
+      "judge_total": 3.3333333333333335,
+      "boundary_avg": 3,
+      "title_avg": 4,
+      "topic_avg": 3,
+      "avg_chapters": 1.3333333333333333,
+      "mean_dur_min": 6.6270388888888885,
+      "validation_pass_rate": 0.3333333333333333,
+      "avg_wall_time_ms": 261511
+    },
+    {
+      "rank": 5,
+      "model": "qwen-plus-latest",
+      "judge_total": 3.0833333333333335,
+      "boundary_avg": 3,
+      "title_avg": 2.75,
+      "topic_avg": 3.5,
+      "avg_chapters": 4,
+      "mean_dur_min": 19.881116666666667,
+      "validation_pass_rate": 1,
+      "avg_wall_time_ms": 29752
+    },
+    {
+      "rank": 6,
+      "model": "deepseek-v3",
+      "judge_total": 2.4444444444444446,
+      "boundary_avg": 3,
+      "title_avg": 2,
+      "topic_avg": 2.3333333333333335,
+      "avg_chapters": 6.666666666666667,
+      "mean_dur_min": 12.665011111111111,
+      "validation_pass_rate": 1,
+      "avg_wall_time_ms": 25387
+    }
+  ],
+  "models": {
+    "deepseek-v3": {
+      "runs": [
+        {
+          "model": "deepseek-v3",
+          "run_index": 1,
+          "wall_time_ms": 24574,
+          "raw_chapters": [
+            {
+              "start_segment_idx": 0,
+              "end_segment_idx": 16,
+              "title_source": "Introduction to Distributed Systems",
+              "title_translated": "分布式系统简介",
+              "summary_md": "介绍分布式系统的定义、核心概念及其在现代计算基础设施中的重要性。"
+            },
+            {
+              "start_segment_idx": 17,
+              "end_segment_idx": 38,
+              "title_source": "Reasons for Building Distributed Systems",
+              "title_translated": "构建分布式系统的原因",
+              "summary_md": "探讨构建分布式系统的动机，包括性能、容错和物理分布需求。"
+            },
+            {
+              "start_segment_idx": 39,
+              "end_segment_idx": 56,
+              "title_source": "Challenges in Distributed Systems",
+              "title_translated": "分布式系统的挑战",
+              "summary_md": "分析分布式系统中的并发、部分故障和性能优化等核心挑战。"
+            },
+            {
+              "start_segment_idx": 57,
+              "end_segment_idx": 82,
+              "title_source": "Course Structure and Logistics",
+              "title_translated": "课程结构与安排",
+              "summary_md": "介绍课程的组织结构，包括讲座、实验、考试和项目要求。"
+            },
+            {
+              "start_segment_idx": 83,
+              "end_segment_idx": 107,
+              "title_source": "Technical Topics in Distributed Systems",
+              "title_translated": "分布式系统的技术主题",
+              "summary_md": "深入讨论分布式系统中的实现工具、性能和容错等关键技术。"
+            },
+            {
+              "start_segment_idx": 108,
+              "end_segment_idx": 174,
+              "title_source": "Case Study: MapReduce",
+              "title_translated": "案例研究：MapReduce",
+              "summary_md": "详细分析MapReduce框架的设计、工作原理及其在分布式计算中的应用。"
+            }
+          ],
+          "validation_ok": true,
+          "final_ranges": [
+            {
+              "Ordinal": 1,
+              "StartMs": 0,
+              "EndMs": 462380,
+              "StartSegmentIdx": 0,
+              "EndSegmentIdx": 16,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            },
+            {
+              "Ordinal": 2,
+              "StartMs": 462380,
+              "EndMs": 1027025,
+              "StartSegmentIdx": 17,
+              "EndSegmentIdx": 38,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            },
+            {
+              "Ordinal": 3,
+              "StartMs": 1027025,
+              "EndMs": 1516060,
+              "StartSegmentIdx": 39,
+              "EndSegmentIdx": 56,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            },
+            {
+              "Ordinal": 4,
+              "StartMs": 1516060,
+              "EndMs": 2233680,
+              "StartSegmentIdx": 57,
+              "EndSegmentIdx": 82,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            },
+            {
+              "Ordinal": 5,
+              "StartMs": 2233680,
+              "EndMs": 2903950,
+              "StartSegmentIdx": 83,
+              "EndSegmentIdx": 107,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            },
+            {
+              "Ordinal": 6,
+              "StartMs": 2903950,
+              "EndMs": 4771470,
+              "StartSegmentIdx": 108,
+              "EndSegmentIdx": 174,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            }
+          ],
+          "final_titles": [
+            {
+              "TitleSource": "Introduction to Distributed Systems",
+              "TitleTranslated": "分布式系统简介",
+              "SummaryMD": "介绍分布式系统的定义、核心概念及其在现代计算基础设施中的重要性。"
+            },
+            {
+              "TitleSource": "Reasons for Building Distributed Systems",
+              "TitleTranslated": "构建分布式系统的原因",
+              "SummaryMD": "探讨构建分布式系统的动机，包括性能、容错和物理分布需求。"
+            },
+            {
+              "TitleSource": "Challenges in Distributed Systems",
+              "TitleTranslated": "分布式系统的挑战",
+              "SummaryMD": "分析分布式系统中的并发、部分故障和性能优化等核心挑战。"
+            },
+            {
+              "TitleSource": "Course Structure and Logistics",
+              "TitleTranslated": "课程结构与安排",
+              "SummaryMD": "介绍课程的组织结构，包括讲座、实验、考试和项目要求。"
+            },
+            {
+              "TitleSource": "Technical Topics in Distributed Systems",
+              "TitleTranslated": "分布式系统的技术主题",
+              "SummaryMD": "深入讨论分布式系统中的实现工具、性能和容错等关键技术。"
+            },
+            {
+              "TitleSource": "Case Study: MapReduce",
+              "TitleTranslated": "案例研究：MapReduce",
+              "SummaryMD": "详细分析MapReduce框架的设计、工作原理及其在分布式计算中的应用。"
+            }
+          ],
+          "static_metrics": {
+            "raw_chapter_count": 6,
+            "final_chapter_count": 6,
+            "mean_dur_ms": 795245,
+            "min_dur_ms": 462380,
+            "max_dur_ms": 1867520,
+            "merge_actions": 0,
+            "split_actions": 0,
+            "boundary_jitter_ms": 34575
+          },
+          "glossary_entry_count": 26,
+          "speaker_hint_count": 1,
+          "reference_card_chars": 294
+        },
+        {
+          "model": "deepseek-v3",
+          "run_index": 2,
+          "wall_time_ms": 22455,
+          "raw_chapters": [
+            {
+              "start_segment_idx": 0,
+              "end_segment_idx": 16,
+              "title_source": "Introduction to Distributed Systems",
+              "title_translated": "分布式系统简介",
+              "summary_md": "介绍分布式系统的定义、核心概念及其重要性，包括性能、容错和自然分布的原因。"
+            },
+            {
+              "start_segment_idx": 17,
+              "end_segment_idx": 38,
+              "title_source": "Course Structure and Logistics",
+              "title_translated": "课程结构与安排",
+              "summary_md": "概述课程结构，包括讲座、实验、考试和项目，以及学习资源的获取方式。"
+            },
+            {
+              "start_segment_idx": 39,
+              "end_segment_idx": 82,
+              "title_source": "Technical Challenges in Distributed Systems",
+              "title_translated": "分布式系统的技术挑战",
+              "summary_md": "探讨分布式系统中的性能、容错和一致性等核心挑战及其解决方案。"
+            },
+            {
+              "start_segment_idx": 83,
+              "end_segment_idx": 107,
+              "title_source": "Case Study: MapReduce",
+              "title_translated": "案例研究：MapReduce",
+              "summary_md": "深入分析MapReduce的设计、工作原理及其在分布式计算中的应用。"
+            },
+            {
+              "start_segment_idx": 108,
+              "end_segment_idx": 174,
+              "title_source": "MapReduce Implementation and Optimization",
+              "title_translated": "MapReduce的实现与优化",
+              "summary_md": "讨论MapReduce的实现细节、网络优化及其在现代数据中心中的应用。"
+            }
+          ],
+          "validation_ok": true,
+          "final_ranges": [
+            {
+              "Ordinal": 1,
+              "StartMs": 0,
+              "EndMs": 462380,
+              "StartSegmentIdx": 0,
+              "EndSegmentIdx": 16,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            },
+            {
+              "Ordinal": 2,
+              "StartMs": 462380,
+              "EndMs": 1027025,
+              "StartSegmentIdx": 17,
+              "EndSegmentIdx": 38,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            },
+            {
+              "Ordinal": 3,
+              "StartMs": 1027025,
+              "EndMs": 2233680,
+              "StartSegmentIdx": 39,
+              "EndSegmentIdx": 82,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            },
+            {
+              "Ordinal": 4,
+              "StartMs": 2233680,
+              "EndMs": 2903950,
+              "StartSegmentIdx": 83,
+              "EndSegmentIdx": 107,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            },
+            {
+              "Ordinal": 5,
+              "StartMs": 2903950,
+              "EndMs": 4771470,
+              "StartSegmentIdx": 108,
+              "EndSegmentIdx": 174,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            }
+          ],
+          "final_titles": [
+            {
+              "TitleSource": "Introduction to Distributed Systems",
+              "TitleTranslated": "分布式系统简介",
+              "SummaryMD": "介绍分布式系统的定义、核心概念及其重要性，包括性能、容错和自然分布的原因。"
+            },
+            {
+              "TitleSource": "Course Structure and Logistics",
+              "TitleTranslated": "课程结构与安排",
+              "SummaryMD": "概述课程结构，包括讲座、实验、考试和项目，以及学习资源的获取方式。"
+            },
+            {
+              "TitleSource": "Technical Challenges in Distributed Systems",
+              "TitleTranslated": "分布式系统的技术挑战",
+              "SummaryMD": "探讨分布式系统中的性能、容错和一致性等核心挑战及其解决方案。"
+            },
+            {
+              "TitleSource": "Case Study: MapReduce",
+              "TitleTranslated": "案例研究：MapReduce",
+              "SummaryMD": "深入分析MapReduce的设计、工作原理及其在分布式计算中的应用。"
+            },
+            {
+              "TitleSource": "MapReduce Implementation and Optimization",
+              "TitleTranslated": "MapReduce的实现与优化",
+              "SummaryMD": "讨论MapReduce的实现细节、网络优化及其在现代数据中心中的应用。"
+            }
+          ],
+          "static_metrics": {
+            "raw_chapter_count": 5,
+            "final_chapter_count": 5,
+            "mean_dur_ms": 954294,
+            "min_dur_ms": 462380,
+            "max_dur_ms": 1867520,
+            "merge_actions": 0,
+            "split_actions": 0,
+            "boundary_jitter_ms": 39841
+          },
+          "glossary_entry_count": 21,
+          "speaker_hint_count": 1,
+          "reference_card_chars": 344
+        },
+        {
+          "model": "deepseek-v3",
+          "run_index": 3,
+          "wall_time_ms": 29134,
+          "raw_chapters": [
+            {
+              "start_segment_idx": 0,
+              "end_segment_idx": 8,
+              "title_source": "Introduction to Distributed Systems",
+              "title_translated": "分布式系统简介",
+              "summary_md": "介绍分布式系统的定义、核心概念及其重要性，包括存储、计算和通信的基础设施。"
+            },
+            {
+              "start_segment_idx": 9,
+              "end_segment_idx": 18,
+              "title_source": "Course Structure and Logistics",
+              "title_translated": "课程结构与安排",
+              "summary_md": "概述课程结构，包括讲座、实验、考试和项目，以及课程网站和助教信息。"
+            },
+            {
+              "start_segment_idx": 19,
+              "end_segment_idx": 37,
+              "title_source": "Technical Challenges in Distributed Systems",
+              "title_translated": "分布式系统的技术挑战",
+              "summary_md": "探讨分布式系统中的性能、容错和一致性等核心挑战。"
+            },
+            {
+              "start_segment_idx": 38,
+              "end_segment_idx": 58,
+              "title_source": "Case Study: MapReduce",
+              "title_translated": "案例研究：MapReduce",
+              "summary_md": "深入分析MapReduce的设计、工作原理及其在分布式计算中的应用。"
+            },
+            {
+              "start_segment_idx": 59,
+              "end_segment_idx": 79,
+              "title_source": "MapReduce Implementation Details",
+              "title_translated": "MapReduce实现细节",
+              "summary_md": "讨论MapReduce的实现细节，包括数据分片、网络通信和性能优化。"
+            },
+            {
+              "start_segment_idx": 80,
+              "end_segment_idx": 100,
+              "title_source": "Fault Tolerance and Replication",
+              "title_translated": "容错与复制",
+              "summary_md": "讲解容错机制和复制技术，以及它们在分布式系统中的作用。"
+            },
+            {
+              "start_segment_idx": 101,
+              "end_segment_idx": 120,
+              "title_source": "Consistency Models",
+              "title_translated": "一致性模型",
+              "summary_md": "介绍强一致性和弱一致性模型，以及它们在分布式系统中的权衡。"
+            },
+            {
+              "start_segment_idx": 121,
+              "end_segment_idx": 140,
+              "title_source": "Network and Performance Considerations",
+              "title_translated": "网络与性能考量",
+              "summary_md": "分析网络通信对分布式系统性能的影响，以及优化策略。"
+            },
+            {
+              "start_segment_idx": 141,
+              "end_segment_idx": 160,
+              "title_source": "Modern Data Center Networks",
+              "title_translated": "现代数据中心网络",
+              "summary_md": "探讨现代数据中心网络的架构及其对分布式系统性能的提升。"
+            },
+            {
+              "start_segment_idx": 161,
+              "end_segment_idx": 174,
+              "title_source": "Conclusion and Lab Assignment",
+              "title_translated": "总结与实验任务",
+              "summary_md": "总结课程内容，并布置MapReduce实验任务。"
+            }
+          ],
+          "validation_ok": true,
+          "final_ranges": [
+            {
+              "Ordinal": 1,
+              "StartMs": 0,
+              "EndMs": 511605,
+              "StartSegmentIdx": 0,
+              "EndSegmentIdx": 18,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            },
+            {
+              "Ordinal": 2,
+              "StartMs": 511605,
+              "EndMs": 1027025,
+              "StartSegmentIdx": 19,
+              "EndSegmentIdx": 37,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            },
+            {
+              "Ordinal": 3,
+              "StartMs": 1027025,
+              "EndMs": 1516060,
+              "StartSegmentIdx": 38,
+              "EndSegmentIdx": 58,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            },
+            {
+              "Ordinal": 4,
+              "StartMs": 1516060,
+              "EndMs": 2223605,
+              "StartSegmentIdx": 59,
+              "EndSegmentIdx": 79,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            },
+            {
+              "Ordinal": 5,
+              "StartMs": 2223605,
+              "EndMs": 2714000,
+              "StartSegmentIdx": 80,
+              "EndSegmentIdx": 100,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            },
+            {
+              "Ordinal": 6,
+              "StartMs": 2714000,
+              "EndMs": 3293955,
+              "StartSegmentIdx": 101,
+              "EndSegmentIdx": 120,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            },
+            {
+              "Ordinal": 7,
+              "StartMs": 3293955,
+              "EndMs": 3765430,
+              "StartSegmentIdx": 121,
+              "EndSegmentIdx": 140,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            },
+            {
+              "Ordinal": 8,
+              "StartMs": 3765430,
+              "EndMs": 4299755,
+              "StartSegmentIdx": 141,
+              "EndSegmentIdx": 160,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            },
+            {
+              "Ordinal": 9,
+              "StartMs": 4299755,
+              "EndMs": 4771470,
+              "StartSegmentIdx": 161,
+              "EndSegmentIdx": 174,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            }
+          ],
+          "final_titles": [
+            {
+              "TitleSource": "Introduction to Distributed Systems • Course Structure and Logistics",
+              "TitleTranslated": "分布式系统简介 • 课程结构与安排",
+              "SummaryMD": "介绍分布式系统的定义、核心概念及其重要性，包括存储、计算和通信的基础设施。 • 概述课程结构，包括讲座、实验、考试和项目，以及课程网站和助教信息。"
+            },
+            {
+              "TitleSource": "Technical Challenges in Distributed Systems",
+              "TitleTranslated": "分布式系统的技术挑战",
+              "SummaryMD": "探讨分布式系统中的性能、容错和一致性等核心挑战。"
+            },
+            {
+              "TitleSource": "Case Study: MapReduce",
+              "TitleTranslated": "案例研究：MapReduce",
+              "SummaryMD": "深入分析MapReduce的设计、工作原理及其在分布式计算中的应用。"
+            },
+            {
+              "TitleSource": "MapReduce Implementation Details",
+              "TitleTranslated": "MapReduce实现细节",
+              "SummaryMD": "讨论MapReduce的实现细节，包括数据分片、网络通信和性能优化。"
+            },
+            {
+              "TitleSource": "Fault Tolerance and Replication",
+              "TitleTranslated": "容错与复制",
+              "SummaryMD": "讲解容错机制和复制技术，以及它们在分布式系统中的作用。"
+            },
+            {
+              "TitleSource": "Consistency Models",
+              "TitleTranslated": "一致性模型",
+              "SummaryMD": "介绍强一致性和弱一致性模型，以及它们在分布式系统中的权衡。"
+            },
+            {
+              "TitleSource": "Network and Performance Considerations",
+              "TitleTranslated": "网络与性能考量",
+              "SummaryMD": "分析网络通信对分布式系统性能的影响，以及优化策略。"
+            },
+            {
+              "TitleSource": "Modern Data Center Networks",
+              "TitleTranslated": "现代数据中心网络",
+              "SummaryMD": "探讨现代数据中心网络的架构及其对分布式系统性能的提升。"
+            },
+            {
+              "TitleSource": "Conclusion and Lab Assignment",
+              "TitleTranslated": "总结与实验任务",
+              "SummaryMD": "总结课程内容，并布置MapReduce实验任务。"
+            }
+          ],
+          "static_metrics": {
+            "raw_chapter_count": 10,
+            "final_chapter_count": 9,
+            "mean_dur_ms": 530163,
+            "min_dur_ms": 471475,
+            "max_dur_ms": 707545,
+            "merge_actions": 1,
+            "split_actions": 0,
+            "boundary_jitter_ms": 43602
+          },
+          "glossary_entry_count": 19,
+          "speaker_hint_count": 1,
+          "reference_card_chars": 344
+        }
+      ],
+      "judge": {
+        "candidate_model": "deepseek-v3",
+        "judge_model": "kimi-k2-thinking",
+        "runs": 1,
+        "wall_time_ms": 275374,
+        "boundary_scores": [
+          {
+            "boundary_idx": 0,
+            "boundary_coherence": 1,
+            "rationale": "Cut breaks flow; segment 17 continues research thread from 16 and reasons were already introduced in chapter 0."
+          },
+          {
+            "boundary_idx": 1,
+            "boundary_coherence": 1,
+            "rationale": "Cut is in middle of logistics Q\u0026A; technical content doesn't start until segment 41, making boundary artificial."
+          },
+          {
+            "boundary_idx": 2,
+            "boundary_coherence": 4,
+            "rationale": "Clear topic shift from scalability to fault tolerance, though lacks explicit verbal transition."
+          },
+          {
+            "boundary_idx": 3,
+            "boundary_coherence": 4,
+            "rationale": "Clear shift from fault tolerance to consistency, signaled by 'final topic... is consistency'."
+          },
+          {
+            "boundary_idx": 4,
+            "boundary_coherence": 5,
+            "rationale": "Explicit verbal pivot: 'I want to switch to MapReduce as a sort of detailed case study'."
+          }
+        ],
+        "chapter_scores": [
+          {
+            "chapter_idx": 0,
+            "title_quality": 3,
+            "topic_completeness": 1,
+            "rationale": "Title is accurate but too broad; chapter mixes introduction with reasons and challenges that belong elsewhere."
+          },
+          {
+            "chapter_idx": 1,
+            "title_quality": 0,
+            "topic_completeness": 1,
+            "rationale": "Title is completely wrong (claims reasons but covers course logistics); content is coherent but mismatched."
+          },
+          {
+            "chapter_idx": 2,
+            "title_quality": 1,
+            "topic_completeness": 1,
+            "rationale": "Title misleading (says challenges but covers infrastructure, implementation, performance); mixes leftover logistics with multiple technical topics."
+          },
+          {
+            "chapter_idx": 3,
+            "title_quality": 0,
+            "topic_completeness": 2,
+            "rationale": "Title is completely wrong (says logistics but is about fault tolerance); fault tolerance content is coherent but segments 39-40 don't belong here."
+          },
+          {
+            "chapter_idx": 4,
+            "title_quality": 3,
+            "topic_completeness": 4,
+            "rationale": "Title is accurate but overly generic for a chapter focused specifically on consistency; maintains coherent theme throughout."
+          },
+          {
+            "chapter_idx": 5,
+            "title_quality": 5,
+            "topic_completeness": 5,
+            "rationale": "Perfectly specific title and coherent MapReduce case study from introduction to implementation details."
+          }
+        ],
+        "boundary_avg": 3,
+        "title_avg": 2,
+        "topic_avg": 2.3333333333333335,
+        "total": 2.4444444444444446
+      },
+      "chapter_counts_per_run": [
+        6,
+        5,
+        9
+      ],
+      "stability_note": "VARIABLE: chapter counts ranged 5..9 across 3 runs",
+      "worst_boundaries": [
+        {
+          "boundary_idx": 0,
+          "boundary_coherence": 1,
+          "rationale": "Cut breaks flow; segment 17 continues research thread from 16 and reasons were already introduced in chapter 0."
+        },
+        {
+          "boundary_idx": 1,
+          "boundary_coherence": 1,
+          "rationale": "Cut is in middle of logistics Q\u0026A; technical content doesn't start until segment 41, making boundary artificial."
+        },
+        {
+          "boundary_idx": 2,
+          "boundary_coherence": 4,
+          "rationale": "Clear topic shift from scalability to fault tolerance, though lacks explicit verbal transition."
+        }
+      ]
+    },
+    "kimi-k2-thinking": {
+      "runs": [
+        {
+          "model": "kimi-k2-thinking",
+          "run_index": 1,
+          "wall_time_ms": 364169,
+          "error": "glossary tool call: llm.chat.completions: Post \"https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions\": context deadline exceeded (Client.Timeout exceeded while awaiting headers)",
+          "raw_chapters": null,
+          "validation_ok": false,
+          "static_metrics": {
+            "raw_chapter_count": 0,
+            "final_chapter_count": 0,
+            "mean_dur_ms": 0,
+            "min_dur_ms": 0,
+            "max_dur_ms": 0,
+            "merge_actions": 0,
+            "split_actions": 0,
+            "boundary_jitter_ms": 0
+          },
+          "glossary_entry_count": 0,
+          "speaker_hint_count": 0,
+          "reference_card_chars": 0
+        },
+        {
+          "model": "kimi-k2-thinking",
+          "run_index": 2,
+          "wall_time_ms": 56369,
+          "raw_chapters": [
+            {
+              "start_segment_idx": 0,
+              "end_segment_idx": 16,
+              "title_source": "What Are Distributed Systems?",
+              "title_translated": "什么是分布式系统？",
+              "summary_md": "介绍分布式系统的定义（通过网络协作的计算机）、实例（大型网站存储、MapReduce、P2P文件共享）以及构建动机：高性能/并行性、容错、自然分布性和安全性。"
+            },
+            {
+              "start_segment_idx": 17,
+              "end_segment_idx": 37,
+              "title_source": "Course Structure \u0026 Logistics",
+              "title_translated": "课程结构与安排",
+              "summary_md": "阐述分布式系统在现代计算中的重要性，介绍课程团队（Robert Morris教授和四位助教），详细说明课程组成部分：讲座、研究论文、两次考试、四个编程实验（MapReduce、Raft、容错键值存储、分片）以及可选期末项目。"
+            },
+            {
+              "start_segment_idx": 38,
+              "end_segment_idx": 107,
+              "title_source": "Technical Foundations: Challenges \u0026 Concepts",
+              "title_translated": "技术基础：挑战与核心概念",
+              "summary_md": "深入探讨分布式系统的核心挑战：并发编程复杂性、部分故障模式、性能瓶颈。系统讲解三大关键概念：可扩展性（线性加速比）、容错机制（可用性与可恢复性、复制技术）以及一致性模型（强一致性与弱一致性的权衡）。"
+            },
+            {
+              "start_segment_idx": 108,
+              "end_segment_idx": 173,
+              "title_source": "MapReduce Case Study",
+              "title_translated": "MapReduce案例研究",
+              "summary_md": "详细剖析Google的MapReduce框架：处理TB级数据的动机、简单的map/reduce编程模型、实现架构（工作节点、主节点、GFS文件系统）、网络优化技巧（数据本地性、洗牌阶段）以及2004年至今的演进历程。"
+            },
+            {
+              "start_segment_idx": 174,
+              "end_segment_idx": 174,
+              "title_source": "Wrap-up \u0026 Next Steps",
+              "title_translated": "总结与后续安排",
+              "summary_md": "课程总结，提醒下周实验截止日期，并预告学生将动手实现简化版MapReduce框架。"
+            }
+          ],
+          "validation_ok": true,
+          "final_ranges": [
+            {
+              "Ordinal": 1,
+              "StartMs": 0,
+              "EndMs": 462380,
+              "StartSegmentIdx": 0,
+              "EndSegmentIdx": 16,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            },
+            {
+              "Ordinal": 2,
+              "StartMs": 462380,
+              "EndMs": 1027025,
+              "StartSegmentIdx": 17,
+              "EndSegmentIdx": 37,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            },
+            {
+              "Ordinal": 3,
+              "StartMs": 1027025,
+              "EndMs": 2903950,
+              "StartSegmentIdx": 38,
+              "EndSegmentIdx": 107,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            },
+            {
+              "Ordinal": 4,
+              "StartMs": 2903950,
+              "EndMs": 4771470,
+              "StartSegmentIdx": 108,
+              "EndSegmentIdx": 174,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            }
+          ],
+          "final_titles": [
+            {
+              "TitleSource": "What Are Distributed Systems?",
+              "TitleTranslated": "什么是分布式系统？",
+              "SummaryMD": "介绍分布式系统的定义（通过网络协作的计算机）、实例（大型网站存储、MapReduce、P2P文件共享）以及构建动机：高性能/并行性、容错、自然分布性和安全性。"
+            },
+            {
+              "TitleSource": "Course Structure \u0026 Logistics",
+              "TitleTranslated": "课程结构与安排",
+              "SummaryMD": "阐述分布式系统在现代计算中的重要性，介绍课程团队（Robert Morris教授和四位助教），详细说明课程组成部分：讲座、研究论文、两次考试、四个编程实验（MapReduce、Raft、容错键值存储、分片）以及可选期末项目。"
+            },
+            {
+              "TitleSource": "Technical Foundations: Challenges \u0026 Concepts",
+              "TitleTranslated": "技术基础：挑战与核心概念",
+              "SummaryMD": "深入探讨分布式系统的核心挑战：并发编程复杂性、部分故障模式、性能瓶颈。系统讲解三大关键概念：可扩展性（线性加速比）、容错机制（可用性与可恢复性、复制技术）以及一致性模型（强一致性与弱一致性的权衡）。"
+            },
+            {
+              "TitleSource": "MapReduce Case Study • Wrap-up \u0026 Next Steps",
+              "TitleTranslated": "MapReduce案例研究 • 总结与后续安排",
+              "SummaryMD": "详细剖析Google的MapReduce框架：处理TB级数据的动机、简单的map/reduce编程模型、实现架构（工作节点、主节点、GFS文件系统）、网络优化技巧（数据本地性、洗牌阶段）以及2004年至今的演进历程。 • 课程总结，提醒下周实验截止日期，并预告学生将动手实现简化版MapReduce框架。"
+            }
+          ],
+          "static_metrics": {
+            "raw_chapter_count": 5,
+            "final_chapter_count": 4,
+            "mean_dur_ms": 1192867,
+            "min_dur_ms": 462380,
+            "max_dur_ms": 1876925,
+            "merge_actions": 1,
+            "split_actions": 0,
+            "boundary_jitter_ms": 63448
+          },
+          "glossary_entry_count": 34,
+          "speaker_hint_count": 1,
+          "reference_card_chars": 800
+        },
+        {
+          "model": "kimi-k2-thinking",
+          "run_index": 3,
+          "wall_time_ms": 363995,
+          "error": "glossary tool call: llm.chat.completions: Post \"https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions\": context deadline exceeded (Client.Timeout exceeded while awaiting headers)",
+          "raw_chapters": null,
+          "validation_ok": false,
+          "static_metrics": {
+            "raw_chapter_count": 0,
+            "final_chapter_count": 0,
+            "mean_dur_ms": 0,
+            "min_dur_ms": 0,
+            "max_dur_ms": 0,
+            "merge_actions": 0,
+            "split_actions": 0,
+            "boundary_jitter_ms": 0
+          },
+          "glossary_entry_count": 0,
+          "speaker_hint_count": 0,
+          "reference_card_chars": 0
+        }
+      ],
+      "judge": {
+        "candidate_model": "kimi-k2-thinking",
+        "judge_model": "kimi-k2-thinking",
+        "runs": 1,
+        "wall_time_ms": 262821,
+        "boundary_scores": [
+          {
+            "boundary_idx": 0,
+            "boundary_coherence": 3,
+            "rationale": "Transition from distributed systems importance to course logistics is reasonable but not explicitly signaled."
+          },
+          {
+            "boundary_idx": 1,
+            "boundary_coherence": 1,
+            "rationale": "Cut occurs mid-logistics discussion; technical content doesn't start until segment 43, breaking theme continuity."
+          },
+          {
+            "boundary_idx": 2,
+            "boundary_coherence": 5,
+            "rationale": "Speaker explicitly signals pivot: 'Any questions about this before I start talking about MapReduce?'"
+          }
+        ],
+        "chapter_scores": [
+          {
+            "chapter_idx": 0,
+            "title_quality": 5,
+            "topic_completeness": 5,
+            "rationale": "Title accurately summarizes coherent introduction to distributed systems; no theme mixing or leakage."
+          },
+          {
+            "chapter_idx": 1,
+            "title_quality": 5,
+            "topic_completeness": 1,
+            "rationale": "Title fits content but chapter cuts off logistics theme prematurely; conclusion appears in next chapter."
+          },
+          {
+            "chapter_idx": 2,
+            "title_quality": 1,
+            "topic_completeness": 1,
+            "rationale": "Title mismatches opening logistics content (seg 38-42) and mixes two distinct themes."
+          },
+          {
+            "chapter_idx": 3,
+            "title_quality": 5,
+            "topic_completeness": 5,
+            "rationale": "Title accurately captures MapReduce case study; chapter presents single coherent theme throughout."
+          }
+        ],
+        "boundary_avg": 3,
+        "title_avg": 4,
+        "topic_avg": 3,
+        "total": 3.3333333333333335
+      },
+      "chapter_counts_per_run": [
+        0,
+        4,
+        0
+      ],
+      "stability_note": "VARIABLE: chapter counts ranged 0..4 across 3 runs",
+      "worst_boundaries": [
+        {
+          "boundary_idx": 1,
+          "boundary_coherence": 1,
+          "rationale": "Cut occurs mid-logistics discussion; technical content doesn't start until segment 43, breaking theme continuity."
+        },
+        {
+          "boundary_idx": 0,
+          "boundary_coherence": 3,
+          "rationale": "Transition from distributed systems importance to course logistics is reasonable but not explicitly signaled."
+        },
+        {
+          "boundary_idx": 2,
+          "boundary_coherence": 5,
+          "rationale": "Speaker explicitly signals pivot: 'Any questions about this before I start talking about MapReduce?'"
+        }
+      ]
+    },
+    "kimi-k2.5": {
+      "runs": [
+        {
+          "model": "kimi-k2.5",
+          "run_index": 1,
+          "wall_time_ms": 40341,
+          "raw_chapters": [
+            {
+              "start_segment_idx": 0,
+              "end_segment_idx": 17,
+              "title_source": "Introduction to Distributed Systems",
+              "title_translated": "分布式系统导论",
+              "summary_md": "本章节介绍分布式系统的核心定义、典型应用场景（如大规模网站存储、MapReduce计算、P2P文件共享），以及人们构建分布式系统的四大动机：性能并行化、容错能力、物理分布需求和安全隔离。同时阐述了分布式系统面临的主要挑战：并发编程复杂性、部分故障模式以及性能扩展的困难。"
+            },
+            {
+              "start_segment_idx": 18,
+              "end_segment_idx": 38,
+              "title_source": "Course Logistics \u0026 Lab Overview",
+              "title_translated": "课程安排与实验介绍",
+              "summary_md": "本章节详细介绍课程结构，包括课程网站、Piazza讨论区、助教安排；课程组件涵盖讲座、论文阅读、两次考试、四个编程实验（MapReduce、Raft、容错KV服务器、分片KV服务）以及可选期末项目。特别强调实验调试的复杂性和尽早开始的重要性。"
+            },
+            {
+              "start_segment_idx": 39,
+              "end_segment_idx": 66,
+              "title_source": "Infrastructure Abstractions \u0026 Scalability",
+              "title_translated": "基础设施抽象与可扩展性",
+              "summary_md": "本章节讨论分布式系统作为应用基础设施的三大类型（存储、通信、计算），重点阐述抽象层如何隐藏分布式复杂性。深入讲解可扩展性（scalable speedup）概念：通过增加机器获得线性性能提升，以及实际系统中常见的瓶颈转移问题（如从Web服务器到数据库）。"
+            },
+            {
+              "start_segment_idx": 67,
+              "end_segment_idx": 82,
+              "title_source": "Fault Tolerance: Concepts \u0026 Tools",
+              "title_translated": "容错：概念与工具",
+              "summary_md": "本章节阐述大规模分布式系统中容错的必要性（千台机器每天约3次故障），介绍两种容错目标：可用性（故障时继续服务）和可恢复性（修复后正确恢复）。讲解两大核心技术：非易失性存储（持久化状态）和复制（管理副本一致性），预告实验二和三将深入Raft复制算法。"
+            },
+            {
+              "start_segment_idx": 83,
+              "end_segment_idx": 106,
+              "title_source": "Consistency Models \u0026 Trade-offs",
+              "title_translated": "一致性模型与权衡",
+              "summary_md": "本章节以键值服务为例，深入讲解一致性概念。分析强一致性（读取最新写入）与弱一致性的区别，阐述强一致性需要昂贵通信（尤其跨数据中心副本），而弱一致性通过允许读取旧数据换取高性能。讨论一致性-性能-容错的三角权衡。"
+            },
+            {
+              "start_segment_idx": 107,
+              "end_segment_idx": 174,
+              "title_source": "MapReduce: Design \u0026 Implementation",
+              "title_translated": "MapReduce：设计与实现",
+              "summary_md": "本章节详细讲解Google MapReduce框架（2004年论文）。涵盖：编程模型（map函数输出键值对、reduce函数聚合）、作业执行流程（master协调、worker执行）、与GFS的协同、网络优化技巧（本地读取、shuffle阶段），以及2004年网络瓶颈（50Mbps/机器）如何影响设计决策。"
+            }
+          ],
+          "validation_ok": true,
+          "final_ranges": [
+            {
+              "Ordinal": 1,
+              "StartMs": 0,
+              "EndMs": 511605,
+              "StartSegmentIdx": 0,
+              "EndSegmentIdx": 17,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            },
+            {
+              "Ordinal": 2,
+              "StartMs": 511605,
+              "EndMs": 1027025,
+              "StartSegmentIdx": 18,
+              "EndSegmentIdx": 38,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            },
+            {
+              "Ordinal": 3,
+              "StartMs": 1027025,
+              "EndMs": 1758860,
+              "StartSegmentIdx": 39,
+              "EndSegmentIdx": 66,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            },
+            {
+              "Ordinal": 4,
+              "StartMs": 1758860,
+              "EndMs": 2233680,
+              "StartSegmentIdx": 67,
+              "EndSegmentIdx": 82,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            },
+            {
+              "Ordinal": 5,
+              "StartMs": 2233680,
+              "EndMs": 2903950,
+              "StartSegmentIdx": 83,
+              "EndSegmentIdx": 106,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            },
+            {
+              "Ordinal": 6,
+              "StartMs": 2903950,
+              "EndMs": 4771470,
+              "StartSegmentIdx": 107,
+              "EndSegmentIdx": 174,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            }
+          ],
+          "final_titles": [
+            {
+              "TitleSource": "Introduction to Distributed Systems",
+              "TitleTranslated": "分布式系统导论",
+              "SummaryMD": "本章节介绍分布式系统的核心定义、典型应用场景（如大规模网站存储、MapReduce计算、P2P文件共享），以及人们构建分布式系统的四大动机：性能并行化、容错能力、物理分布需求和安全隔离。同时阐述了分布式系统面临的主要挑战：并发编程复杂性、部分故障模式以及性能扩展的困难。"
+            },
+            {
+              "TitleSource": "Course Logistics \u0026 Lab Overview",
+              "TitleTranslated": "课程安排与实验介绍",
+              "SummaryMD": "本章节详细介绍课程结构，包括课程网站、Piazza讨论区、助教安排；课程组件涵盖讲座、论文阅读、两次考试、四个编程实验（MapReduce、Raft、容错KV服务器、分片KV服务）以及可选期末项目。特别强调实验调试的复杂性和尽早开始的重要性。"
+            },
+            {
+              "TitleSource": "Infrastructure Abstractions \u0026 Scalability",
+              "TitleTranslated": "基础设施抽象与可扩展性",
+              "SummaryMD": "本章节讨论分布式系统作为应用基础设施的三大类型（存储、通信、计算），重点阐述抽象层如何隐藏分布式复杂性。深入讲解可扩展性（scalable speedup）概念：通过增加机器获得线性性能提升，以及实际系统中常见的瓶颈转移问题（如从Web服务器到数据库）。"
+            },
+            {
+              "TitleSource": "Fault Tolerance: Concepts \u0026 Tools",
+              "TitleTranslated": "容错：概念与工具",
+              "SummaryMD": "本章节阐述大规模分布式系统中容错的必要性（千台机器每天约3次故障），介绍两种容错目标：可用性（故障时继续服务）和可恢复性（修复后正确恢复）。讲解两大核心技术：非易失性存储（持久化状态）和复制（管理副本一致性），预告实验二和三将深入Raft复制算法。"
+            },
+            {
+              "TitleSource": "Consistency Models \u0026 Trade-offs",
+              "TitleTranslated": "一致性模型与权衡",
+              "SummaryMD": "本章节以键值服务为例，深入讲解一致性概念。分析强一致性（读取最新写入）与弱一致性的区别，阐述强一致性需要昂贵通信（尤其跨数据中心副本），而弱一致性通过允许读取旧数据换取高性能。讨论一致性-性能-容错的三角权衡。"
+            },
+            {
+              "TitleSource": "MapReduce: Design \u0026 Implementation",
+              "TitleTranslated": "MapReduce：设计与实现",
+              "SummaryMD": "本章节详细讲解Google MapReduce框架（2004年论文）。涵盖：编程模型（map函数输出键值对、reduce函数聚合）、作业执行流程（master协调、worker执行）、与GFS的协同、网络优化技巧（本地读取、shuffle阶段），以及2004年网络瓶颈（50Mbps/机器）如何影响设计决策。"
+            }
+          ],
+          "static_metrics": {
+            "raw_chapter_count": 6,
+            "final_chapter_count": 6,
+            "mean_dur_ms": 795245,
+            "min_dur_ms": 474820,
+            "max_dur_ms": 1867520,
+            "merge_actions": 0,
+            "split_actions": 0,
+            "boundary_jitter_ms": 40662
+          },
+          "glossary_entry_count": 24,
+          "speaker_hint_count": 1,
+          "reference_card_chars": 808
+        },
+        {
+          "model": "kimi-k2.5",
+          "run_index": 2,
+          "wall_time_ms": 35650,
+          "raw_chapters": [
+            {
+              "start_segment_idx": 0,
+              "end_segment_idx": 17,
+              "title_source": "Introduction: What is Distributed Systems?",
+              "title_translated": "导论：什么是分布式系统？",
+              "summary_md": "课程开场，讲师Robert Morris定义分布式系统的核心概念：通过网络协作完成任务的计算机集合。阐述构建分布式系统的四大动机——性能并行化、容错、物理分布需求和安全隔离，并强调\"能用单机就不用分布式\"的设计原则。"
+            },
+            {
+              "start_segment_idx": 18,
+              "end_segment_idx": 38,
+              "title_source": "Course Logistics \u0026 Structure",
+              "title_translated": "课程安排与结构",
+              "summary_md": "详细介绍课程组成：讲座、论文阅读、两次考试、四个编程实验（MapReduce、Raft、容错键值存储、分片键值服务）以及可选期末项目。说明评分方式、实验调试建议，并介绍教学团队。"
+            },
+            {
+              "start_segment_idx": 39,
+              "end_segment_idx": 66,
+              "title_source": "Core Themes: Abstraction, Implementation \u0026 Performance",
+              "title_translated": "核心主题：抽象、实现与性能",
+              "summary_md": "阐述课程的三大基础设施类型（存储、通信、计算）及核心目标——构建隐藏分布式复杂性的抽象。深入讨论可扩展性（scalability）概念，通过网站架构示例说明瓶颈转移问题，强调线性扩展的设计挑战。"
+            },
+            {
+              "start_segment_idx": 67,
+              "end_segment_idx": 82,
+              "title_source": "Fault Tolerance: Replication \u0026 Recovery",
+              "title_translated": "容错：复制与恢复",
+              "summary_md": "分析大规模系统中故障的必然性（千台机器每天约3次故障），区分可用性（availability）与可恢复性（recoverability）。介绍容错的两大工具：非易失性存储和复制技术，预告Raft算法在实验中的应用。"
+            },
+            {
+              "start_segment_idx": 83,
+              "end_segment_idx": 106,
+              "title_source": "Consistency Models \u0026 Trade-offs",
+              "title_translated": "一致性模型与权衡",
+              "summary_md": "以键值服务为例说明一致性挑战，对比强一致性（expensive, requires cross-replica communication）与弱一致性（cheaper, allows stale reads）。讨论地理分布副本带来的通信延迟问题，以及一致性-性能权衡的实际考量。"
+            },
+            {
+              "start_segment_idx": 107,
+              "end_segment_idx": 174,
+              "title_source": "Case Study: MapReduce Framework",
+              "title_translated": "案例研究：MapReduce框架",
+              "summary_md": "详细剖析Google MapReduce的设计动机、编程模型（map/reduce函数）、执行流程（master-workers架构、shuffle阶段）及优化技巧（数据本地性、GFS协同）。讨论2004年网络瓶颈对设计的影响，以及现代数据中心网络的演进。"
+            }
+          ],
+          "validation_ok": true,
+          "final_ranges": [
+            {
+              "Ordinal": 1,
+              "StartMs": 0,
+              "EndMs": 511605,
+              "StartSegmentIdx": 0,
+              "EndSegmentIdx": 17,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            },
+            {
+              "Ordinal": 2,
+              "StartMs": 511605,
+              "EndMs": 1027025,
+              "StartSegmentIdx": 18,
+              "EndSegmentIdx": 38,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            },
+            {
+              "Ordinal": 3,
+              "StartMs": 1027025,
+              "EndMs": 1758860,
+              "StartSegmentIdx": 39,
+              "EndSegmentIdx": 66,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            },
+            {
+              "Ordinal": 4,
+              "StartMs": 1758860,
+              "EndMs": 2233680,
+              "StartSegmentIdx": 67,
+              "EndSegmentIdx": 82,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            },
+            {
+              "Ordinal": 5,
+              "StartMs": 2233680,
+              "EndMs": 2903950,
+              "StartSegmentIdx": 83,
+              "EndSegmentIdx": 106,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            },
+            {
+              "Ordinal": 6,
+              "StartMs": 2903950,
+              "EndMs": 4771470,
+              "StartSegmentIdx": 107,
+              "EndSegmentIdx": 174,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            }
+          ],
+          "final_titles": [
+            {
+              "TitleSource": "Introduction: What is Distributed Systems?",
+              "TitleTranslated": "导论：什么是分布式系统？",
+              "SummaryMD": "课程开场，讲师Robert Morris定义分布式系统的核心概念：通过网络协作完成任务的计算机集合。阐述构建分布式系统的四大动机——性能并行化、容错、物理分布需求和安全隔离，并强调\"能用单机就不用分布式\"的设计原则。"
+            },
+            {
+              "TitleSource": "Course Logistics \u0026 Structure",
+              "TitleTranslated": "课程安排与结构",
+              "SummaryMD": "详细介绍课程组成：讲座、论文阅读、两次考试、四个编程实验（MapReduce、Raft、容错键值存储、分片键值服务）以及可选期末项目。说明评分方式、实验调试建议，并介绍教学团队。"
+            },
+            {
+              "TitleSource": "Core Themes: Abstraction, Implementation \u0026 Performance",
+              "TitleTranslated": "核心主题：抽象、实现与性能",
+              "SummaryMD": "阐述课程的三大基础设施类型（存储、通信、计算）及核心目标——构建隐藏分布式复杂性的抽象。深入讨论可扩展性（scalability）概念，通过网站架构示例说明瓶颈转移问题，强调线性扩展的设计挑战。"
+            },
+            {
+              "TitleSource": "Fault Tolerance: Replication \u0026 Recovery",
+              "TitleTranslated": "容错：复制与恢复",
+              "SummaryMD": "分析大规模系统中故障的必然性（千台机器每天约3次故障），区分可用性（availability）与可恢复性（recoverability）。介绍容错的两大工具：非易失性存储和复制技术，预告Raft算法在实验中的应用。"
+            },
+            {
+              "TitleSource": "Consistency Models \u0026 Trade-offs",
+              "TitleTranslated": "一致性模型与权衡",
+              "SummaryMD": "以键值服务为例说明一致性挑战，对比强一致性（expensive, requires cross-replica communication）与弱一致性（cheaper, allows stale reads）。讨论地理分布副本带来的通信延迟问题，以及一致性-性能权衡的实际考量。"
+            },
+            {
+              "TitleSource": "Case Study: MapReduce Framework",
+              "TitleTranslated": "案例研究：MapReduce框架",
+              "SummaryMD": "详细剖析Google MapReduce的设计动机、编程模型（map/reduce函数）、执行流程（master-workers架构、shuffle阶段）及优化技巧（数据本地性、GFS协同）。讨论2004年网络瓶颈对设计的影响，以及现代数据中心网络的演进。"
+            }
+          ],
+          "static_metrics": {
+            "raw_chapter_count": 6,
+            "final_chapter_count": 6,
+            "mean_dur_ms": 795245,
+            "min_dur_ms": 474820,
+            "max_dur_ms": 1867520,
+            "merge_actions": 0,
+            "split_actions": 0,
+            "boundary_jitter_ms": 40662
+          },
+          "glossary_entry_count": 26,
+          "speaker_hint_count": 1,
+          "reference_card_chars": 1132
+        },
+        {
+          "model": "kimi-k2.5",
+          "run_index": 3,
+          "wall_time_ms": 36584,
+          "raw_chapters": [
+            {
+              "start_segment_idx": 0,
+              "end_segment_idx": 17,
+              "title_source": "Introduction: What is Distributed Systems?",
+              "title_translated": "导论：什么是分布式系统？",
+              "summary_md": "介绍分布式系统的定义、核心特征（多台计算机通过网络协作完成统一任务），以及构建分布式系统的四大动机：性能（并行计算）、容错、物理分布需求和安全隔离。同时概述了分布式系统面临的主要挑战：并发编程复杂性、部分故障和性能扩展难题。"
+            },
+            {
+              "start_segment_idx": 18,
+              "end_segment_idx": 38,
+              "title_source": "Course Logistics \u0026 Structure",
+              "title_translated": "课程安排与结构",
+              "summary_md": "讲解课程网站、Piazza讨论区、助教安排等基本信息，详细介绍课程组成部分：讲座、论文阅读、两次考试、四个编程实验（Lab 1-4）以及可选的期末项目。重点说明了实验评分方式、调试建议，并回答了关于成绩构成的学生提问。"
+            },
+            {
+              "start_segment_idx": 39,
+              "end_segment_idx": 46,
+              "title_source": "Infrastructure Abstractions",
+              "title_translated": "基础设施抽象",
+              "summary_md": "阐述课程的核心视角——为应用程序提供基础设施，重点讨论存储、计算和通信三大基础设施类型。强调目标是构建能够隐藏分布式本质的抽象接口，使分布式系统表现得如同非分布式系统一样简单。"
+            },
+            {
+              "start_segment_idx": 47,
+              "end_segment_idx": 65,
+              "title_source": "Implementation \u0026 Performance (Scalability)",
+              "title_translated": "实现与性能（可扩展性）",
+              "summary_md": "介绍实现分布式系统的关键技术：远程过程调用（RPC）、线程和并发控制（锁）。深入讨论可扩展加速（scalable speedup）的概念，通过网站架构示例说明如何通过增加计算机数量获得线性性能提升，以及瓶颈转移问题。"
+            },
+            {
+              "start_segment_idx": 66,
+              "end_segment_idx": 82,
+              "title_source": "Fault Tolerance",
+              "title_translated": "容错机制",
+              "summary_md": "讲解大规模分布式系统中故障的必然性（千台机器每天约3次故障），介绍容错的两个核心概念：可用性（故障时继续服务）和可恢复性（修复后继续正确运行）。讨论实现容错的两大工具：非易失性存储和复制技术，以及复制管理中的同步挑战。"
+            },
+            {
+              "start_segment_idx": 83,
+              "end_segment_idx": 106,
+              "title_source": "Consistency Models",
+              "title_translated": "一致性模型",
+              "summary_md": "以键值服务为例引入一致性问题，说明复制导致的数据版本不一致风险。对比强一致性（读取最新写入）与弱一致性（可能读取旧值），分析强一致性的通信开销（尤其跨数据中心场景），以及弱一致性在性能优化中的实际应用价值。"
+            },
+            {
+              "start_segment_idx": 107,
+              "end_segment_idx": 174,
+              "title_source": "Case Study: MapReduce",
+              "title_translated": "案例研究：MapReduce",
+              "summary_md": "详细讲解Google MapReduce框架：设计动机（让非专家能编写大规模分布式计算）、编程模型（map和reduce函数）、执行架构（master-worker协调）、数据流（输入→map→本地磁盘→shuffle→reduce→GFS输出）、与GFS的协同优化，以及2004年网络带宽瓶颈对设计决策的影响。"
+            }
+          ],
+          "validation_ok": true,
+          "final_ranges": [
+            {
+              "Ordinal": 1,
+              "StartMs": 0,
+              "EndMs": 511605,
+              "StartSegmentIdx": 0,
+              "EndSegmentIdx": 17,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            },
+            {
+              "Ordinal": 2,
+              "StartMs": 511605,
+              "EndMs": 1027025,
+              "StartSegmentIdx": 18,
+              "EndSegmentIdx": 38,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            },
+            {
+              "Ordinal": 3,
+              "StartMs": 1027025,
+              "EndMs": 1758860,
+              "StartSegmentIdx": 39,
+              "EndSegmentIdx": 65,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            },
+            {
+              "Ordinal": 4,
+              "StartMs": 1758860,
+              "EndMs": 2233680,
+              "StartSegmentIdx": 66,
+              "EndSegmentIdx": 82,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            },
+            {
+              "Ordinal": 5,
+              "StartMs": 2233680,
+              "EndMs": 2903950,
+              "StartSegmentIdx": 83,
+              "EndSegmentIdx": 106,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            },
+            {
+              "Ordinal": 6,
+              "StartMs": 2903950,
+              "EndMs": 4771470,
+              "StartSegmentIdx": 107,
+              "EndSegmentIdx": 174,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            }
+          ],
+          "final_titles": [
+            {
+              "TitleSource": "Introduction: What is Distributed Systems?",
+              "TitleTranslated": "导论：什么是分布式系统？",
+              "SummaryMD": "介绍分布式系统的定义、核心特征（多台计算机通过网络协作完成统一任务），以及构建分布式系统的四大动机：性能（并行计算）、容错、物理分布需求和安全隔离。同时概述了分布式系统面临的主要挑战：并发编程复杂性、部分故障和性能扩展难题。"
+            },
+            {
+              "TitleSource": "Course Logistics \u0026 Structure",
+              "TitleTranslated": "课程安排与结构",
+              "SummaryMD": "讲解课程网站、Piazza讨论区、助教安排等基本信息，详细介绍课程组成部分：讲座、论文阅读、两次考试、四个编程实验（Lab 1-4）以及可选的期末项目。重点说明了实验评分方式、调试建议，并回答了关于成绩构成的学生提问。"
+            },
+            {
+              "TitleSource": "Infrastructure Abstractions • Implementation \u0026 Performance (Scalability)",
+              "TitleTranslated": "基础设施抽象 • 实现与性能（可扩展性）",
+              "SummaryMD": "阐述课程的核心视角——为应用程序提供基础设施，重点讨论存储、计算和通信三大基础设施类型。强调目标是构建能够隐藏分布式本质的抽象接口，使分布式系统表现得如同非分布式系统一样简单。 • 介绍实现分布式系统的关键技术：远程过程调用（RPC）、线程和并发控制（锁）。深入讨论可扩展加速（scalable speedup）的概念，通过网站架构示例说明如何通过增加计算机数量获得线性性能提升，以及瓶颈转移问题。"
+            },
+            {
+              "TitleSource": "Fault Tolerance",
+              "TitleTranslated": "容错机制",
+              "SummaryMD": "讲解大规模分布式系统中故障的必然性（千台机器每天约3次故障），介绍容错的两个核心概念：可用性（故障时继续服务）和可恢复性（修复后继续正确运行）。讨论实现容错的两大工具：非易失性存储和复制技术，以及复制管理中的同步挑战。"
+            },
+            {
+              "TitleSource": "Consistency Models",
+              "TitleTranslated": "一致性模型",
+              "SummaryMD": "以键值服务为例引入一致性问题，说明复制导致的数据版本不一致风险。对比强一致性（读取最新写入）与弱一致性（可能读取旧值），分析强一致性的通信开销（尤其跨数据中心场景），以及弱一致性在性能优化中的实际应用价值。"
+            },
+            {
+              "TitleSource": "Case Study: MapReduce",
+              "TitleTranslated": "案例研究：MapReduce",
+              "SummaryMD": "详细讲解Google MapReduce框架：设计动机（让非专家能编写大规模分布式计算）、编程模型（map和reduce函数）、执行架构（master-worker协调）、数据流（输入→map→本地磁盘→shuffle→reduce→GFS输出）、与GFS的协同优化，以及2004年网络带宽瓶颈对设计决策的影响。"
+            }
+          ],
+          "static_metrics": {
+            "raw_chapter_count": 7,
+            "final_chapter_count": 6,
+            "mean_dur_ms": 795245,
+            "min_dur_ms": 474820,
+            "max_dur_ms": 1867520,
+            "merge_actions": 1,
+            "split_actions": 0,
+            "boundary_jitter_ms": 40561
+          },
+          "glossary_entry_count": 23,
+          "speaker_hint_count": 1,
+          "reference_card_chars": 954
+        }
+      ],
+      "judge": {
+        "candidate_model": "kimi-k2.5",
+        "judge_model": "kimi-k2-thinking",
+        "runs": 1,
+        "wall_time_ms": 599025,
+        "boundary_scores": [
+          {
+            "boundary_idx": 0,
+            "boundary_coherence": 5,
+            "rationale": "Explicit transition with speaker saying 'Let me talk about course structure' after finishing introduction."
+          },
+          {
+            "boundary_idx": 1,
+            "boundary_coherence": 3,
+            "rationale": "Student question about grades at segment 39 interrupts clean transition; topic shift is implied but muddled."
+          },
+          {
+            "boundary_idx": 2,
+            "boundary_coherence": 5,
+            "rationale": "Explicit transition with 'another big topic that comes up a lot is fault tolerance.'"
+          },
+          {
+            "boundary_idx": 3,
+            "boundary_coherence": 5,
+            "rationale": "Explicit transition with 'final topic, final cross-cutting topic is consistency.'"
+          },
+          {
+            "boundary_idx": 4,
+            "boundary_coherence": 5,
+            "rationale": "Explicit transition with 'before I start talking about MapReduce' after finishing consistency."
+          }
+        ],
+        "chapter_scores": [
+          {
+            "chapter_idx": 0,
+            "title_quality": 5,
+            "topic_completeness": 5,
+            "rationale": "Title accurately summarizes coherent introduction; covers one theme from start to end."
+          },
+          {
+            "chapter_idx": 1,
+            "title_quality": 5,
+            "topic_completeness": 5,
+            "rationale": "Title accurately summarizes logistics; covers one coherent theme with clean boundaries."
+          },
+          {
+            "chapter_idx": 2,
+            "title_quality": 5,
+            "topic_completeness": 3,
+            "rationale": "Title accurate but segment 39 contains unrelated student question about grades breaking theme coherence."
+          },
+          {
+            "chapter_idx": 3,
+            "title_quality": 5,
+            "topic_completeness": 5,
+            "rationale": "Title accurately summarizes fault tolerance discussion; covers one coherent theme throughout."
+          },
+          {
+            "chapter_idx": 4,
+            "title_quality": 5,
+            "topic_completeness": 5,
+            "rationale": "Title accurately summarizes consistency models; covers one coherent theme throughout."
+          },
+          {
+            "chapter_idx": 5,
+            "title_quality": 5,
+            "topic_completeness": 5,
+            "rationale": "Title accurately summarizes MapReduce deep dive; covers one coherent theme throughout."
+          }
+        ],
+        "boundary_avg": 4.6,
+        "title_avg": 5,
+        "topic_avg": 4.666666666666667,
+        "total": 4.7555555555555555
+      },
+      "chapter_counts_per_run": [
+        6,
+        6,
+        6
+      ],
+      "stability_note": "STABLE: every run produced 6 chapters",
+      "worst_boundaries": [
+        {
+          "boundary_idx": 1,
+          "boundary_coherence": 3,
+          "rationale": "Student question about grades at segment 39 interrupts clean transition; topic shift is implied but muddled."
+        },
+        {
+          "boundary_idx": 0,
+          "boundary_coherence": 5,
+          "rationale": "Explicit transition with speaker saying 'Let me talk about course structure' after finishing introduction."
+        },
+        {
+          "boundary_idx": 2,
+          "boundary_coherence": 5,
+          "rationale": "Explicit transition with 'another big topic that comes up a lot is fault tolerance.'"
+        }
+      ]
+    },
+    "qwen-max-latest": {
+      "runs": [
+        {
+          "model": "qwen-max-latest",
+          "run_index": 1,
+          "wall_time_ms": 32120,
+          "raw_chapters": [
+            {
+              "start_segment_idx": 0,
+              "end_segment_idx": 37,
+              "title_source": "Course Introduction and Logistics",
+              "title_translated": "课程介绍与安排",
+              "summary_md": "讲师介绍了课程的基本信息，包括课程结构、评分标准、实验室作业等，并强调了分布式系统的重要性及其在现实世界中的应用。"
+            },
+            {
+              "start_segment_idx": 38,
+              "end_segment_idx": 82,
+              "title_source": "Distributed Systems Overview",
+              "title_translated": "分布式系统概览",
+              "summary_md": "讨论了分布式系统的核心概念，如实现细节、性能考量及容错机制。特别提到了远程过程调用（RPC）、线程以及并发控制等实现工具。"
+            },
+            {
+              "start_segment_idx": 83,
+              "end_segment_idx": 105,
+              "title_source": "Fault Tolerance and Consistency",
+              "title_translated": "容错与一致性",
+              "summary_md": "探讨了分布式系统中的容错性和一致性问题，包括可用性、可恢复性以及不同的一致性定义。"
+            },
+            {
+              "start_segment_idx": 106,
+              "end_segment_idx": 174,
+              "title_source": "Case Study: MapReduce",
+              "title_translated": "案例研究：MapReduce",
+              "summary_md": "通过MapReduce作为案例研究，详细解释了其工作原理、应用场景及在Google的实际使用情况。"
+            }
+          ],
+          "validation_ok": true,
+          "final_ranges": [
+            {
+              "Ordinal": 1,
+              "StartMs": 0,
+              "EndMs": 1027025,
+              "StartSegmentIdx": 0,
+              "EndSegmentIdx": 37,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            },
+            {
+              "Ordinal": 2,
+              "StartMs": 1027025,
+              "EndMs": 2233680,
+              "StartSegmentIdx": 38,
+              "EndSegmentIdx": 82,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            },
+            {
+              "Ordinal": 3,
+              "StartMs": 2233680,
+              "EndMs": 2862440,
+              "StartSegmentIdx": 83,
+              "EndSegmentIdx": 105,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            },
+            {
+              "Ordinal": 4,
+              "StartMs": 2862440,
+              "EndMs": 4771470,
+              "StartSegmentIdx": 106,
+              "EndSegmentIdx": 174,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            }
+          ],
+          "final_titles": [
+            {
+              "TitleSource": "Course Introduction and Logistics",
+              "TitleTranslated": "课程介绍与安排",
+              "SummaryMD": "讲师介绍了课程的基本信息，包括课程结构、评分标准、实验室作业等，并强调了分布式系统的重要性及其在现实世界中的应用。"
+            },
+            {
+              "TitleSource": "Distributed Systems Overview",
+              "TitleTranslated": "分布式系统概览",
+              "SummaryMD": "讨论了分布式系统的核心概念，如实现细节、性能考量及容错机制。特别提到了远程过程调用（RPC）、线程以及并发控制等实现工具。"
+            },
+            {
+              "TitleSource": "Fault Tolerance and Consistency",
+              "TitleTranslated": "容错与一致性",
+              "SummaryMD": "探讨了分布式系统中的容错性和一致性问题，包括可用性、可恢复性以及不同的一致性定义。"
+            },
+            {
+              "TitleSource": "Case Study: MapReduce",
+              "TitleTranslated": "案例研究：MapReduce",
+              "SummaryMD": "通过MapReduce作为案例研究，详细解释了其工作原理、应用场景及在Google的实际使用情况。"
+            }
+          ],
+          "static_metrics": {
+            "raw_chapter_count": 4,
+            "final_chapter_count": 4,
+            "mean_dur_ms": 1192867,
+            "min_dur_ms": 628760,
+            "max_dur_ms": 1909030,
+            "merge_actions": 0,
+            "split_actions": 0,
+            "boundary_jitter_ms": 41101
+          },
+          "glossary_entry_count": 4,
+          "speaker_hint_count": 1,
+          "reference_card_chars": 604
+        },
+        {
+          "model": "qwen-max-latest",
+          "run_index": 2,
+          "wall_time_ms": 44344,
+          "raw_chapters": [
+            {
+              "start_segment_idx": 0,
+              "end_segment_idx": 17,
+              "title_source": "Course Introduction and Overview",
+              "title_translated": "课程介绍与概览",
+              "summary_md": "介绍分布式系统课程的基本信息，包括课程内容、目标和结构。"
+            },
+            {
+              "start_segment_idx": 18,
+              "end_segment_idx": 36,
+              "title_source": "Course Components Breakdown",
+              "title_translated": "课程组成部分详解",
+              "summary_md": "详细讲解课程的组成部分，包括讲座、论文阅读、考试和编程实验。"
+            },
+            {
+              "start_segment_idx": 37,
+              "end_segment_idx": 51,
+              "title_source": "Implementation Topics in Distributed Systems",
+              "title_translated": "分布式系统中的实现话题",
+              "summary_md": "讨论分布式系统中的实现问题，如远程过程调用和线程。"
+            },
+            {
+              "start_segment_idx": 52,
+              "end_segment_idx": 72,
+              "title_source": "Performance and Scalability in Distributed Systems",
+              "title_translated": "分布式系统中的性能与可扩展性",
+              "summary_md": "探讨性能和可扩展性在分布式系统设计中的重要性。"
+            },
+            {
+              "start_segment_idx": 73,
+              "end_segment_idx": 82,
+              "title_source": "Fault Tolerance and Replication Strategies",
+              "title_translated": "容错性与复制策略",
+              "summary_md": "分析容错性以及如何通过复制来实现。"
+            },
+            {
+              "start_segment_idx": 83,
+              "end_segment_idx": 105,
+              "title_source": "Consistency Issues in Distributed Systems",
+              "title_translated": "分布式系统中的一致性问题",
+              "summary_md": "一致性问题及其对分布式系统的影响。"
+            },
+            {
+              "start_segment_idx": 106,
+              "end_segment_idx": 174,
+              "title_source": "Case Study: MapReduce",
+              "title_translated": "案例研究：MapReduce",
+              "summary_md": "MapReduce案例研究，涵盖其工作原理及在Google的应用。"
+            }
+          ],
+          "validation_ok": true,
+          "final_ranges": [
+            {
+              "Ordinal": 1,
+              "StartMs": 0,
+              "EndMs": 511605,
+              "StartSegmentIdx": 0,
+              "EndSegmentIdx": 17,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            },
+            {
+              "Ordinal": 2,
+              "StartMs": 511605,
+              "EndMs": 1027025,
+              "StartSegmentIdx": 18,
+              "EndSegmentIdx": 36,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            },
+            {
+              "Ordinal": 3,
+              "StartMs": 1027025,
+              "EndMs": 1380005,
+              "StartSegmentIdx": 37,
+              "EndSegmentIdx": 51,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            },
+            {
+              "Ordinal": 4,
+              "StartMs": 1380005,
+              "EndMs": 1982810,
+              "StartSegmentIdx": 52,
+              "EndSegmentIdx": 72,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            },
+            {
+              "Ordinal": 5,
+              "StartMs": 1982810,
+              "EndMs": 2862440,
+              "StartSegmentIdx": 73,
+              "EndSegmentIdx": 105,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            },
+            {
+              "Ordinal": 6,
+              "StartMs": 2862440,
+              "EndMs": 4771470,
+              "StartSegmentIdx": 106,
+              "EndSegmentIdx": 174,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            }
+          ],
+          "final_titles": [
+            {
+              "TitleSource": "Course Introduction and Overview",
+              "TitleTranslated": "课程介绍与概览",
+              "SummaryMD": "介绍分布式系统课程的基本信息，包括课程内容、目标和结构。"
+            },
+            {
+              "TitleSource": "Course Components Breakdown",
+              "TitleTranslated": "课程组成部分详解",
+              "SummaryMD": "详细讲解课程的组成部分，包括讲座、论文阅读、考试和编程实验。"
+            },
+            {
+              "TitleSource": "Implementation Topics in Distributed Systems",
+              "TitleTranslated": "分布式系统中的实现话题",
+              "SummaryMD": "讨论分布式系统中的实现问题，如远程过程调用和线程。"
+            },
+            {
+              "TitleSource": "Performance and Scalability in Distributed Systems",
+              "TitleTranslated": "分布式系统中的性能与可扩展性",
+              "SummaryMD": "探讨性能和可扩展性在分布式系统设计中的重要性。"
+            },
+            {
+              "TitleSource": "Fault Tolerance and Replication Strategies • Consistency Issues in Distributed Systems",
+              "TitleTranslated": "容错性与复制策略 • 分布式系统中的一致性问题",
+              "SummaryMD": "分析容错性以及如何通过复制来实现。 • 一致性问题及其对分布式系统的影响。"
+            },
+            {
+              "TitleSource": "Case Study: MapReduce",
+              "TitleTranslated": "案例研究：MapReduce",
+              "SummaryMD": "MapReduce案例研究，涵盖其工作原理及在Google的应用。"
+            }
+          ],
+          "static_metrics": {
+            "raw_chapter_count": 7,
+            "final_chapter_count": 6,
+            "mean_dur_ms": 795245,
+            "min_dur_ms": 352980,
+            "max_dur_ms": 1909030,
+            "merge_actions": 1,
+            "split_actions": 0,
+            "boundary_jitter_ms": 45255
+          },
+          "glossary_entry_count": 12,
+          "speaker_hint_count": 1,
+          "reference_card_chars": 491
+        },
+        {
+          "model": "qwen-max-latest",
+          "run_index": 3,
+          "wall_time_ms": 26315,
+          "raw_chapters": [
+            {
+              "start_segment_idx": 0,
+              "end_segment_idx": 37,
+              "title_source": "Course Introduction \u0026 Logistics",
+              "title_translated": "课程介绍与安排",
+              "summary_md": "讲师介绍了课程结构、评分标准及实验室作业要求。强调了分布式系统的重要性及其在现实世界中的应用。"
+            },
+            {
+              "start_segment_idx": 38,
+              "end_segment_idx": 77,
+              "title_source": "Distributed Systems Overview",
+              "title_translated": "分布式系统概览",
+              "summary_md": "讲解了分布式系统的核心概念，包括存储、通信和计算基础设施。特别提到了MapReduce作为一种计算系统。"
+            },
+            {
+              "start_segment_idx": 78,
+              "end_segment_idx": 113,
+              "title_source": "Implementation Topics in Distributed Systems",
+              "title_translated": "分布式系统中的实现话题",
+              "summary_md": "探讨了远程过程调用（RPC）、线程等实现分布式系统的工具和技术。同时讨论了并发控制的重要性。"
+            },
+            {
+              "start_segment_idx": 114,
+              "end_segment_idx": 174,
+              "title_source": "Case Study: MapReduce",
+              "title_translated": "案例研究：MapReduce",
+              "summary_md": "详细介绍了MapReduce的工作原理，包括map和reduce函数的作用，以及如何通过这个框架简化大规模分布式计算任务。"
+            }
+          ],
+          "validation_ok": true,
+          "final_ranges": [
+            {
+              "Ordinal": 1,
+              "StartMs": 0,
+              "EndMs": 1027025,
+              "StartSegmentIdx": 0,
+              "EndSegmentIdx": 37,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            },
+            {
+              "Ordinal": 2,
+              "StartMs": 1027025,
+              "EndMs": 2039390,
+              "StartSegmentIdx": 38,
+              "EndSegmentIdx": 77,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            },
+            {
+              "Ordinal": 3,
+              "StartMs": 2039390,
+              "EndMs": 3046480,
+              "StartSegmentIdx": 78,
+              "EndSegmentIdx": 113,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            },
+            {
+              "Ordinal": 4,
+              "StartMs": 3046480,
+              "EndMs": 4771470,
+              "StartSegmentIdx": 114,
+              "EndSegmentIdx": 174,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            }
+          ],
+          "final_titles": [
+            {
+              "TitleSource": "Course Introduction \u0026 Logistics",
+              "TitleTranslated": "课程介绍与安排",
+              "SummaryMD": "讲师介绍了课程结构、评分标准及实验室作业要求。强调了分布式系统的重要性及其在现实世界中的应用。"
+            },
+            {
+              "TitleSource": "Distributed Systems Overview",
+              "TitleTranslated": "分布式系统概览",
+              "SummaryMD": "讲解了分布式系统的核心概念，包括存储、通信和计算基础设施。特别提到了MapReduce作为一种计算系统。"
+            },
+            {
+              "TitleSource": "Implementation Topics in Distributed Systems",
+              "TitleTranslated": "分布式系统中的实现话题",
+              "SummaryMD": "探讨了远程过程调用（RPC）、线程等实现分布式系统的工具和技术。同时讨论了并发控制的重要性。"
+            },
+            {
+              "TitleSource": "Case Study: MapReduce",
+              "TitleTranslated": "案例研究：MapReduce",
+              "SummaryMD": "详细介绍了MapReduce的工作原理，包括map和reduce函数的作用，以及如何通过这个框架简化大规模分布式计算任务。"
+            }
+          ],
+          "static_metrics": {
+            "raw_chapter_count": 4,
+            "final_chapter_count": 4,
+            "mean_dur_ms": 1192867,
+            "min_dur_ms": 1007090,
+            "max_dur_ms": 1724990,
+            "merge_actions": 0,
+            "split_actions": 0,
+            "boundary_jitter_ms": 27341
+          },
+          "glossary_entry_count": 4,
+          "speaker_hint_count": 1,
+          "reference_card_chars": 720
+        }
+      ],
+      "judge": {
+        "candidate_model": "qwen-max-latest",
+        "judge_model": "kimi-k2-thinking",
+        "runs": 1,
+        "wall_time_ms": 83086,
+        "boundary_scores": [
+          {
+            "boundary_idx": 0,
+            "boundary_coherence": 1,
+            "rationale": "The cut separates logistics from distributed systems overview but leaves a logistics question in chapter 2, breaking theme continuity."
+          },
+          {
+            "boundary_idx": 1,
+            "boundary_coherence": 5,
+            "rationale": "Clear explicit pivot from sharding discussion to consistency topic."
+          },
+          {
+            "boundary_idx": 2,
+            "boundary_coherence": 5,
+            "rationale": "Explicit wrap-up of consistency and transition to MapReduce case study."
+          }
+        ],
+        "chapter_scores": [
+          {
+            "chapter_idx": 0,
+            "title_quality": 5,
+            "topic_completeness": 5,
+            "rationale": "Title accurately describes course intro and logistics; chapter covers only that theme."
+          },
+          {
+            "chapter_idx": 1,
+            "title_quality": 5,
+            "topic_completeness": 3,
+            "rationale": "Title matches the distributed systems overview content, but chapter includes a brief unrelated grading question."
+          },
+          {
+            "chapter_idx": 2,
+            "title_quality": 1,
+            "topic_completeness": 5,
+            "rationale": "Title mentions fault tolerance which is not present; chapter is purely about consistency."
+          },
+          {
+            "chapter_idx": 3,
+            "title_quality": 5,
+            "topic_completeness": 5,
+            "rationale": "Title accurately reflects MapReduce case study; chapter stays on topic throughout."
+          }
+        ],
+        "boundary_avg": 3.6666666666666665,
+        "title_avg": 4,
+        "topic_avg": 4.5,
+        "total": 4.055555555555555
+      },
+      "chapter_counts_per_run": [
+        4,
+        6,
+        4
+      ],
+      "stability_note": "VARIABLE: chapter counts ranged 4..6 across 3 runs",
+      "worst_boundaries": [
+        {
+          "boundary_idx": 0,
+          "boundary_coherence": 1,
+          "rationale": "The cut separates logistics from distributed systems overview but leaves a logistics question in chapter 2, breaking theme continuity."
+        },
+        {
+          "boundary_idx": 1,
+          "boundary_coherence": 5,
+          "rationale": "Clear explicit pivot from sharding discussion to consistency topic."
+        },
+        {
+          "boundary_idx": 2,
+          "boundary_coherence": 5,
+          "rationale": "Explicit wrap-up of consistency and transition to MapReduce case study."
+        }
+      ]
+    },
+    "qwen-plus-latest": {
+      "runs": [
+        {
+          "model": "qwen-plus-latest",
+          "run_index": 1,
+          "wall_time_ms": 28655,
+          "raw_chapters": [
+            {
+              "start_segment_idx": 0,
+              "end_segment_idx": 38,
+              "title_source": "Course Introduction \u0026 What Is a Distributed System?",
+              "title_translated": "课程导论与分布式系统定义",
+              "summary_md": "本章介绍课程基本信息（编号6824）、分布式系统的本质定义（协同计算机通过网络完成一致任务），并列举典型应用场景（大型网站存储、MapReduce大数据计算、P2P文件共享）。强调其重要性源于关键基础设施的物理与逻辑分布需求。"
+            },
+            {
+              "start_segment_idx": 39,
+              "end_segment_idx": 77,
+              "title_source": "Why Build Distributed Systems? Core Challenges",
+              "title_translated": "为何构建分布式系统？核心挑战",
+              "summary_md": "本章系统阐述构建分布式系统的四大动因：性能（并行化）、效率（资源利用）、容错（故障转移）、地理分布（如跨城银行转账）与安全（隔离不可信代码）。继而剖析其固有难点：并发编程复杂性、部分故障（非全有或全无）、以及实现理想可扩展加速比的技术障碍。"
+            },
+            {
+              "start_segment_idx": 78,
+              "end_segment_idx": 105,
+              "title_source": "Cross-Cutting Themes: Performance, Fault Tolerance, Consistency",
+              "title_translated": "三大横切主题：性能、容错性、一致性",
+              "summary_md": "本章深入解析分布式系统设计的三大支柱。性能聚焦可扩展加速比及其在Web服务器扩容中的瓶颈转移现象；容错性区分可用性（故障下持续服务）与可恢复性（修复后正确重启），并强调复制与非易失性存储的关键作用；一致性则以键值服务为例，对比强一致性（最新写入可见）与弱一致性（牺牲即时性换性能），揭示地理复制带来的网络延迟与通信开销权衡。"
+            },
+            {
+              "start_segment_idx": 106,
+              "end_segment_idx": 174,
+              "title_source": "Case Study: MapReduce Architecture \u0026 Design Trade-offs",
+              "title_translated": "案例研究：MapReduce架构与设计权衡",
+              "summary_md": "本章以MapReduce为详细案例，讲解其Map-Reduce两阶段计算模型、任务（job/task）概念及WordCount示例。重点分析其底层实现：GFS文件系统如何支撑输入/输出、master-worker架构、本地化数据读取（避免网络瓶颈）、shuffle阶段的网络密集型数据重分布，以及2004年受限于根交换机带宽的设计妥协与2020年高速网络下的范式演进。"
+            }
+          ],
+          "validation_ok": true,
+          "final_ranges": [
+            {
+              "Ordinal": 1,
+              "StartMs": 0,
+              "EndMs": 1027025,
+              "StartSegmentIdx": 0,
+              "EndSegmentIdx": 38,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            },
+            {
+              "Ordinal": 2,
+              "StartMs": 1027025,
+              "EndMs": 2039390,
+              "StartSegmentIdx": 39,
+              "EndSegmentIdx": 77,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            },
+            {
+              "Ordinal": 3,
+              "StartMs": 2039390,
+              "EndMs": 2862440,
+              "StartSegmentIdx": 78,
+              "EndSegmentIdx": 105,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            },
+            {
+              "Ordinal": 4,
+              "StartMs": 2862440,
+              "EndMs": 4771470,
+              "StartSegmentIdx": 106,
+              "EndSegmentIdx": 174,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            }
+          ],
+          "final_titles": [
+            {
+              "TitleSource": "Course Introduction \u0026 What Is a Distributed System?",
+              "TitleTranslated": "课程导论与分布式系统定义",
+              "SummaryMD": "本章介绍课程基本信息（编号6824）、分布式系统的本质定义（协同计算机通过网络完成一致任务），并列举典型应用场景（大型网站存储、MapReduce大数据计算、P2P文件共享）。强调其重要性源于关键基础设施的物理与逻辑分布需求。"
+            },
+            {
+              "TitleSource": "Why Build Distributed Systems? Core Challenges",
+              "TitleTranslated": "为何构建分布式系统？核心挑战",
+              "SummaryMD": "本章系统阐述构建分布式系统的四大动因：性能（并行化）、效率（资源利用）、容错（故障转移）、地理分布（如跨城银行转账）与安全（隔离不可信代码）。继而剖析其固有难点：并发编程复杂性、部分故障（非全有或全无）、以及实现理想可扩展加速比的技术障碍。"
+            },
+            {
+              "TitleSource": "Cross-Cutting Themes: Performance, Fault Tolerance, Consistency",
+              "TitleTranslated": "三大横切主题：性能、容错性、一致性",
+              "SummaryMD": "本章深入解析分布式系统设计的三大支柱。性能聚焦可扩展加速比及其在Web服务器扩容中的瓶颈转移现象；容错性区分可用性（故障下持续服务）与可恢复性（修复后正确重启），并强调复制与非易失性存储的关键作用；一致性则以键值服务为例，对比强一致性（最新写入可见）与弱一致性（牺牲即时性换性能），揭示地理复制带来的网络延迟与通信开销权衡。"
+            },
+            {
+              "TitleSource": "Case Study: MapReduce Architecture \u0026 Design Trade-offs",
+              "TitleTranslated": "案例研究：MapReduce架构与设计权衡",
+              "SummaryMD": "本章以MapReduce为详细案例，讲解其Map-Reduce两阶段计算模型、任务（job/task）概念及WordCount示例。重点分析其底层实现：GFS文件系统如何支撑输入/输出、master-worker架构、本地化数据读取（避免网络瓶颈）、shuffle阶段的网络密集型数据重分布，以及2004年受限于根交换机带宽的设计妥协与2020年高速网络下的范式演进。"
+            }
+          ],
+          "static_metrics": {
+            "raw_chapter_count": 4,
+            "final_chapter_count": 4,
+            "mean_dur_ms": 1192867,
+            "min_dur_ms": 823050,
+            "max_dur_ms": 1909030,
+            "merge_actions": 0,
+            "split_actions": 0,
+            "boundary_jitter_ms": 36465
+          },
+          "glossary_entry_count": 21,
+          "speaker_hint_count": 1,
+          "reference_card_chars": 852
+        },
+        {
+          "model": "qwen-plus-latest",
+          "run_index": 2,
+          "wall_time_ms": 29985,
+          "raw_chapters": [
+            {
+              "start_segment_idx": 0,
+              "end_segment_idx": 38,
+              "title_source": "Course Introduction \u0026 Logistics",
+              "title_translated": "课程导论与教学安排",
+              "summary_md": "本章介绍课程基本信息：编号6824、主讲人罗伯特·莫里斯教授及助教团队；说明课程网站、Piazza平台、作业提交方式；详述考核构成（讲座、论文、两次考试、四次编程实验及可选期末项目）；强调论文预习要求与旧题库复习策略；明确首次实验（简易MapReduce实现）的截止时间。"
+            },
+            {
+              "start_segment_idx": 39,
+              "end_segment_idx": 79,
+              "title_source": "Core Challenges of Distributed Systems",
+              "title_translated": "分布式系统的核心挑战",
+              "summary_md": "本章系统阐述分布式系统的四大根本挑战：性能（追求可扩展加速比，但受限于瓶颈转移与设计复杂性）、容错性（因规模扩大导致部分故障常态化，依赖非易失性存储与复制机制）、一致性（在复制场景下定义put/get语义，权衡强一致性与弱一致性的成本与收益）以及实现基础（远程过程调用、线程、锁等并发控制工具）。"
+            },
+            {
+              "start_segment_idx": 80,
+              "end_segment_idx": 106,
+              "title_source": "Cross-Cutting Topics: Consistency \u0026 Fault Tolerance",
+              "title_translated": "贯穿性主题：一致性与容错性",
+              "summary_md": "本章深入剖析一致性与容错性的内在关联与技术张力：以键值服务为例，说明复制如何引发数据不一致风险；对比强一致性（需跨节点同步，高通信开销）与弱一致性（允许陈旧读取，提升性能）；指出地理分散复制对强一致性的物理制约（光速延迟），并引出容错设计中独立故障域与网络拓扑的关键作用。"
+            },
+            {
+              "start_segment_idx": 107,
+              "end_segment_idx": 174,
+              "title_source": "Case Study: MapReduce Architecture \u0026 Evolution",
+              "title_translated": "案例研究：MapReduce架构与演进",
+              "summary_md": "本章以MapReduce为典型案例，完整解析其设计动机（应对海量Web数据处理）、抽象模型（Map/Reduce函数、Job/Task）、执行流程（输入分片→并行Map→混洗→归约Reduce→输出）；重点剖析其2004年原始架构如何通过GFS协同与本地化调度规避网络瓶颈，以及2020年后因数据中心网络升级而放弃该优化的历史演进；最后预告学生将实现一个简化版MapReduce作为首次实验。"
+            }
+          ],
+          "validation_ok": true,
+          "final_ranges": [
+            {
+              "Ordinal": 1,
+              "StartMs": 0,
+              "EndMs": 1027025,
+              "StartSegmentIdx": 0,
+              "EndSegmentIdx": 38,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            },
+            {
+              "Ordinal": 2,
+              "StartMs": 1027025,
+              "EndMs": 2223605,
+              "StartSegmentIdx": 39,
+              "EndSegmentIdx": 79,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            },
+            {
+              "Ordinal": 3,
+              "StartMs": 2223605,
+              "EndMs": 2903950,
+              "StartSegmentIdx": 80,
+              "EndSegmentIdx": 106,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            },
+            {
+              "Ordinal": 4,
+              "StartMs": 2903950,
+              "EndMs": 4771470,
+              "StartSegmentIdx": 107,
+              "EndSegmentIdx": 174,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            }
+          ],
+          "final_titles": [
+            {
+              "TitleSource": "Course Introduction \u0026 Logistics",
+              "TitleTranslated": "课程导论与教学安排",
+              "SummaryMD": "本章介绍课程基本信息：编号6824、主讲人罗伯特·莫里斯教授及助教团队；说明课程网站、Piazza平台、作业提交方式；详述考核构成（讲座、论文、两次考试、四次编程实验及可选期末项目）；强调论文预习要求与旧题库复习策略；明确首次实验（简易MapReduce实现）的截止时间。"
+            },
+            {
+              "TitleSource": "Core Challenges of Distributed Systems",
+              "TitleTranslated": "分布式系统的核心挑战",
+              "SummaryMD": "本章系统阐述分布式系统的四大根本挑战：性能（追求可扩展加速比，但受限于瓶颈转移与设计复杂性）、容错性（因规模扩大导致部分故障常态化，依赖非易失性存储与复制机制）、一致性（在复制场景下定义put/get语义，权衡强一致性与弱一致性的成本与收益）以及实现基础（远程过程调用、线程、锁等并发控制工具）。"
+            },
+            {
+              "TitleSource": "Cross-Cutting Topics: Consistency \u0026 Fault Tolerance",
+              "TitleTranslated": "贯穿性主题：一致性与容错性",
+              "SummaryMD": "本章深入剖析一致性与容错性的内在关联与技术张力：以键值服务为例，说明复制如何引发数据不一致风险；对比强一致性（需跨节点同步，高通信开销）与弱一致性（允许陈旧读取，提升性能）；指出地理分散复制对强一致性的物理制约（光速延迟），并引出容错设计中独立故障域与网络拓扑的关键作用。"
+            },
+            {
+              "TitleSource": "Case Study: MapReduce Architecture \u0026 Evolution",
+              "TitleTranslated": "案例研究：MapReduce架构与演进",
+              "SummaryMD": "本章以MapReduce为典型案例，完整解析其设计动机（应对海量Web数据处理）、抽象模型（Map/Reduce函数、Job/Task）、执行流程（输入分片→并行Map→混洗→归约Reduce→输出）；重点剖析其2004年原始架构如何通过GFS协同与本地化调度规避网络瓶颈，以及2020年后因数据中心网络升级而放弃该优化的历史演进；最后预告学生将实现一个简化版MapReduce作为首次实验。"
+            }
+          ],
+          "static_metrics": {
+            "raw_chapter_count": 4,
+            "final_chapter_count": 4,
+            "mean_dur_ms": 1192867,
+            "min_dur_ms": 680345,
+            "max_dur_ms": 1867520,
+            "merge_actions": 0,
+            "split_actions": 0,
+            "boundary_jitter_ms": 54386
+          },
+          "glossary_entry_count": 27,
+          "speaker_hint_count": 1,
+          "reference_card_chars": 963
+        },
+        {
+          "model": "qwen-plus-latest",
+          "run_index": 3,
+          "wall_time_ms": 30617,
+          "raw_chapters": [
+            {
+              "start_segment_idx": 0,
+              "end_segment_idx": 8,
+              "title_source": "Course Introduction \u0026 What Is a Distributed System?",
+              "title_translated": "课程导论与分布式系统定义",
+              "summary_md": "开篇介绍课程编号6824及核心目标，明确定义分布式系统为“通过网络协同工作的多台计算机集合”，并列举典型应用场景（大型网站存储、MapReduce计算、P2P文件共享），强调其在现代关键基础设施中的基础地位。"
+            },
+            {
+              "start_segment_idx": 9,
+              "end_segment_idx": 37,
+              "title_source": "Why Build Distributed Systems? Core Motivations \u0026 Challenges",
+              "title_translated": "为何构建分布式系统？核心动因与挑战",
+              "summary_md": "系统阐述构建分布式系统的四大动因：提升性能（并行化）、实现容错（冗余备份）、适应物理分布（如跨地域银行系统）及达成安全目标（隔离不可信代码）。继而剖析其固有难点：并发编程复杂性、部分故障的不可预测性，以及实现理想线性加速比的技术障碍。"
+            },
+            {
+              "start_segment_idx": 38,
+              "end_segment_idx": 65,
+              "title_source": "Course Structure, Labs \u0026 Infrastructure Abstractions",
+              "title_translated": "课程结构、实验与基础设施抽象",
+              "summary_md": "详述课程组织：授课、论文研读、两次考试及四次编程实验（Lab1 MapReduce、Lab2-3 Raft容错、Lab4分片键值服务）。重点阐释课程核心思想——为上层应用提供简化接口，即通过抽象隐藏分布式本质，使应用能像使用单机文件系统一样便捷地调用高性能、高容错的分布式存储与计算服务。"
+            },
+            {
+              "start_segment_idx": 66,
+              "end_segment_idx": 105,
+              "title_source": "Cross-Cutting Themes: Performance, Fault Tolerance \u0026 Consistency",
+              "title_translated": "三大交叉主题：性能、容错性与一致性",
+              "summary_md": "深入解析贯穿全课的三大技术主题：性能（可扩展加速比的原理、瓶颈与实例分析）、容错性（可用性与可恢复性的定义、非易失性存储与复制的关键作用）及一致性（以键值服务为例，对比强一致性与弱一致性的语义、实现代价及地理分布带来的通信延迟挑战）。"
+            },
+            {
+              "start_segment_idx": 106,
+              "end_segment_idx": 174,
+              "title_source": "Case Study: MapReduce in Depth",
+              "title_translated": "案例精析：MapReduce深度解析",
+              "summary_md": "以MapReduce为详细案例，完整呈现其设计动机（应对海量数据处理需求）、编程模型（map/reduce函数、job/task概念）、执行流程（输入分片、本地化计算、shuffle数据重分布、reduce聚合）及底层架构（GFS存储、master-worker模型）。同时讨论其局限性（单阶段流水线）及现代演进（流式处理、网络优化）。"
+            }
+          ],
+          "validation_ok": true,
+          "final_ranges": [
+            {
+              "Ordinal": 1,
+              "StartMs": 0,
+              "EndMs": 1027025,
+              "StartSegmentIdx": 0,
+              "EndSegmentIdx": 37,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            },
+            {
+              "Ordinal": 2,
+              "StartMs": 1027025,
+              "EndMs": 1758860,
+              "StartSegmentIdx": 38,
+              "EndSegmentIdx": 65,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            },
+            {
+              "Ordinal": 3,
+              "StartMs": 1758860,
+              "EndMs": 2862440,
+              "StartSegmentIdx": 66,
+              "EndSegmentIdx": 105,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            },
+            {
+              "Ordinal": 4,
+              "StartMs": 2862440,
+              "EndMs": 4771470,
+              "StartSegmentIdx": 106,
+              "EndSegmentIdx": 174,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            }
+          ],
+          "final_titles": [
+            {
+              "TitleSource": "Course Introduction \u0026 What Is a Distributed System? • Why Build Distributed Systems? Core Motivations \u0026 Challenges",
+              "TitleTranslated": "课程导论与分布式系统定义 • 为何构建分布式系统？核心动因与挑战",
+              "SummaryMD": "开篇介绍课程编号6824及核心目标，明确定义分布式系统为“通过网络协同工作的多台计算机集合”，并列举典型应用场景（大型网站存储、MapReduce计算、P2P文件共享），强调其在现代关键基础设施中的基础地位。 • 系统阐述构建分布式系统的四大动因：提升性能（并行化）、实现容错（冗余备份）、适应物理分布（如跨地域银行系统）及达成安全目标（隔离不可信代码）。继而剖析其固有难点：并发编程复杂性、部分故障的不可预测性，以及实现理想线性加速比的技术障碍。"
+            },
+            {
+              "TitleSource": "Course Structure, Labs \u0026 Infrastructure Abstractions",
+              "TitleTranslated": "课程结构、实验与基础设施抽象",
+              "SummaryMD": "详述课程组织：授课、论文研读、两次考试及四次编程实验（Lab1 MapReduce、Lab2-3 Raft容错、Lab4分片键值服务）。重点阐释课程核心思想——为上层应用提供简化接口，即通过抽象隐藏分布式本质，使应用能像使用单机文件系统一样便捷地调用高性能、高容错的分布式存储与计算服务。"
+            },
+            {
+              "TitleSource": "Cross-Cutting Themes: Performance, Fault Tolerance \u0026 Consistency",
+              "TitleTranslated": "三大交叉主题：性能、容错性与一致性",
+              "SummaryMD": "深入解析贯穿全课的三大技术主题：性能（可扩展加速比的原理、瓶颈与实例分析）、容错性（可用性与可恢复性的定义、非易失性存储与复制的关键作用）及一致性（以键值服务为例，对比强一致性与弱一致性的语义、实现代价及地理分布带来的通信延迟挑战）。"
+            },
+            {
+              "TitleSource": "Case Study: MapReduce in Depth",
+              "TitleTranslated": "案例精析：MapReduce深度解析",
+              "SummaryMD": "以MapReduce为详细案例，完整呈现其设计动机（应对海量数据处理需求）、编程模型（map/reduce函数、job/task概念）、执行流程（输入分片、本地化计算、shuffle数据重分布、reduce聚合）及底层架构（GFS存储、master-worker模型）。同时讨论其局限性（单阶段流水线）及现代演进（流式处理、网络优化）。"
+            }
+          ],
+          "static_metrics": {
+            "raw_chapter_count": 5,
+            "final_chapter_count": 4,
+            "mean_dur_ms": 1192867,
+            "min_dur_ms": 731835,
+            "max_dur_ms": 1909030,
+            "merge_actions": 1,
+            "split_actions": 0,
+            "boundary_jitter_ms": 32303
+          },
+          "glossary_entry_count": 23,
+          "speaker_hint_count": 1,
+          "reference_card_chars": 689
+        }
+      ],
+      "judge": {
+        "candidate_model": "qwen-plus-latest",
+        "judge_model": "kimi-k2-thinking",
+        "runs": 1,
+        "wall_time_ms": 287634,
+        "boundary_scores": [
+          {
+            "boundary_idx": 0,
+            "boundary_coherence": 3,
+            "rationale": "Cut splits Q\u0026A flow between course logistics and infrastructure discussion, reasonable but slightly abrupt."
+          },
+          {
+            "boundary_idx": 1,
+            "boundary_coherence": 1,
+            "rationale": "Cut occurs mid-concept during key-value service consistency example, breaking the explanation."
+          },
+          {
+            "boundary_idx": 2,
+            "boundary_coherence": 5,
+            "rationale": "Speaker explicitly concludes consistency discussion and transitions to MapReduce case study."
+          }
+        ],
+        "chapter_scores": [
+          {
+            "chapter_idx": 0,
+            "title_quality": 5,
+            "topic_completeness": 3,
+            "rationale": "Title accurately reflects content; chapter mixes course intro with some motivation material."
+          },
+          {
+            "chapter_idx": 1,
+            "title_quality": 0,
+            "topic_completeness": 1,
+            "rationale": "Title is wrong for infrastructure/implementation content; chapter mixes multiple distinct topics."
+          },
+          {
+            "chapter_idx": 2,
+            "title_quality": 1,
+            "topic_completeness": 5,
+            "rationale": "Title mentions three themes but only covers consistency; chapter is coherent deep-dive on consistency."
+          },
+          {
+            "chapter_idx": 3,
+            "title_quality": 5,
+            "topic_completeness": 5,
+            "rationale": "Title accurately describes MapReduce case study; chapter is fully coherent and complete."
+          }
+        ],
+        "boundary_avg": 3,
+        "title_avg": 2.75,
+        "topic_avg": 3.5,
+        "total": 3.0833333333333335
+      },
+      "chapter_counts_per_run": [
+        4,
+        4,
+        4
+      ],
+      "stability_note": "STABLE: every run produced 4 chapters",
+      "worst_boundaries": [
+        {
+          "boundary_idx": 1,
+          "boundary_coherence": 1,
+          "rationale": "Cut occurs mid-concept during key-value service consistency example, breaking the explanation."
+        },
+        {
+          "boundary_idx": 0,
+          "boundary_coherence": 3,
+          "rationale": "Cut splits Q\u0026A flow between course logistics and infrastructure discussion, reasonable but slightly abrupt."
+        },
+        {
+          "boundary_idx": 2,
+          "boundary_coherence": 5,
+          "rationale": "Speaker explicitly concludes consistency discussion and transitions to MapReduce case study."
+        }
+      ]
+    },
+    "qwen3-235b-a22b-thinking-2507": {
+      "runs": [
+        {
+          "model": "qwen3-235b-a22b-thinking-2507",
+          "run_index": 1,
+          "wall_time_ms": 226819,
+          "raw_chapters": [
+            {
+              "start_segment_idx": 0,
+              "end_segment_idx": 38,
+              "title_source": "Course Introduction \u0026 Structure",
+              "title_translated": "课程导论与结构",
+              "summary_md": "介绍分布式系统课程核心概念、学习目标及课程架构。涵盖课程组件（讲座、论文、实验）、评分机制和实验室序列设计，强调分布式系统在现代基础设施中的关键作用。"
+            },
+            {
+              "start_segment_idx": 39,
+              "end_segment_idx": 106,
+              "title_source": "Core Challenges in Distributed Systems",
+              "title_translated": "分布式系统核心挑战",
+              "summary_md": "深入解析分布式系统三大核心挑战：性能可扩展性（scalable speedup）、容错性设计（fault tolerance）及一致性模型（consistency models）。通过实际案例说明部分故障（partial failures）处理、复制管理及弱一致性系统的工程权衡。"
+            },
+            {
+              "start_segment_idx": 107,
+              "end_segment_idx": 174,
+              "title_source": "MapReduce Case Study",
+              "title_translated": "MapReduce 案例研究",
+              "summary_md": "以MapReduce框架为实例，详解分布式计算系统设计原理。涵盖工作流程（map/reduce阶段）、数据分片（sharding）、网络瓶颈优化及GFS集成，展示如何通过抽象简化大规模数据处理。"
+            }
+          ],
+          "validation_ok": true,
+          "final_ranges": [
+            {
+              "Ordinal": 1,
+              "StartMs": 0,
+              "EndMs": 1027025,
+              "StartSegmentIdx": 0,
+              "EndSegmentIdx": 38,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            },
+            {
+              "Ordinal": 2,
+              "StartMs": 1027025,
+              "EndMs": 2903950,
+              "StartSegmentIdx": 39,
+              "EndSegmentIdx": 106,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            },
+            {
+              "Ordinal": 3,
+              "StartMs": 2903950,
+              "EndMs": 4771470,
+              "StartSegmentIdx": 107,
+              "EndSegmentIdx": 174,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            }
+          ],
+          "final_titles": [
+            {
+              "TitleSource": "Course Introduction \u0026 Structure",
+              "TitleTranslated": "课程导论与结构",
+              "SummaryMD": "介绍分布式系统课程核心概念、学习目标及课程架构。涵盖课程组件（讲座、论文、实验）、评分机制和实验室序列设计，强调分布式系统在现代基础设施中的关键作用。"
+            },
+            {
+              "TitleSource": "Core Challenges in Distributed Systems",
+              "TitleTranslated": "分布式系统核心挑战",
+              "SummaryMD": "深入解析分布式系统三大核心挑战：性能可扩展性（scalable speedup）、容错性设计（fault tolerance）及一致性模型（consistency models）。通过实际案例说明部分故障（partial failures）处理、复制管理及弱一致性系统的工程权衡。"
+            },
+            {
+              "TitleSource": "MapReduce Case Study",
+              "TitleTranslated": "MapReduce 案例研究",
+              "SummaryMD": "以MapReduce框架为实例，详解分布式计算系统设计原理。涵盖工作流程（map/reduce阶段）、数据分片（sharding）、网络瓶颈优化及GFS集成，展示如何通过抽象简化大规模数据处理。"
+            }
+          ],
+          "static_metrics": {
+            "raw_chapter_count": 3,
+            "final_chapter_count": 3,
+            "mean_dur_ms": 1590490,
+            "min_dur_ms": 1027025,
+            "max_dur_ms": 1876925,
+            "merge_actions": 0,
+            "split_actions": 0,
+            "boundary_jitter_ms": 52632
+          },
+          "glossary_entry_count": 11,
+          "speaker_hint_count": 1,
+          "reference_card_chars": 747
+        },
+        {
+          "model": "qwen3-235b-a22b-thinking-2507",
+          "run_index": 2,
+          "wall_time_ms": 49986,
+          "raw_chapters": [
+            {
+              "start_segment_idx": 0,
+              "end_segment_idx": 38,
+              "title_source": "Course Introduction \u0026 Logistics",
+              "title_translated": "课程导论与教学安排",
+              "summary_md": "介绍分布式系统课程目标、教学团队构成、评估方式及实验要求。重点说明课程网站、Piazza问答平台使用规范，以及四阶段实验项目（含MapReduce和Raft实现）的时间安排与评分标准。"
+            },
+            {
+              "start_segment_idx": 39,
+              "end_segment_idx": 46,
+              "title_source": "Infrastructure Abstractions",
+              "title_translated": "基础设施抽象模型",
+              "summary_md": "阐述分布式系统三大核心基础设施：存储、计算与通信。强调存储系统的抽象化目标——向应用层提供类单机系统的简单接口，同时实现高性能与容错能力。指出课程将聚焦存储与计算系统，通信仅作为实现工具。"
+            },
+            {
+              "start_segment_idx": 47,
+              "end_segment_idx": 66,
+              "title_source": "Implementation \u0026 Performance",
+              "title_translated": "实现机制与性能优化",
+              "summary_md": "分析分布式系统实现的关键技术（RPC、线程）与性能挑战。详解可扩展性概念：通过增加计算资源实现线性性能提升，但受限于瓶颈转移问题（如数据库成为Web服务器扩展后的瓶颈）。"
+            },
+            {
+              "start_segment_idx": 67,
+              "end_segment_idx": 83,
+              "title_source": "Fault Tolerance Fundamentals",
+              "title_translated": "容错基础原理",
+              "summary_md": "探讨大规模分布式系统中故障的必然性及其应对策略。区分可用性（故障时持续服务）与可恢复性（修复后恢复服务），重点说明非易失性存储与复制技术在容错设计中的核心作用。"
+            },
+            {
+              "start_segment_idx": 84,
+              "end_segment_idx": 106,
+              "title_source": "Consistency Models",
+              "title_translated": "一致性模型解析",
+              "summary_md": "通过键值存储案例说明分布式一致性挑战。对比强一致性（读取最新写入值）与弱一致性（允许陈旧数据）的实现代价，分析地理复制场景下网络延迟对强一致性的制约。"
+            },
+            {
+              "start_segment_idx": 107,
+              "end_segment_idx": 174,
+              "title_source": "MapReduce Case Study",
+              "title_translated": "MapReduce案例研究",
+              "summary_md": "深度解析Google MapReduce框架：设计动机（处理海量数据）、编程模型（Map/Reduce函数）、数据流（输入分片→Map→Shuffle→Reduce→输出）。结合GFS存储系统说明网络优化策略，并讨论现代分布式计算的发展演进。"
+            }
+          ],
+          "validation_ok": true,
+          "final_ranges": [
+            {
+              "Ordinal": 1,
+              "StartMs": 0,
+              "EndMs": 1027025,
+              "StartSegmentIdx": 0,
+              "EndSegmentIdx": 38,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            },
+            {
+              "Ordinal": 2,
+              "StartMs": 1027025,
+              "EndMs": 1758860,
+              "StartSegmentIdx": 39,
+              "EndSegmentIdx": 66,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            },
+            {
+              "Ordinal": 3,
+              "StartMs": 1758860,
+              "EndMs": 2233680,
+              "StartSegmentIdx": 67,
+              "EndSegmentIdx": 83,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            },
+            {
+              "Ordinal": 4,
+              "StartMs": 2233680,
+              "EndMs": 2903950,
+              "StartSegmentIdx": 84,
+              "EndSegmentIdx": 106,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            },
+            {
+              "Ordinal": 5,
+              "StartMs": 2903950,
+              "EndMs": 4771470,
+              "StartSegmentIdx": 107,
+              "EndSegmentIdx": 174,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            }
+          ],
+          "final_titles": [
+            {
+              "TitleSource": "Course Introduction \u0026 Logistics",
+              "TitleTranslated": "课程导论与教学安排",
+              "SummaryMD": "介绍分布式系统课程目标、教学团队构成、评估方式及实验要求。重点说明课程网站、Piazza问答平台使用规范，以及四阶段实验项目（含MapReduce和Raft实现）的时间安排与评分标准。"
+            },
+            {
+              "TitleSource": "Infrastructure Abstractions • Implementation \u0026 Performance",
+              "TitleTranslated": "基础设施抽象模型 • 实现机制与性能优化",
+              "SummaryMD": "阐述分布式系统三大核心基础设施：存储、计算与通信。强调存储系统的抽象化目标——向应用层提供类单机系统的简单接口，同时实现高性能与容错能力。指出课程将聚焦存储与计算系统，通信仅作为实现工具。 • 分析分布式系统实现的关键技术（RPC、线程）与性能挑战。详解可扩展性概念：通过增加计算资源实现线性性能提升，但受限于瓶颈转移问题（如数据库成为Web服务器扩展后的瓶颈）。"
+            },
+            {
+              "TitleSource": "Fault Tolerance Fundamentals",
+              "TitleTranslated": "容错基础原理",
+              "SummaryMD": "探讨大规模分布式系统中故障的必然性及其应对策略。区分可用性（故障时持续服务）与可恢复性（修复后恢复服务），重点说明非易失性存储与复制技术在容错设计中的核心作用。"
+            },
+            {
+              "TitleSource": "Consistency Models",
+              "TitleTranslated": "一致性模型解析",
+              "SummaryMD": "通过键值存储案例说明分布式一致性挑战。对比强一致性（读取最新写入值）与弱一致性（允许陈旧数据）的实现代价，分析地理复制场景下网络延迟对强一致性的制约。"
+            },
+            {
+              "TitleSource": "MapReduce Case Study",
+              "TitleTranslated": "MapReduce案例研究",
+              "SummaryMD": "深度解析Google MapReduce框架：设计动机（处理海量数据）、编程模型（Map/Reduce函数）、数据流（输入分片→Map→Shuffle→Reduce→输出）。结合GFS存储系统说明网络优化策略，并讨论现代分布式计算的发展演进。"
+            }
+          ],
+          "static_metrics": {
+            "raw_chapter_count": 6,
+            "final_chapter_count": 5,
+            "mean_dur_ms": 954294,
+            "min_dur_ms": 474820,
+            "max_dur_ms": 1867520,
+            "merge_actions": 1,
+            "split_actions": 0,
+            "boundary_jitter_ms": 28045
+          },
+          "glossary_entry_count": 16,
+          "speaker_hint_count": 1,
+          "reference_card_chars": 699
+        },
+        {
+          "model": "qwen3-235b-a22b-thinking-2507",
+          "run_index": 3,
+          "wall_time_ms": 41700,
+          "raw_chapters": [
+            {
+              "start_segment_idx": 0,
+              "end_segment_idx": 17,
+              "title_source": "Course Introduction \u0026 Distributed Systems Fundamentals",
+              "title_translated": "课程导论与分布式系统基础",
+              "summary_md": "介绍分布式系统定义、核心特征（多计算机协作、网络通信）及构建原因（性能、容错、物理分布、安全）。强调单机优先原则及分布式系统复杂性根源。"
+            },
+            {
+              "start_segment_idx": 18,
+              "end_segment_idx": 38,
+              "title_source": "Course Structure \u0026 Logistics",
+              "title_translated": "课程结构与教学安排",
+              "summary_md": "详细说明课程组件（讲座、论文、实验、考试）、评分机制、实验室要求及Piazza平台使用规范。重点强调实验调试挑战与提前规划必要性。"
+            },
+            {
+              "start_segment_idx": 39,
+              "end_segment_idx": 82,
+              "title_source": "Core Concepts: Performance \u0026 Fault Tolerance",
+              "title_translated": "核心概念：性能与容错机制",
+              "summary_md": "解析分布式基础设施类型（存储/计算/通信）、可扩展加速比原理、容错设计（非易失存储、复制管理）及物理分布对系统设计的影响。"
+            },
+            {
+              "start_segment_idx": 83,
+              "end_segment_idx": 106,
+              "title_source": "Consistency Models in Distributed Storage",
+              "title_translated": "分布式存储中的一致性模型",
+              "summary_md": "通过键值服务案例说明强一致性与弱一致性差异，分析跨地域复制对通信延迟的影响，阐释最终一致性设计的性能权衡。"
+            },
+            {
+              "start_segment_idx": 107,
+              "end_segment_idx": 174,
+              "title_source": "MapReduce Case Study \u0026 Implementation",
+              "title_translated": "MapReduce案例研究与实现解析",
+              "summary_md": "深度剖析MapReduce架构（map/reduce阶段、worker/master分工）、GFS集成、数据分片机制及网络瓶颈优化策略，结合课程实验要求说明技术演进。"
+            }
+          ],
+          "validation_ok": true,
+          "final_ranges": [
+            {
+              "Ordinal": 1,
+              "StartMs": 0,
+              "EndMs": 511605,
+              "StartSegmentIdx": 0,
+              "EndSegmentIdx": 17,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            },
+            {
+              "Ordinal": 2,
+              "StartMs": 511605,
+              "EndMs": 1027025,
+              "StartSegmentIdx": 18,
+              "EndSegmentIdx": 38,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            },
+            {
+              "Ordinal": 3,
+              "StartMs": 1027025,
+              "EndMs": 2233680,
+              "StartSegmentIdx": 39,
+              "EndSegmentIdx": 82,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            },
+            {
+              "Ordinal": 4,
+              "StartMs": 2233680,
+              "EndMs": 2903950,
+              "StartSegmentIdx": 83,
+              "EndSegmentIdx": 106,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            },
+            {
+              "Ordinal": 5,
+              "StartMs": 2903950,
+              "EndMs": 4771470,
+              "StartSegmentIdx": 107,
+              "EndSegmentIdx": 174,
+              "StartCutSilenceMs": 0,
+              "EndCutSilenceMs": 0
+            }
+          ],
+          "final_titles": [
+            {
+              "TitleSource": "Course Introduction \u0026 Distributed Systems Fundamentals",
+              "TitleTranslated": "课程导论与分布式系统基础",
+              "SummaryMD": "介绍分布式系统定义、核心特征（多计算机协作、网络通信）及构建原因（性能、容错、物理分布、安全）。强调单机优先原则及分布式系统复杂性根源。"
+            },
+            {
+              "TitleSource": "Course Structure \u0026 Logistics",
+              "TitleTranslated": "课程结构与教学安排",
+              "SummaryMD": "详细说明课程组件（讲座、论文、实验、考试）、评分机制、实验室要求及Piazza平台使用规范。重点强调实验调试挑战与提前规划必要性。"
+            },
+            {
+              "TitleSource": "Core Concepts: Performance \u0026 Fault Tolerance",
+              "TitleTranslated": "核心概念：性能与容错机制",
+              "SummaryMD": "解析分布式基础设施类型（存储/计算/通信）、可扩展加速比原理、容错设计（非易失存储、复制管理）及物理分布对系统设计的影响。"
+            },
+            {
+              "TitleSource": "Consistency Models in Distributed Storage",
+              "TitleTranslated": "分布式存储中的一致性模型",
+              "SummaryMD": "通过键值服务案例说明强一致性与弱一致性差异，分析跨地域复制对通信延迟的影响，阐释最终一致性设计的性能权衡。"
+            },
+            {
+              "TitleSource": "MapReduce Case Study \u0026 Implementation",
+              "TitleTranslated": "MapReduce案例研究与实现解析",
+              "SummaryMD": "深度剖析MapReduce架构（map/reduce阶段、worker/master分工）、GFS集成、数据分片机制及网络瓶颈优化策略，结合课程实验要求说明技术演进。"
+            }
+          ],
+          "static_metrics": {
+            "raw_chapter_count": 5,
+            "final_chapter_count": 5,
+            "mean_dur_ms": 954294,
+            "min_dur_ms": 511605,
+            "max_dur_ms": 1867520,
+            "merge_actions": 0,
+            "split_actions": 0,
+            "boundary_jitter_ms": 49842
+          },
+          "glossary_entry_count": 10,
+          "speaker_hint_count": 1,
+          "reference_card_chars": 599
+        }
+      ],
+      "judge": {
+        "candidate_model": "qwen3-235b-a22b-thinking-2507",
+        "judge_model": "kimi-k2-thinking",
+        "runs": 1,
+        "wall_time_ms": 407865,
+        "boundary_scores": [
+          {
+            "boundary_idx": 0,
+            "boundary_coherence": 1,
+            "rationale": "Cut separates question from answer about grading mechanics, breaking conversational flow."
+          },
+          {
+            "boundary_idx": 1,
+            "boundary_coherence": 5,
+            "rationale": "Speaker explicitly concludes previous section and announces transition to MapReduce case study."
+          }
+        ],
+        "chapter_scores": [
+          {
+            "chapter_idx": 0,
+            "title_quality": 5,
+            "topic_completeness": 1,
+            "rationale": "Title accurately reflects content but chapter cuts off course mechanics Q\u0026A partway through."
+          },
+          {
+            "chapter_idx": 1,
+            "title_quality": 3,
+            "topic_completeness": 3,
+            "rationale": "Generic title for specific challenges; chapter mixes brief grading Q\u0026A with core challenges."
+          },
+          {
+            "chapter_idx": 2,
+            "title_quality": 5,
+            "topic_completeness": 5,
+            "rationale": "Title precisely describes MapReduce case study; chapter maintains coherent theme throughout."
+          }
+        ],
+        "boundary_avg": 3,
+        "title_avg": 4.333333333333333,
+        "topic_avg": 3,
+        "total": 3.444444444444444
+      },
+      "chapter_counts_per_run": [
+        3,
+        5,
+        5
+      ],
+      "stability_note": "VARIABLE: chapter counts ranged 3..5 across 3 runs",
+      "worst_boundaries": [
+        {
+          "boundary_idx": 0,
+          "boundary_coherence": 1,
+          "rationale": "Cut separates question from answer about grading mechanics, breaking conversational flow."
+        },
+        {
+          "boundary_idx": 1,
+          "boundary_coherence": 5,
+          "rationale": "Speaker explicitly concludes previous section and announces transition to MapReduce case study."
+        }
+      ]
+    }
+  }
+}

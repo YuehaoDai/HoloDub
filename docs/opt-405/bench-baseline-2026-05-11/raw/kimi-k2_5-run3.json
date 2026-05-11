@@ -1,0 +1,158 @@
+{
+  "model": "kimi-k2.5",
+  "run_index": 3,
+  "wall_time_ms": 36584,
+  "raw_chapters": [
+    {
+      "start_segment_idx": 0,
+      "end_segment_idx": 17,
+      "title_source": "Introduction: What is Distributed Systems?",
+      "title_translated": "导论：什么是分布式系统？",
+      "summary_md": "介绍分布式系统的定义、核心特征（多台计算机通过网络协作完成统一任务），以及构建分布式系统的四大动机：性能（并行计算）、容错、物理分布需求和安全隔离。同时概述了分布式系统面临的主要挑战：并发编程复杂性、部分故障和性能扩展难题。"
+    },
+    {
+      "start_segment_idx": 18,
+      "end_segment_idx": 38,
+      "title_source": "Course Logistics \u0026 Structure",
+      "title_translated": "课程安排与结构",
+      "summary_md": "讲解课程网站、Piazza讨论区、助教安排等基本信息，详细介绍课程组成部分：讲座、论文阅读、两次考试、四个编程实验（Lab 1-4）以及可选的期末项目。重点说明了实验评分方式、调试建议，并回答了关于成绩构成的学生提问。"
+    },
+    {
+      "start_segment_idx": 39,
+      "end_segment_idx": 46,
+      "title_source": "Infrastructure Abstractions",
+      "title_translated": "基础设施抽象",
+      "summary_md": "阐述课程的核心视角——为应用程序提供基础设施，重点讨论存储、计算和通信三大基础设施类型。强调目标是构建能够隐藏分布式本质的抽象接口，使分布式系统表现得如同非分布式系统一样简单。"
+    },
+    {
+      "start_segment_idx": 47,
+      "end_segment_idx": 65,
+      "title_source": "Implementation \u0026 Performance (Scalability)",
+      "title_translated": "实现与性能（可扩展性）",
+      "summary_md": "介绍实现分布式系统的关键技术：远程过程调用（RPC）、线程和并发控制（锁）。深入讨论可扩展加速（scalable speedup）的概念，通过网站架构示例说明如何通过增加计算机数量获得线性性能提升，以及瓶颈转移问题。"
+    },
+    {
+      "start_segment_idx": 66,
+      "end_segment_idx": 82,
+      "title_source": "Fault Tolerance",
+      "title_translated": "容错机制",
+      "summary_md": "讲解大规模分布式系统中故障的必然性（千台机器每天约3次故障），介绍容错的两个核心概念：可用性（故障时继续服务）和可恢复性（修复后继续正确运行）。讨论实现容错的两大工具：非易失性存储和复制技术，以及复制管理中的同步挑战。"
+    },
+    {
+      "start_segment_idx": 83,
+      "end_segment_idx": 106,
+      "title_source": "Consistency Models",
+      "title_translated": "一致性模型",
+      "summary_md": "以键值服务为例引入一致性问题，说明复制导致的数据版本不一致风险。对比强一致性（读取最新写入）与弱一致性（可能读取旧值），分析强一致性的通信开销（尤其跨数据中心场景），以及弱一致性在性能优化中的实际应用价值。"
+    },
+    {
+      "start_segment_idx": 107,
+      "end_segment_idx": 174,
+      "title_source": "Case Study: MapReduce",
+      "title_translated": "案例研究：MapReduce",
+      "summary_md": "详细讲解Google MapReduce框架：设计动机（让非专家能编写大规模分布式计算）、编程模型（map和reduce函数）、执行架构（master-worker协调）、数据流（输入→map→本地磁盘→shuffle→reduce→GFS输出）、与GFS的协同优化，以及2004年网络带宽瓶颈对设计决策的影响。"
+    }
+  ],
+  "validation_ok": true,
+  "final_ranges": [
+    {
+      "Ordinal": 1,
+      "StartMs": 0,
+      "EndMs": 511605,
+      "StartSegmentIdx": 0,
+      "EndSegmentIdx": 17,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    },
+    {
+      "Ordinal": 2,
+      "StartMs": 511605,
+      "EndMs": 1027025,
+      "StartSegmentIdx": 18,
+      "EndSegmentIdx": 38,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    },
+    {
+      "Ordinal": 3,
+      "StartMs": 1027025,
+      "EndMs": 1758860,
+      "StartSegmentIdx": 39,
+      "EndSegmentIdx": 65,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    },
+    {
+      "Ordinal": 4,
+      "StartMs": 1758860,
+      "EndMs": 2233680,
+      "StartSegmentIdx": 66,
+      "EndSegmentIdx": 82,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    },
+    {
+      "Ordinal": 5,
+      "StartMs": 2233680,
+      "EndMs": 2903950,
+      "StartSegmentIdx": 83,
+      "EndSegmentIdx": 106,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    },
+    {
+      "Ordinal": 6,
+      "StartMs": 2903950,
+      "EndMs": 4771470,
+      "StartSegmentIdx": 107,
+      "EndSegmentIdx": 174,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    }
+  ],
+  "final_titles": [
+    {
+      "TitleSource": "Introduction: What is Distributed Systems?",
+      "TitleTranslated": "导论：什么是分布式系统？",
+      "SummaryMD": "介绍分布式系统的定义、核心特征（多台计算机通过网络协作完成统一任务），以及构建分布式系统的四大动机：性能（并行计算）、容错、物理分布需求和安全隔离。同时概述了分布式系统面临的主要挑战：并发编程复杂性、部分故障和性能扩展难题。"
+    },
+    {
+      "TitleSource": "Course Logistics \u0026 Structure",
+      "TitleTranslated": "课程安排与结构",
+      "SummaryMD": "讲解课程网站、Piazza讨论区、助教安排等基本信息，详细介绍课程组成部分：讲座、论文阅读、两次考试、四个编程实验（Lab 1-4）以及可选的期末项目。重点说明了实验评分方式、调试建议，并回答了关于成绩构成的学生提问。"
+    },
+    {
+      "TitleSource": "Infrastructure Abstractions • Implementation \u0026 Performance (Scalability)",
+      "TitleTranslated": "基础设施抽象 • 实现与性能（可扩展性）",
+      "SummaryMD": "阐述课程的核心视角——为应用程序提供基础设施，重点讨论存储、计算和通信三大基础设施类型。强调目标是构建能够隐藏分布式本质的抽象接口，使分布式系统表现得如同非分布式系统一样简单。 • 介绍实现分布式系统的关键技术：远程过程调用（RPC）、线程和并发控制（锁）。深入讨论可扩展加速（scalable speedup）的概念，通过网站架构示例说明如何通过增加计算机数量获得线性性能提升，以及瓶颈转移问题。"
+    },
+    {
+      "TitleSource": "Fault Tolerance",
+      "TitleTranslated": "容错机制",
+      "SummaryMD": "讲解大规模分布式系统中故障的必然性（千台机器每天约3次故障），介绍容错的两个核心概念：可用性（故障时继续服务）和可恢复性（修复后继续正确运行）。讨论实现容错的两大工具：非易失性存储和复制技术，以及复制管理中的同步挑战。"
+    },
+    {
+      "TitleSource": "Consistency Models",
+      "TitleTranslated": "一致性模型",
+      "SummaryMD": "以键值服务为例引入一致性问题，说明复制导致的数据版本不一致风险。对比强一致性（读取最新写入）与弱一致性（可能读取旧值），分析强一致性的通信开销（尤其跨数据中心场景），以及弱一致性在性能优化中的实际应用价值。"
+    },
+    {
+      "TitleSource": "Case Study: MapReduce",
+      "TitleTranslated": "案例研究：MapReduce",
+      "SummaryMD": "详细讲解Google MapReduce框架：设计动机（让非专家能编写大规模分布式计算）、编程模型（map和reduce函数）、执行架构（master-worker协调）、数据流（输入→map→本地磁盘→shuffle→reduce→GFS输出）、与GFS的协同优化，以及2004年网络带宽瓶颈对设计决策的影响。"
+    }
+  ],
+  "static_metrics": {
+    "raw_chapter_count": 7,
+    "final_chapter_count": 6,
+    "mean_dur_ms": 795245,
+    "min_dur_ms": 474820,
+    "max_dur_ms": 1867520,
+    "merge_actions": 1,
+    "split_actions": 0,
+    "boundary_jitter_ms": 40561
+  },
+  "glossary_entry_count": 23,
+  "speaker_hint_count": 1,
+  "reference_card_chars": 954
+}

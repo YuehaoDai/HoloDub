@@ -1,0 +1,32 @@
+model: qwen-max-latest
+best_run: 1 (validation_ok=true) chapters=4
+static metrics: mean=19.9min min=10.5min max=31.8min merge=0 split=0
+
+ch01 [0:00 — 17:07] 17.1min segs[0..37]
+  src: Course Introduction and Logistics
+  tgt: 课程介绍与安排
+
+  first_seg: All right, let's get started. This is 6824, distributed systems.
+  last_seg:  Okay. Back to labs. The lab grades. That we give you. You hand in your lab code. And we run some. Tests. And you're grad…
+
+ch02 [17:07 — 37:13] 20.1min segs[38..82]
+  src: Distributed Systems Overview
+  tgt: 分布式系统概览
+
+  first_seg: And have a lot of concurrency. And communication. Sort of strange. Difficult to debug. Errors can crop up. So you really…
+  last_seg:  As you'll see, it's pretty complex. A
+
+ch03 [37:13 — 47:42] 10.5min segs[83..105]
+  src: Fault Tolerance and Consistency
+  tgt: 容错与一致性
+
+  first_seg: final topic, final cross -cutting topic is consistency.
+  last_seg:  This is 10 or 20 or 30 milliseconds on machines that, after all, will execute like a billion instructions per second. So…
+
+ch04 [47:42 — 79:31] 31.8min segs[106..174]
+  src: Case Study: MapReduce
+  tgt: 案例研究：MapReduce
+
+  first_seg: All right. So, that's a lightning sort of preview of the technical ideas in the course.
+  last_seg:  We have a lab due at the end of next week in which you'll write your own somewhat simplified MapReduce. So have fun with…
+

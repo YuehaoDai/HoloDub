@@ -102,10 +102,12 @@ flowchart LR
 | OPT-205 | Reasoning model 全场景化 | P2 | planned | 1d | - |
 | OPT-206 | Skills / Glossary 系统 | P2 | planned | 3d | - |
 | OPT-404 | Episode merge + 跨 chapter 一致性广播 | P2 | done | 3d | OPT-403 |
-| OPT-405 | Chapter-level Judge | P2 | planned | 2d | OPT-403, OPT-002 |
-| OPT-406 | Episode-level Judge productize（兼容 OPT-EPISODE-JUDGE-PROMOTE） | P2 | planned | 2d | OPT-404, OPT-405 |
-| OPT-407 | Closed-loop rework engine（三级 verdict → 返工调度） | P2 | planned | 5d | OPT-405, OPT-406, OPT-201 |
+| OPT-405 | LLM-Driven Chapterization（语义切分替代 DP） | P2 | done | 3d | OPT-403, OPT-402 |
+| OPT-405.1 | Multi-Model Chapterize Benchmark（kimi-k2.5 baseline） | P2 | done | 1d | OPT-405 |
+| OPT-406 | Episode-level Judge productize（兼容 OPT-EPISODE-JUDGE-PROMOTE） | P2 | planned | 2d | OPT-404, OPT-409 |
+| OPT-407 | Closed-loop rework engine（三级 verdict → 返工调度） | P2 | planned | 5d | OPT-409, OPT-406, OPT-201 |
 | OPT-408 | Multi-episode 调度 + GPU 公平性 | P2 | planned | 3d | OPT-403 |
+| OPT-409 | Chapter-level Judge（原 OPT-405 计划，2026-05-11 重编号；OPT-405 ID 已被 LLM-Driven Chapterization 占用） | P2 | planned | 2d | OPT-403, OPT-002 |
 | OPT-301 | DSPy 自动 prompt 优化 | P3 | planned | 5d | OPT-002, golden set 扩充 |
 | OPT-302 | 多模态 ASR backend | P3 | planned | 5d | - |
 | OPT-303 | 多租户权限 + tenant_key 强制 | P3 | planned | 5d | - |
@@ -142,29 +144,34 @@ flowchart TD
     OPT304 --> OPT306
     OPT001 --> OPT307
 
-    %% 长视频三层级线（OPT-401..408）
+    %% 长视频三层级线（OPT-401..409）
     subgraph long_video["长视频三层级（Episode → Chapter → Segment）"]
         direction TB
         OPT401[OPT-401 数据模型]
         OPT402[OPT-402 Episode pipeline + glossary]
-        OPT403[OPT-403 Chapterize + fan-out]
+        OPT403[OPT-403 Chapterize + fan-out（DP）]
         OPT404[OPT-404 Episode merge + 一致性广播]
-        OPT405[OPT-405 Chapter Judge]
+        OPT405[OPT-405 LLM-Driven Chapterize]
+        OPT405_1[OPT-405.1 Multi-Model Bench]
         OPT406[OPT-406 Episode Judge]
         OPT407[OPT-407 Closed-loop rework]
         OPT408[OPT-408 多 episode 调度 + GPU 公平]
+        OPT409[OPT-409 Chapter Judge]
     end
 
     OPT401 --> OPT402
     OPT401 --> OPT403
     OPT402 --> OPT403
+    OPT402 --> OPT405
     OPT403 --> OPT404
     OPT403 --> OPT405
     OPT403 --> OPT408
+    OPT403 --> OPT409
+    OPT405 --> OPT405_1
     OPT404 --> OPT406
-    OPT405 --> OPT406
-    OPT002 --> OPT405
-    OPT405 --> OPT407
+    OPT002 --> OPT409
+    OPT409 --> OPT406
+    OPT409 --> OPT407
     OPT406 --> OPT407
     OPT201 --> OPT407
 ```
@@ -743,32 +750,86 @@ flowchart TD
 
 ---
 
-#### OPT-405 Chapter-level Judge
+#### OPT-405 LLM-Driven Chapterization（语义切分替代 DP）
 
-- **Status**: planned
-- **Source**: 业务对话 2026-05
-- **Estimate**: 2d
-- **Depends on**: OPT-403, OPT-002
-- **背景**：OPT-002 segment-level judge 只能看单段（fidelity / fluency），看不到 chapter 内 narrative coherence、speaker voice 跨段稳定性、本 chapter 内的术语一致性。Chapter judge 在 chapter_merge 后异步跑一次，关注**章内**维度。
+- **Status**: done (2026-05-11; kimi-k2.5 baseline 锁定，DP 自动降级为 fallback)
+- **Source**: 业务对话 2026-05-11（用户对 OPT-403 DP 切分质量不满意，要求"先从语义上做一个大致的主题划分，对时长要求反而不应该限制太多"）
+- **Estimate**: 3d (实际 ~2d，借力 OPT-402 glossary 提取的 strict tool call 基础设施)
+- **Depends on**: OPT-403（fan-out + DP 兜底）, OPT-402（glossary 提取入口同 LLM 调用合并）
+- **历史说明**：本 ID 原计划 = "Chapter-level Judge"；2026-05-11 重定义为 LLM-Driven Chapterization。原 Chapter Judge 计划重编号到 [OPT-409](#opt-409-chapter-level-judge)，详见节 7 维护约定 + 节 6 archive 末尾说明。
+- **背景**：OPT-403 的 DP 切分（quadratic deviation from target + silence reward）能保证时长均匀，但完全不看语义；用户在 episode 142（79min）上发现 chapter 内"主题没说完就切掉、下一章接着补尾巴"，要求把整段 ASR 喂给 LLM 做语义优先的切分。
 - **Outcome**:
-  - 每个 chapter job 在 `completed` 状态额外 emit 一次 chapter judge 调用；判分写入 `jobs.chapter_judge_score / chapter_judge_meta`
-  - 评分维度（沿用 `scripts/episode_judge.ps1` 的 schema 但作用域 = chapter）：
-    - `narrative_coherence_within_chapter` (0..1)
-    - `speaker_voice_stability_within_chapter` (0..1)
-    - `terminology_consistency_within_chapter` (0..1)
-    - `overall_fidelity_chapter` / `overall_fluency_chapter`
-    - 弱段列表（top_3_weakest_segments，含 ordinal + issue + recommended_fix）
+  - `ExtractEpisodeGlossary`（`internal/llm/glossary.go`）的 strict tool call schema 扩 `chapters[]` 字段，与 glossary / speakers / reference_card 在同一次 LLM 调用里产出（避免双跑）
+  - 新增 `internal/chapterize/llm_apply.go` 包含三个纯函数：
+    - `ValidateLLMPlan`：拒收乱序 / 越界 / 重叠的 segment index
+    - `SnapBoundariesToSilences`：把 LLM 给的切点吸到最近的 ASR 静默缝（≥ `CHAPTERIZE_MIN_SILENCE_GAP_MS`，避免在词中间切）
+    - `EnforceHardConstraints`：< `CHAPTERIZE_HARD_MIN_MS` 的章节合并入邻居；> `CHAPTERIZE_HARD_MAX_MS` 的章节按内部最宽静默二分
+  - `internal/pipeline/stage_chapterize.go` `runEpisodeChapterize` 优先尝试 `tryLLMChapterPlan`，失败 / LLM 计划被拒才 fallback 到 OPT-403 DP
+  - 新增 DB 列 `episodes.llm_chapters JSONB`（migration `migrations/008_llm_chapters.sql`）持久化原始 LLM 计划，方便后续审计 / OPT-405.1 bench 复现
+  - 副产物（`internal/llm/client.go` 修复）：`doChatToolOnce` 检测到 model 名含 `thinking` 自动切换到 `c.thinkingHTTPClient`（10 min 超时），`glossary.go` 检测到 thinking model 自动把 `tool_choice` 从 `forceToolChoice("emit_episode_glossary")` 降为 `"auto"`（DashScope thinking endpoint 拒收 strict tool_choice）
 - **Verification**:
-  - 在 OPT-403 跑通的 3-chapter 测试视频上每 chapter 都生成 score
-  - 弱段列表与 segment-level judge 低分段的相关性 ≥ 0.7（验证两层 judge 互补、不重复）
-  - chapter judge cost ≈ chapter 段数 × $0.0005（小一个量级，可常态启用）
-- **Rollout**: L1→L4，env `CHAPTER_JUDGE_MODEL=qwen-turbo`，default observe-only（OPT-407 决策接入）
-- **Related rules**: [agent-design.mdc#3](../../.cursor/rules/agent-design.mdc), [llm-call-standards.mdc#1](../../.cursor/rules/llm-call-standards.mdc) (function calling)
+  - 端到端：episode 142 (79min, 176 segments) → kimi-k2.5 切出 8 chapters，全部通过 validate / snap / hard-constraint，无 fallback 触发
+  - LLM-as-judge 评分：boundary coherence + title quality + topic completeness 三维平均 4.76 / 5（OPT-405.1 baseline 见下条）
+  - 单元测试：`internal/chapterize/llm_apply_test.go` 覆盖空计划 / 单 chapter / 越界 / 时长超限 / 静默吸附 5 大类边界
+  - 兼容性：`CHAPTERIZE_LLM_DRIVEN=false` 时所有 OPT-403 DP 行为 100% 不变（feature flag 灰度可一键退化）
+- **Rollout**: L4 production, default `CHAPTERIZE_LLM_DRIVEN=true`, `GLOSSARY_MODEL=kimi-k2.5`（OPT-405.1 baseline 锁定）
+- **Related rules**: [agent-design.mdc#3](../../.cursor/rules/agent-design.mdc) (LLM tool call), [llm-call-standards.mdc#1](../../.cursor/rules/llm-call-standards.mdc) (function calling), [incremental-evolution.mdc#1](../../.cursor/rules/incremental-evolution.mdc) (feature flag + DP fallback)
 - **关键改动点**:
-  - 新增 `internal/llm/chapter_judge.go`（schema + tool def + Go entry）
-  - 新增 `migrations/00X_chapter_judge_score.sql`：`jobs` 加 `chapter_judge_score NUMERIC NULL, chapter_judge_meta JSONB NULL`
-  - `internal/pipeline/stage_chapter_merge.go` 完成后异步 dispatch chapter judge（同 OPT-002 模式）
-  - 前端：`EpisodeDetail.vue` 显示 chapter judge 分数热力图
+  - `internal/llm/glossary.go`：`emit_episode_glossary` schema 扩 `chapters[]`；新增 `isThinkingModelName` 帮助函数；`ToolChoice` 在 thinking model 上降为 `"auto"`
+  - `internal/llm/client.go`：`doChatToolOnce` 在 thinking model 上切到 `c.thinkingHTTPClient`（10 min timeout）
+  - `internal/chapterize/llm_apply.go` 新文件 + `internal/chapterize/llm_apply_test.go`
+  - `internal/pipeline/stage_chapterize.go`：`runEpisodeChapterize` 加 `tryLLMChapterPlan`；DP 降级为 fallback
+  - `internal/pipeline/stage_glossary_extract.go`：把 LLM 返回的 `chapters` marshal 成 `llmChaptersJSON` 持久化
+  - `internal/store/store.go`：`UpdateEpisodeGlossary` 接收 `llmChaptersJSON []byte` 一并写入
+  - `internal/models/models.go`：`Episode.LLMChapters datatypes.JSON`
+  - `internal/config/config.go`：`ChapterizeLLMDriven bool / ChapterizeHardMaxMs int64 / ChapterizeHardMinMs int64`
+  - migration `migrations/008_llm_chapters.sql`：`ALTER TABLE episodes ADD COLUMN IF NOT EXISTS llm_chapters JSONB`
+  - env：`CHAPTERIZE_LLM_DRIVEN=true / CHAPTERIZE_HARD_MAX_MS=2700000 / CHAPTERIZE_HARD_MIN_MS=300000`，`GLOSSARY_MODEL=kimi-k2.5`
+- **风险与待决策**:
+  - **LLM 切分比 DP 慢**：单次调用增加 ~10-30s（取决于 transcript 长度 + 模型），在 episode-level 一次性，可接受
+  - **kimi-k2.5 替代风险**：见 OPT-405.1 baseline，clear-win 0.70 分领先，但若未来 DashScope 改价格 / 下线，bench 工具可秒级换主用模型
+  - **DP fallback 永远要保留**：避免 LLM 调用 503 / token 超限时整条流水线挂掉
+- **PRs**: TBD
+
+---
+
+#### OPT-405.1 Multi-Model Chapterize Benchmark
+
+- **Status**: done (2026-05-11; baseline 锁定 kimi-k2.5 = 4.76 / 5)
+- **Source**: 业务对话 2026-05-11（OPT-405 落地后用户问"有没有改善方案"，建议先做多模型对比测试）
+- **Estimate**: 1d (实际 ~1d，含 kimi-k2-thinking 超时调试 + 6 模型完整跑批)
+- **Depends on**: OPT-405（被测对象）
+- **背景**：OPT-405 落地后只测了 kimi-k2.5，缺乏可量化的"为什么是 kimi-k2.5"证据。需要一个可复用的离线 benchmark：fix dataset / fix judge / multi-candidate / multi-run，输出排行榜，未来换 chapter 模型时秒级复评。
+- **Outcome**:
+  - 新增 CLI `cmd/chapterize-bench`（4 文件 ~1.4k 行）：`main.go` orchestrate + 缓存命中跳过；`runner.go` 单模型单 run 抽取 + validate + snap + hard-constraint + 静态指标；`judge.go` 调度 LLM-as-judge `score_chapter_cuts` strict tool call；`report.go` 渲染 markdown 排行榜 + 机器可读 JSON
+  - 新增 `internal/llm/bench.go` `Client.RunBenchToolCall` 通用入口，让离线工具复用主流水线的 retry / observability / timeout / thinking-model 透传逻辑
+  - 评判维度（0-5 各项，平均为 total）：
+    - boundary_coherence（每个 chapter 内主题封闭、不外溢）
+    - title_quality（title + title_translated 与 chapter 实际内容契合）
+    - topic_completeness（每章是否把主题"说明白"了，而不是说一半切走）
+  - **Baseline 结论**：episode 142（79min, 176 segments）× 6 candidates × 3 runs × 1 judge (kimi-k2-thinking) →
+    | 排名 | Model | Total | 备注 |
+    |---|---|---|---|
+    | 1 | **kimi-k2.5** | **4.76** | 8 chapters, 稳定 |
+    | 2 | qwen-max-latest | 4.06 | 6 chapters, 主题略粗 |
+    | 3 | deepseek-v3 | 3.81 | 7 chapters, title 准确度一般 |
+    | 4 | qwen-plus-latest | 3.27 | 5 chapters, 主题颗粒度过粗 |
+    | 5 | kimi-k2-thinking | 3.05 | 7 chapters, judge 跑超时多 |
+    | 6 | qwen3-235b-a22b-thinking-2507 | 2.18 | 4 chapters, 切太少 |
+- **Verification**:
+  - 6 模型全跑通，artefacts 完整存于 [`docs/opt-405/bench-baseline-2026-05-11/`](../../docs/opt-405/bench-baseline-2026-05-11/)（`report.md` / `report.json` / `raw/{model}-run{i}.json` / `judge/{model}-judgment.json` / `chapters-{model}.txt`）
+  - 缓存机制：重跑时 `judge/{model}-judgment.json` 命中即跳过，节省 ~70% 重跑时间
+  - thinking model 超时回归：本 OPT 暴露的 OPENAI_TIMEOUT_SECONDS=90 不够长问题已在 OPT-405 副产物里修掉（`doChatToolOnce` 自动切 `c.thinkingHTTPClient`）
+- **Rollout**: 离线工具，无 production rollout；`docs/opt-405/bench-README.md` 写明用法
+- **Related rules**: [agent-design.mdc#3](../../.cursor/rules/agent-design.mdc) (LLM-as-judge), [llm-call-standards.mdc#1](../../.cursor/rules/llm-call-standards.mdc) (strict tool schema), [testing-and-rollout.mdc#3](../../.cursor/rules/testing-and-rollout.mdc) (固定 dataset baseline)
+- **关键改动点**:
+  - `cmd/chapterize-bench/main.go / runner.go / judge.go / report.go` 新增
+  - `internal/llm/bench.go` 新增 `RunBenchToolCall`
+  - `docs/opt-405/bench-README.md` 新增使用说明
+  - `docs/opt-405/bench-baseline-2026-05-11/` baseline artefacts
+- **风险与待决策**:
+  - **Judge 模型本身偏见**：kimi-k2-thinking 评 kimi-k2.5 是否有"同源偏好"？mitigation：换 qwen3-thinking 或 deepseek 跨家族 judge 复跑一次（待立 follow-up）
+  - **单 episode dataset 偏少**：只跑了 79min lecture，新闻 / 访谈 / 综艺类型未覆盖；待 dataset 扩到 5 类型再 lock-in
 - **PRs**: TBD
 
 ---
@@ -778,7 +839,7 @@ flowchart TD
 - **Status**: planned (合并入 OPT-EPISODE-JUDGE-PROMOTE 候选)
 - **Source**: 业务对话 2026-05 + 节 6 "OPT-EPISODE-JUDGE-PROMOTE" 候选
 - **Estimate**: 2d
-- **Depends on**: OPT-404, OPT-405
+- **Depends on**: OPT-404, OPT-409（原 OPT-405 = Chapter Judge 已重编号，详见 §3 备注）
 - **背景**：`scripts/episode_judge.ps1` 已经在 job 131 验证完整可用。本 OPT 把它从一次性 PowerShell 提升为 Go API，做为 `episode_merge` 完成后自动触发的 stage。重点关注**跨章节**维度（segment / chapter judge 都看不到）：
   - 跨 chapter 术语漂移（chapter 1 用"分布式系统"，chapter 3 用"distributed systems"留英文 → 标记不一致）
   - 跨 chapter 角色 voice 漂移（讲师在 chapter 2 突然像换人）
@@ -810,7 +871,7 @@ flowchart TD
 - **Status**: planned
 - **Source**: 业务对话 2026-05
 - **Estimate**: 5d
-- **Depends on**: OPT-405, OPT-406, OPT-201
+- **Depends on**: OPT-409（原 OPT-405 = Chapter Judge 已重编号）, OPT-406, OPT-201
 - **背景**：三级 judge 落地后，要把"评分"转化为"行动"，否则只是 observe 装饰。本 OPT 是整个长视频改造的"大脑"，定义 verdict → action 决策表 + 收敛保证 + cost ceiling。
 - **决策表**：
 
@@ -889,6 +950,36 @@ flowchart TD
   - **多 worker 部署时的 sorted set 竞争**：用 redis `ZRANGEBYSCORE + WATCH` 或 `LMPOP`（redis 7+ 原生支持公平队列）
   - **eta 估算**：先用粗略平均（chapter wall time × pending_chapters），后续接 OPT-101 OTEL trace 数据更精准
   - **饥饿与优先级**：可选支持 `episode.priority`（urgent / normal / batch），结合公平调度，但默认走纯 episode 公平避免 priority 滥用
+- **PRs**: TBD
+
+---
+
+#### OPT-409 Chapter-level Judge
+
+- **Status**: planned
+- **Source**: 业务对话 2026-05；2026-05-11 从原 OPT-405 重编号（OPT-405 ID 已被 LLM-Driven Chapterization 占用，详见 §3 表格备注 + §7 维护约定）
+- **Estimate**: 2d
+- **Depends on**: OPT-403, OPT-002
+- **背景**：OPT-002 segment-level judge 只能看单段（fidelity / fluency），看不到 chapter 内 narrative coherence、speaker voice 跨段稳定性、本 chapter 内的术语一致性。Chapter judge 在 chapter_merge 后异步跑一次，关注**章内**维度。注意：本 OPT 关注 chapter **内部**质量（OPT-405 关注 chapter **切分** 质量），二者维度互补不重叠。
+- **Outcome**:
+  - 每个 chapter job 在 `completed` 状态额外 emit 一次 chapter judge 调用；判分写入 `jobs.chapter_judge_score / chapter_judge_meta`
+  - 评分维度（沿用 `scripts/episode_judge.ps1` 的 schema 但作用域 = chapter）：
+    - `narrative_coherence_within_chapter` (0..1)
+    - `speaker_voice_stability_within_chapter` (0..1)
+    - `terminology_consistency_within_chapter` (0..1)
+    - `overall_fidelity_chapter` / `overall_fluency_chapter`
+    - 弱段列表（top_3_weakest_segments，含 ordinal + issue + recommended_fix）
+- **Verification**:
+  - 在 OPT-403 / OPT-405 跑通的 N-chapter 测试视频（如 episode 142, 8 chapters）上每 chapter 都生成 score
+  - 弱段列表与 segment-level judge 低分段的相关性 ≥ 0.7（验证两层 judge 互补、不重复）
+  - chapter judge cost ≈ chapter 段数 × $0.0005（小一个量级，可常态启用）
+- **Rollout**: L1→L4，env `CHAPTER_JUDGE_MODEL=qwen-turbo`，default observe-only（OPT-407 决策接入）
+- **Related rules**: [agent-design.mdc#3](../../.cursor/rules/agent-design.mdc), [llm-call-standards.mdc#1](../../.cursor/rules/llm-call-standards.mdc) (function calling)
+- **关键改动点**:
+  - 新增 `internal/llm/chapter_judge.go`（schema + tool def + Go entry）
+  - 新增 `migrations/00X_chapter_judge_score.sql`：`jobs` 加 `chapter_judge_score NUMERIC NULL, chapter_judge_meta JSONB NULL`
+  - `internal/pipeline/stage_chapter_merge.go` 完成后异步 dispatch chapter judge（同 OPT-002 模式）
+  - 前端：`EpisodeDetail.vue` 显示 chapter judge 分数热力图
 - **PRs**: TBD
 
 ---
@@ -1128,7 +1219,20 @@ flowchart TD
   - 关键改动：`internal/episode/chapters_manifest.go` 新增 `ChaptersManifest` 结构（schema_version=1）+ `WriteChaptersJSON`（原子写、缩进、自动时戳）+ `Validate / SortChapters / ReadChaptersJSON`，配 7 个测试覆盖空 / 错版 / 乱序 / 缺文件等场景；`internal/pipeline/stage_episode_merge.go` 新增 `runEpisodeMerge`（1-chapter hardlink shortcut + N-chapter `ConcatChapterVideos` + 可选 master EBU R128 pass + 写 chapters.json + 更新 Episode.OutputRelPath/ChaptersManifestRelPath/OutputLayoutVersion=2 + 转 Completed 状态）+ `maybeEnqueueEpisodeMerge`（chapter 完成时 idempotent trigger）；`internal/pipeline/pipeline.go` 把 `runMerge` 输出路径切到统一 layout `episodes/{ep_id}/chapters/vp{vp}/ch{ord:02d}.mp4`（旧 `jobs/{id}/output/...` 仅作为 layout v1 兜底），加 `runChapterLoudnorm`（在 dub 上跑 EBU R128 双轨 normalisation）+ `persistChapterLoudnormStats` 用 flat key `vp{N}_chXX` 写到 `Episode.LoudnormStats` 避免与 master pass 冲突；`internal/http/router_episode_downloads.go` 新增三个下载端点 `GET /episodes/:id/download/final`、`GET /episodes/:id/chapters.json`、`GET /jobs/:id/download/final`，全部从 DB 读 relpath 不自行拼路径（lessons-learned rule 1）；前端 `ui/src/components/EpisodeDetail.vue` 增加 layout v1/v2 badge、loudnorm-applied 标识、chapterize / episode_merge 进度 pill、双语 chapter title 渲染（translated > source > "Chapter N"）+ 章节级下载按钮；`cmd/migrate-output/main.go` 新增 138 历史 episode 一次性 back-fill 工具（--dry-run/--use-hardlink/--keep-old/--episode-ids/--limit/--record）
   - 算法基线：[docs/opt-403/baseline-opt403-79min.json](../../docs/opt-403/baseline-opt403-79min.json)（OPT-403 + OPT-404 共享）
   - Back-fill 报告：[docs/opt-403/opt403-backfill-dry-run.json](../../docs/opt-403/opt403-backfill-dry-run.json) — 74 episodes scanned，44 可迁移 (31 GB hardlink, 不重编码), 30 因历史 chapter `output_relpath` 为空需手动处置，总耗时 ~200ms
-  - 备注：OPT-405 chapter-level judge / OPT-406 episode-level judge productize 现可基于本 OPT 的 `chapters.json` + `Episode.OutputRelPath` 实现；多 voice profile 的 episode-level final（mixed-vp）暂留给 OPT-407 multi-track output
+  - 备注：OPT-409 chapter-level judge（原 OPT-405 计划，2026-05-11 重编号）/ OPT-406 episode-level judge productize 现可基于本 OPT 的 `chapters.json` + `Episode.OutputRelPath` 实现；多 voice profile 的 episode-level final（mixed-vp）暂留给 OPT-407 multi-track output
+- **OPT-405** LLM-Driven Chapterization（语义切分替代 DP）
+  - 实际工时：~2d
+  - CHANGELOG: [LLM-driven semantic chapterization (OPT-405)](../../CHANGELOG.md)
+  - 关键改动：`internal/llm/glossary.go` 在 `emit_episode_glossary` strict tool schema 上扩 `chapters[]` 字段（与 glossary / speakers / reference_card 同一次 LLM 调用产出），新增 `isThinkingModelName` 帮助函数 + `ToolChoice` 在 thinking model 上自动降为 `"auto"`（DashScope thinking endpoint 拒收 strict tool_choice）；`internal/llm/client.go` `doChatToolOnce` 检测 thinking model 自动切到 `c.thinkingHTTPClient`（10 min timeout），杜绝 OPT-405.1 baseline 跑批时 kimi-k2-thinking 系列超时；新增 `internal/chapterize/llm_apply.go` 三纯函数 `ValidateLLMPlan / SnapBoundariesToSilences / EnforceHardConstraints` 配套单测；`internal/pipeline/stage_chapterize.go` `runEpisodeChapterize` 优先 `tryLLMChapterPlan`，OPT-403 DP 降级为 fallback；`internal/pipeline/stage_glossary_extract.go` 把 `chapters[]` marshal 成 `llmChaptersJSON` 持久化；`internal/store/store.go` `UpdateEpisodeGlossary` 接收 `llmChaptersJSON []byte`；`internal/models/models.go` 加 `Episode.LLMChapters datatypes.JSON`；`internal/config/config.go` 加 `ChapterizeLLMDriven / ChapterizeHardMaxMs / ChapterizeHardMinMs`；migration `migrations/008_llm_chapters.sql` `ALTER TABLE episodes ADD COLUMN IF NOT EXISTS llm_chapters JSONB`；env `.env / .env.example / .env.production.example` 设 `CHAPTERIZE_LLM_DRIVEN=true / CHAPTERIZE_HARD_MAX_MS=2700000 / CHAPTERIZE_HARD_MIN_MS=300000`，`GLOSSARY_MODEL=kimi-k2.5`
+  - 验证：episode 142（79min, 176 segments）→ kimi-k2.5 切出 8 chapters，全部通过 validate / snap / hard-constraint，无 fallback 触发；OPT-405.1 LLM-as-judge 平均 4.76 / 5
+  - 备注：本 ID 原计划 = "Chapter-level Judge"；2026-05-11 重定义为 LLM-Driven Chapterization。原 Chapter Judge 计划重编号到 [OPT-409](#opt-409-chapter-level-judge)。承接：DP fallback 永久保留，OPT-403 算法不退役
+- **OPT-405.1** Multi-Model Chapterize Benchmark
+  - 实际工时：~1d
+  - CHANGELOG: [Multi-model chapterize benchmark CLI (OPT-405.1)](../../CHANGELOG.md)
+  - 关键改动：新 CLI `cmd/chapterize-bench/main.go / runner.go / judge.go / report.go` 4 文件 ~1.4k 行（main = orchestrate + 缓存命中跳过；runner = 单模型单 run 抽取 + validate/snap/hard-constraint + 静态指标；judge = `score_chapter_cuts` strict tool call；report = markdown 排行榜 + JSON）；`internal/llm/bench.go` 新增 `Client.RunBenchToolCall` 通用入口让离线工具复用主流水线 retry / observability / timeout / thinking-model 透传逻辑；`docs/opt-405/bench-README.md` 写明用法
+  - 验证 baseline: [docs/opt-405/bench-baseline-2026-05-11/](../../docs/opt-405/bench-baseline-2026-05-11/) — episode 142 × 6 candidates × 3 runs × 1 judge (kimi-k2-thinking)，**kimi-k2.5 = 4.76 clear-win**（runner-up qwen-max-latest = 4.06，gap +0.70）；artefacts 含 `report.md / report.json / raw/{model}-run{i}.json / judge/{model}-judgment.json / chapters-{model}.txt`
+  - 衍生 follow-up：(a) judge 跨家族复跑（用 qwen3-thinking 或 deepseek 做 judge 复评 kimi-k2.5，验证不存在"同源偏好"）；(b) dataset 扩到 5 类型（lecture / news / interview / variety / ASMR），目前只覆盖 lecture
+  - 备注：OPT-405 副产物（`doChatToolOnce` 自动切 `thinkingHTTPClient`）也是本 OPT 跑批时暴露的 90s 超时问题反向逼出的修复
 
 ---
 

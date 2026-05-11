@@ -1,0 +1,75 @@
+{
+  "candidate_model": "kimi-k2.5",
+  "judge_model": "kimi-k2-thinking",
+  "runs": 1,
+  "wall_time_ms": 599025,
+  "boundary_scores": [
+    {
+      "boundary_idx": 0,
+      "boundary_coherence": 5,
+      "rationale": "Explicit transition with speaker saying 'Let me talk about course structure' after finishing introduction."
+    },
+    {
+      "boundary_idx": 1,
+      "boundary_coherence": 3,
+      "rationale": "Student question about grades at segment 39 interrupts clean transition; topic shift is implied but muddled."
+    },
+    {
+      "boundary_idx": 2,
+      "boundary_coherence": 5,
+      "rationale": "Explicit transition with 'another big topic that comes up a lot is fault tolerance.'"
+    },
+    {
+      "boundary_idx": 3,
+      "boundary_coherence": 5,
+      "rationale": "Explicit transition with 'final topic, final cross-cutting topic is consistency.'"
+    },
+    {
+      "boundary_idx": 4,
+      "boundary_coherence": 5,
+      "rationale": "Explicit transition with 'before I start talking about MapReduce' after finishing consistency."
+    }
+  ],
+  "chapter_scores": [
+    {
+      "chapter_idx": 0,
+      "title_quality": 5,
+      "topic_completeness": 5,
+      "rationale": "Title accurately summarizes coherent introduction; covers one theme from start to end."
+    },
+    {
+      "chapter_idx": 1,
+      "title_quality": 5,
+      "topic_completeness": 5,
+      "rationale": "Title accurately summarizes logistics; covers one coherent theme with clean boundaries."
+    },
+    {
+      "chapter_idx": 2,
+      "title_quality": 5,
+      "topic_completeness": 3,
+      "rationale": "Title accurate but segment 39 contains unrelated student question about grades breaking theme coherence."
+    },
+    {
+      "chapter_idx": 3,
+      "title_quality": 5,
+      "topic_completeness": 5,
+      "rationale": "Title accurately summarizes fault tolerance discussion; covers one coherent theme throughout."
+    },
+    {
+      "chapter_idx": 4,
+      "title_quality": 5,
+      "topic_completeness": 5,
+      "rationale": "Title accurately summarizes consistency models; covers one coherent theme throughout."
+    },
+    {
+      "chapter_idx": 5,
+      "title_quality": 5,
+      "topic_completeness": 5,
+      "rationale": "Title accurately summarizes MapReduce deep dive; covers one coherent theme throughout."
+    }
+  ],
+  "boundary_avg": 4.6,
+  "title_avg": 5,
+  "topic_avg": 4.666666666666667,
+  "total": 4.7555555555555555
+}

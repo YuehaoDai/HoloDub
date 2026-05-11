@@ -1,0 +1,109 @@
+{
+  "model": "qwen-plus-latest",
+  "run_index": 2,
+  "wall_time_ms": 29985,
+  "raw_chapters": [
+    {
+      "start_segment_idx": 0,
+      "end_segment_idx": 38,
+      "title_source": "Course Introduction \u0026 Logistics",
+      "title_translated": "课程导论与教学安排",
+      "summary_md": "本章介绍课程基本信息：编号6824、主讲人罗伯特·莫里斯教授及助教团队；说明课程网站、Piazza平台、作业提交方式；详述考核构成（讲座、论文、两次考试、四次编程实验及可选期末项目）；强调论文预习要求与旧题库复习策略；明确首次实验（简易MapReduce实现）的截止时间。"
+    },
+    {
+      "start_segment_idx": 39,
+      "end_segment_idx": 79,
+      "title_source": "Core Challenges of Distributed Systems",
+      "title_translated": "分布式系统的核心挑战",
+      "summary_md": "本章系统阐述分布式系统的四大根本挑战：性能（追求可扩展加速比，但受限于瓶颈转移与设计复杂性）、容错性（因规模扩大导致部分故障常态化，依赖非易失性存储与复制机制）、一致性（在复制场景下定义put/get语义，权衡强一致性与弱一致性的成本与收益）以及实现基础（远程过程调用、线程、锁等并发控制工具）。"
+    },
+    {
+      "start_segment_idx": 80,
+      "end_segment_idx": 106,
+      "title_source": "Cross-Cutting Topics: Consistency \u0026 Fault Tolerance",
+      "title_translated": "贯穿性主题：一致性与容错性",
+      "summary_md": "本章深入剖析一致性与容错性的内在关联与技术张力：以键值服务为例，说明复制如何引发数据不一致风险；对比强一致性（需跨节点同步，高通信开销）与弱一致性（允许陈旧读取，提升性能）；指出地理分散复制对强一致性的物理制约（光速延迟），并引出容错设计中独立故障域与网络拓扑的关键作用。"
+    },
+    {
+      "start_segment_idx": 107,
+      "end_segment_idx": 174,
+      "title_source": "Case Study: MapReduce Architecture \u0026 Evolution",
+      "title_translated": "案例研究：MapReduce架构与演进",
+      "summary_md": "本章以MapReduce为典型案例，完整解析其设计动机（应对海量Web数据处理）、抽象模型（Map/Reduce函数、Job/Task）、执行流程（输入分片→并行Map→混洗→归约Reduce→输出）；重点剖析其2004年原始架构如何通过GFS协同与本地化调度规避网络瓶颈，以及2020年后因数据中心网络升级而放弃该优化的历史演进；最后预告学生将实现一个简化版MapReduce作为首次实验。"
+    }
+  ],
+  "validation_ok": true,
+  "final_ranges": [
+    {
+      "Ordinal": 1,
+      "StartMs": 0,
+      "EndMs": 1027025,
+      "StartSegmentIdx": 0,
+      "EndSegmentIdx": 38,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    },
+    {
+      "Ordinal": 2,
+      "StartMs": 1027025,
+      "EndMs": 2223605,
+      "StartSegmentIdx": 39,
+      "EndSegmentIdx": 79,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    },
+    {
+      "Ordinal": 3,
+      "StartMs": 2223605,
+      "EndMs": 2903950,
+      "StartSegmentIdx": 80,
+      "EndSegmentIdx": 106,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    },
+    {
+      "Ordinal": 4,
+      "StartMs": 2903950,
+      "EndMs": 4771470,
+      "StartSegmentIdx": 107,
+      "EndSegmentIdx": 174,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    }
+  ],
+  "final_titles": [
+    {
+      "TitleSource": "Course Introduction \u0026 Logistics",
+      "TitleTranslated": "课程导论与教学安排",
+      "SummaryMD": "本章介绍课程基本信息：编号6824、主讲人罗伯特·莫里斯教授及助教团队；说明课程网站、Piazza平台、作业提交方式；详述考核构成（讲座、论文、两次考试、四次编程实验及可选期末项目）；强调论文预习要求与旧题库复习策略；明确首次实验（简易MapReduce实现）的截止时间。"
+    },
+    {
+      "TitleSource": "Core Challenges of Distributed Systems",
+      "TitleTranslated": "分布式系统的核心挑战",
+      "SummaryMD": "本章系统阐述分布式系统的四大根本挑战：性能（追求可扩展加速比，但受限于瓶颈转移与设计复杂性）、容错性（因规模扩大导致部分故障常态化，依赖非易失性存储与复制机制）、一致性（在复制场景下定义put/get语义，权衡强一致性与弱一致性的成本与收益）以及实现基础（远程过程调用、线程、锁等并发控制工具）。"
+    },
+    {
+      "TitleSource": "Cross-Cutting Topics: Consistency \u0026 Fault Tolerance",
+      "TitleTranslated": "贯穿性主题：一致性与容错性",
+      "SummaryMD": "本章深入剖析一致性与容错性的内在关联与技术张力：以键值服务为例，说明复制如何引发数据不一致风险；对比强一致性（需跨节点同步，高通信开销）与弱一致性（允许陈旧读取，提升性能）；指出地理分散复制对强一致性的物理制约（光速延迟），并引出容错设计中独立故障域与网络拓扑的关键作用。"
+    },
+    {
+      "TitleSource": "Case Study: MapReduce Architecture \u0026 Evolution",
+      "TitleTranslated": "案例研究：MapReduce架构与演进",
+      "SummaryMD": "本章以MapReduce为典型案例，完整解析其设计动机（应对海量Web数据处理）、抽象模型（Map/Reduce函数、Job/Task）、执行流程（输入分片→并行Map→混洗→归约Reduce→输出）；重点剖析其2004年原始架构如何通过GFS协同与本地化调度规避网络瓶颈，以及2020年后因数据中心网络升级而放弃该优化的历史演进；最后预告学生将实现一个简化版MapReduce作为首次实验。"
+    }
+  ],
+  "static_metrics": {
+    "raw_chapter_count": 4,
+    "final_chapter_count": 4,
+    "mean_dur_ms": 1192867,
+    "min_dur_ms": 680345,
+    "max_dur_ms": 1867520,
+    "merge_actions": 0,
+    "split_actions": 0,
+    "boundary_jitter_ms": 54386
+  },
+  "glossary_entry_count": 27,
+  "speaker_hint_count": 1,
+  "reference_card_chars": 963
+}

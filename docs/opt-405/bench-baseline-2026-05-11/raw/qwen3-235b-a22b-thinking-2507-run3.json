@@ -1,0 +1,130 @@
+{
+  "model": "qwen3-235b-a22b-thinking-2507",
+  "run_index": 3,
+  "wall_time_ms": 41700,
+  "raw_chapters": [
+    {
+      "start_segment_idx": 0,
+      "end_segment_idx": 17,
+      "title_source": "Course Introduction \u0026 Distributed Systems Fundamentals",
+      "title_translated": "课程导论与分布式系统基础",
+      "summary_md": "介绍分布式系统定义、核心特征（多计算机协作、网络通信）及构建原因（性能、容错、物理分布、安全）。强调单机优先原则及分布式系统复杂性根源。"
+    },
+    {
+      "start_segment_idx": 18,
+      "end_segment_idx": 38,
+      "title_source": "Course Structure \u0026 Logistics",
+      "title_translated": "课程结构与教学安排",
+      "summary_md": "详细说明课程组件（讲座、论文、实验、考试）、评分机制、实验室要求及Piazza平台使用规范。重点强调实验调试挑战与提前规划必要性。"
+    },
+    {
+      "start_segment_idx": 39,
+      "end_segment_idx": 82,
+      "title_source": "Core Concepts: Performance \u0026 Fault Tolerance",
+      "title_translated": "核心概念：性能与容错机制",
+      "summary_md": "解析分布式基础设施类型（存储/计算/通信）、可扩展加速比原理、容错设计（非易失存储、复制管理）及物理分布对系统设计的影响。"
+    },
+    {
+      "start_segment_idx": 83,
+      "end_segment_idx": 106,
+      "title_source": "Consistency Models in Distributed Storage",
+      "title_translated": "分布式存储中的一致性模型",
+      "summary_md": "通过键值服务案例说明强一致性与弱一致性差异，分析跨地域复制对通信延迟的影响，阐释最终一致性设计的性能权衡。"
+    },
+    {
+      "start_segment_idx": 107,
+      "end_segment_idx": 174,
+      "title_source": "MapReduce Case Study \u0026 Implementation",
+      "title_translated": "MapReduce案例研究与实现解析",
+      "summary_md": "深度剖析MapReduce架构（map/reduce阶段、worker/master分工）、GFS集成、数据分片机制及网络瓶颈优化策略，结合课程实验要求说明技术演进。"
+    }
+  ],
+  "validation_ok": true,
+  "final_ranges": [
+    {
+      "Ordinal": 1,
+      "StartMs": 0,
+      "EndMs": 511605,
+      "StartSegmentIdx": 0,
+      "EndSegmentIdx": 17,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    },
+    {
+      "Ordinal": 2,
+      "StartMs": 511605,
+      "EndMs": 1027025,
+      "StartSegmentIdx": 18,
+      "EndSegmentIdx": 38,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    },
+    {
+      "Ordinal": 3,
+      "StartMs": 1027025,
+      "EndMs": 2233680,
+      "StartSegmentIdx": 39,
+      "EndSegmentIdx": 82,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    },
+    {
+      "Ordinal": 4,
+      "StartMs": 2233680,
+      "EndMs": 2903950,
+      "StartSegmentIdx": 83,
+      "EndSegmentIdx": 106,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    },
+    {
+      "Ordinal": 5,
+      "StartMs": 2903950,
+      "EndMs": 4771470,
+      "StartSegmentIdx": 107,
+      "EndSegmentIdx": 174,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    }
+  ],
+  "final_titles": [
+    {
+      "TitleSource": "Course Introduction \u0026 Distributed Systems Fundamentals",
+      "TitleTranslated": "课程导论与分布式系统基础",
+      "SummaryMD": "介绍分布式系统定义、核心特征（多计算机协作、网络通信）及构建原因（性能、容错、物理分布、安全）。强调单机优先原则及分布式系统复杂性根源。"
+    },
+    {
+      "TitleSource": "Course Structure \u0026 Logistics",
+      "TitleTranslated": "课程结构与教学安排",
+      "SummaryMD": "详细说明课程组件（讲座、论文、实验、考试）、评分机制、实验室要求及Piazza平台使用规范。重点强调实验调试挑战与提前规划必要性。"
+    },
+    {
+      "TitleSource": "Core Concepts: Performance \u0026 Fault Tolerance",
+      "TitleTranslated": "核心概念：性能与容错机制",
+      "SummaryMD": "解析分布式基础设施类型（存储/计算/通信）、可扩展加速比原理、容错设计（非易失存储、复制管理）及物理分布对系统设计的影响。"
+    },
+    {
+      "TitleSource": "Consistency Models in Distributed Storage",
+      "TitleTranslated": "分布式存储中的一致性模型",
+      "SummaryMD": "通过键值服务案例说明强一致性与弱一致性差异，分析跨地域复制对通信延迟的影响，阐释最终一致性设计的性能权衡。"
+    },
+    {
+      "TitleSource": "MapReduce Case Study \u0026 Implementation",
+      "TitleTranslated": "MapReduce案例研究与实现解析",
+      "SummaryMD": "深度剖析MapReduce架构（map/reduce阶段、worker/master分工）、GFS集成、数据分片机制及网络瓶颈优化策略，结合课程实验要求说明技术演进。"
+    }
+  ],
+  "static_metrics": {
+    "raw_chapter_count": 5,
+    "final_chapter_count": 5,
+    "mean_dur_ms": 954294,
+    "min_dur_ms": 511605,
+    "max_dur_ms": 1867520,
+    "merge_actions": 0,
+    "split_actions": 0,
+    "boundary_jitter_ms": 49842
+  },
+  "glossary_entry_count": 10,
+  "speaker_hint_count": 1,
+  "reference_card_chars": 599
+}

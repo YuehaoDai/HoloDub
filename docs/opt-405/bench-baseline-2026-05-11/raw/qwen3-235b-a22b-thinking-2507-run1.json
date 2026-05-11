@@ -1,0 +1,88 @@
+{
+  "model": "qwen3-235b-a22b-thinking-2507",
+  "run_index": 1,
+  "wall_time_ms": 226819,
+  "raw_chapters": [
+    {
+      "start_segment_idx": 0,
+      "end_segment_idx": 38,
+      "title_source": "Course Introduction \u0026 Structure",
+      "title_translated": "课程导论与结构",
+      "summary_md": "介绍分布式系统课程核心概念、学习目标及课程架构。涵盖课程组件（讲座、论文、实验）、评分机制和实验室序列设计，强调分布式系统在现代基础设施中的关键作用。"
+    },
+    {
+      "start_segment_idx": 39,
+      "end_segment_idx": 106,
+      "title_source": "Core Challenges in Distributed Systems",
+      "title_translated": "分布式系统核心挑战",
+      "summary_md": "深入解析分布式系统三大核心挑战：性能可扩展性（scalable speedup）、容错性设计（fault tolerance）及一致性模型（consistency models）。通过实际案例说明部分故障（partial failures）处理、复制管理及弱一致性系统的工程权衡。"
+    },
+    {
+      "start_segment_idx": 107,
+      "end_segment_idx": 174,
+      "title_source": "MapReduce Case Study",
+      "title_translated": "MapReduce 案例研究",
+      "summary_md": "以MapReduce框架为实例，详解分布式计算系统设计原理。涵盖工作流程（map/reduce阶段）、数据分片（sharding）、网络瓶颈优化及GFS集成，展示如何通过抽象简化大规模数据处理。"
+    }
+  ],
+  "validation_ok": true,
+  "final_ranges": [
+    {
+      "Ordinal": 1,
+      "StartMs": 0,
+      "EndMs": 1027025,
+      "StartSegmentIdx": 0,
+      "EndSegmentIdx": 38,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    },
+    {
+      "Ordinal": 2,
+      "StartMs": 1027025,
+      "EndMs": 2903950,
+      "StartSegmentIdx": 39,
+      "EndSegmentIdx": 106,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    },
+    {
+      "Ordinal": 3,
+      "StartMs": 2903950,
+      "EndMs": 4771470,
+      "StartSegmentIdx": 107,
+      "EndSegmentIdx": 174,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    }
+  ],
+  "final_titles": [
+    {
+      "TitleSource": "Course Introduction \u0026 Structure",
+      "TitleTranslated": "课程导论与结构",
+      "SummaryMD": "介绍分布式系统课程核心概念、学习目标及课程架构。涵盖课程组件（讲座、论文、实验）、评分机制和实验室序列设计，强调分布式系统在现代基础设施中的关键作用。"
+    },
+    {
+      "TitleSource": "Core Challenges in Distributed Systems",
+      "TitleTranslated": "分布式系统核心挑战",
+      "SummaryMD": "深入解析分布式系统三大核心挑战：性能可扩展性（scalable speedup）、容错性设计（fault tolerance）及一致性模型（consistency models）。通过实际案例说明部分故障（partial failures）处理、复制管理及弱一致性系统的工程权衡。"
+    },
+    {
+      "TitleSource": "MapReduce Case Study",
+      "TitleTranslated": "MapReduce 案例研究",
+      "SummaryMD": "以MapReduce框架为实例，详解分布式计算系统设计原理。涵盖工作流程（map/reduce阶段）、数据分片（sharding）、网络瓶颈优化及GFS集成，展示如何通过抽象简化大规模数据处理。"
+    }
+  ],
+  "static_metrics": {
+    "raw_chapter_count": 3,
+    "final_chapter_count": 3,
+    "mean_dur_ms": 1590490,
+    "min_dur_ms": 1027025,
+    "max_dur_ms": 1876925,
+    "merge_actions": 0,
+    "split_actions": 0,
+    "boundary_jitter_ms": 52632
+  },
+  "glossary_entry_count": 11,
+  "speaker_hint_count": 1,
+  "reference_card_chars": 747
+}

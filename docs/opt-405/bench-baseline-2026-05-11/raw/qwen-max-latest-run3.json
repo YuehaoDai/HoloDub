@@ -1,0 +1,109 @@
+{
+  "model": "qwen-max-latest",
+  "run_index": 3,
+  "wall_time_ms": 26315,
+  "raw_chapters": [
+    {
+      "start_segment_idx": 0,
+      "end_segment_idx": 37,
+      "title_source": "Course Introduction \u0026 Logistics",
+      "title_translated": "课程介绍与安排",
+      "summary_md": "讲师介绍了课程结构、评分标准及实验室作业要求。强调了分布式系统的重要性及其在现实世界中的应用。"
+    },
+    {
+      "start_segment_idx": 38,
+      "end_segment_idx": 77,
+      "title_source": "Distributed Systems Overview",
+      "title_translated": "分布式系统概览",
+      "summary_md": "讲解了分布式系统的核心概念，包括存储、通信和计算基础设施。特别提到了MapReduce作为一种计算系统。"
+    },
+    {
+      "start_segment_idx": 78,
+      "end_segment_idx": 113,
+      "title_source": "Implementation Topics in Distributed Systems",
+      "title_translated": "分布式系统中的实现话题",
+      "summary_md": "探讨了远程过程调用（RPC）、线程等实现分布式系统的工具和技术。同时讨论了并发控制的重要性。"
+    },
+    {
+      "start_segment_idx": 114,
+      "end_segment_idx": 174,
+      "title_source": "Case Study: MapReduce",
+      "title_translated": "案例研究：MapReduce",
+      "summary_md": "详细介绍了MapReduce的工作原理，包括map和reduce函数的作用，以及如何通过这个框架简化大规模分布式计算任务。"
+    }
+  ],
+  "validation_ok": true,
+  "final_ranges": [
+    {
+      "Ordinal": 1,
+      "StartMs": 0,
+      "EndMs": 1027025,
+      "StartSegmentIdx": 0,
+      "EndSegmentIdx": 37,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    },
+    {
+      "Ordinal": 2,
+      "StartMs": 1027025,
+      "EndMs": 2039390,
+      "StartSegmentIdx": 38,
+      "EndSegmentIdx": 77,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    },
+    {
+      "Ordinal": 3,
+      "StartMs": 2039390,
+      "EndMs": 3046480,
+      "StartSegmentIdx": 78,
+      "EndSegmentIdx": 113,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    },
+    {
+      "Ordinal": 4,
+      "StartMs": 3046480,
+      "EndMs": 4771470,
+      "StartSegmentIdx": 114,
+      "EndSegmentIdx": 174,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    }
+  ],
+  "final_titles": [
+    {
+      "TitleSource": "Course Introduction \u0026 Logistics",
+      "TitleTranslated": "课程介绍与安排",
+      "SummaryMD": "讲师介绍了课程结构、评分标准及实验室作业要求。强调了分布式系统的重要性及其在现实世界中的应用。"
+    },
+    {
+      "TitleSource": "Distributed Systems Overview",
+      "TitleTranslated": "分布式系统概览",
+      "SummaryMD": "讲解了分布式系统的核心概念，包括存储、通信和计算基础设施。特别提到了MapReduce作为一种计算系统。"
+    },
+    {
+      "TitleSource": "Implementation Topics in Distributed Systems",
+      "TitleTranslated": "分布式系统中的实现话题",
+      "SummaryMD": "探讨了远程过程调用（RPC）、线程等实现分布式系统的工具和技术。同时讨论了并发控制的重要性。"
+    },
+    {
+      "TitleSource": "Case Study: MapReduce",
+      "TitleTranslated": "案例研究：MapReduce",
+      "SummaryMD": "详细介绍了MapReduce的工作原理，包括map和reduce函数的作用，以及如何通过这个框架简化大规模分布式计算任务。"
+    }
+  ],
+  "static_metrics": {
+    "raw_chapter_count": 4,
+    "final_chapter_count": 4,
+    "mean_dur_ms": 1192867,
+    "min_dur_ms": 1007090,
+    "max_dur_ms": 1724990,
+    "merge_actions": 0,
+    "split_actions": 0,
+    "boundary_jitter_ms": 27341
+  },
+  "glossary_entry_count": 4,
+  "speaker_hint_count": 1,
+  "reference_card_chars": 720
+}

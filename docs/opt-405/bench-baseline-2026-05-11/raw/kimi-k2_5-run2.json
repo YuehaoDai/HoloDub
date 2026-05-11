@@ -1,0 +1,151 @@
+{
+  "model": "kimi-k2.5",
+  "run_index": 2,
+  "wall_time_ms": 35650,
+  "raw_chapters": [
+    {
+      "start_segment_idx": 0,
+      "end_segment_idx": 17,
+      "title_source": "Introduction: What is Distributed Systems?",
+      "title_translated": "导论：什么是分布式系统？",
+      "summary_md": "课程开场，讲师Robert Morris定义分布式系统的核心概念：通过网络协作完成任务的计算机集合。阐述构建分布式系统的四大动机——性能并行化、容错、物理分布需求和安全隔离，并强调\"能用单机就不用分布式\"的设计原则。"
+    },
+    {
+      "start_segment_idx": 18,
+      "end_segment_idx": 38,
+      "title_source": "Course Logistics \u0026 Structure",
+      "title_translated": "课程安排与结构",
+      "summary_md": "详细介绍课程组成：讲座、论文阅读、两次考试、四个编程实验（MapReduce、Raft、容错键值存储、分片键值服务）以及可选期末项目。说明评分方式、实验调试建议，并介绍教学团队。"
+    },
+    {
+      "start_segment_idx": 39,
+      "end_segment_idx": 66,
+      "title_source": "Core Themes: Abstraction, Implementation \u0026 Performance",
+      "title_translated": "核心主题：抽象、实现与性能",
+      "summary_md": "阐述课程的三大基础设施类型（存储、通信、计算）及核心目标——构建隐藏分布式复杂性的抽象。深入讨论可扩展性（scalability）概念，通过网站架构示例说明瓶颈转移问题，强调线性扩展的设计挑战。"
+    },
+    {
+      "start_segment_idx": 67,
+      "end_segment_idx": 82,
+      "title_source": "Fault Tolerance: Replication \u0026 Recovery",
+      "title_translated": "容错：复制与恢复",
+      "summary_md": "分析大规模系统中故障的必然性（千台机器每天约3次故障），区分可用性（availability）与可恢复性（recoverability）。介绍容错的两大工具：非易失性存储和复制技术，预告Raft算法在实验中的应用。"
+    },
+    {
+      "start_segment_idx": 83,
+      "end_segment_idx": 106,
+      "title_source": "Consistency Models \u0026 Trade-offs",
+      "title_translated": "一致性模型与权衡",
+      "summary_md": "以键值服务为例说明一致性挑战，对比强一致性（expensive, requires cross-replica communication）与弱一致性（cheaper, allows stale reads）。讨论地理分布副本带来的通信延迟问题，以及一致性-性能权衡的实际考量。"
+    },
+    {
+      "start_segment_idx": 107,
+      "end_segment_idx": 174,
+      "title_source": "Case Study: MapReduce Framework",
+      "title_translated": "案例研究：MapReduce框架",
+      "summary_md": "详细剖析Google MapReduce的设计动机、编程模型（map/reduce函数）、执行流程（master-workers架构、shuffle阶段）及优化技巧（数据本地性、GFS协同）。讨论2004年网络瓶颈对设计的影响，以及现代数据中心网络的演进。"
+    }
+  ],
+  "validation_ok": true,
+  "final_ranges": [
+    {
+      "Ordinal": 1,
+      "StartMs": 0,
+      "EndMs": 511605,
+      "StartSegmentIdx": 0,
+      "EndSegmentIdx": 17,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    },
+    {
+      "Ordinal": 2,
+      "StartMs": 511605,
+      "EndMs": 1027025,
+      "StartSegmentIdx": 18,
+      "EndSegmentIdx": 38,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    },
+    {
+      "Ordinal": 3,
+      "StartMs": 1027025,
+      "EndMs": 1758860,
+      "StartSegmentIdx": 39,
+      "EndSegmentIdx": 66,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    },
+    {
+      "Ordinal": 4,
+      "StartMs": 1758860,
+      "EndMs": 2233680,
+      "StartSegmentIdx": 67,
+      "EndSegmentIdx": 82,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    },
+    {
+      "Ordinal": 5,
+      "StartMs": 2233680,
+      "EndMs": 2903950,
+      "StartSegmentIdx": 83,
+      "EndSegmentIdx": 106,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    },
+    {
+      "Ordinal": 6,
+      "StartMs": 2903950,
+      "EndMs": 4771470,
+      "StartSegmentIdx": 107,
+      "EndSegmentIdx": 174,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    }
+  ],
+  "final_titles": [
+    {
+      "TitleSource": "Introduction: What is Distributed Systems?",
+      "TitleTranslated": "导论：什么是分布式系统？",
+      "SummaryMD": "课程开场，讲师Robert Morris定义分布式系统的核心概念：通过网络协作完成任务的计算机集合。阐述构建分布式系统的四大动机——性能并行化、容错、物理分布需求和安全隔离，并强调\"能用单机就不用分布式\"的设计原则。"
+    },
+    {
+      "TitleSource": "Course Logistics \u0026 Structure",
+      "TitleTranslated": "课程安排与结构",
+      "SummaryMD": "详细介绍课程组成：讲座、论文阅读、两次考试、四个编程实验（MapReduce、Raft、容错键值存储、分片键值服务）以及可选期末项目。说明评分方式、实验调试建议，并介绍教学团队。"
+    },
+    {
+      "TitleSource": "Core Themes: Abstraction, Implementation \u0026 Performance",
+      "TitleTranslated": "核心主题：抽象、实现与性能",
+      "SummaryMD": "阐述课程的三大基础设施类型（存储、通信、计算）及核心目标——构建隐藏分布式复杂性的抽象。深入讨论可扩展性（scalability）概念，通过网站架构示例说明瓶颈转移问题，强调线性扩展的设计挑战。"
+    },
+    {
+      "TitleSource": "Fault Tolerance: Replication \u0026 Recovery",
+      "TitleTranslated": "容错：复制与恢复",
+      "SummaryMD": "分析大规模系统中故障的必然性（千台机器每天约3次故障），区分可用性（availability）与可恢复性（recoverability）。介绍容错的两大工具：非易失性存储和复制技术，预告Raft算法在实验中的应用。"
+    },
+    {
+      "TitleSource": "Consistency Models \u0026 Trade-offs",
+      "TitleTranslated": "一致性模型与权衡",
+      "SummaryMD": "以键值服务为例说明一致性挑战，对比强一致性（expensive, requires cross-replica communication）与弱一致性（cheaper, allows stale reads）。讨论地理分布副本带来的通信延迟问题，以及一致性-性能权衡的实际考量。"
+    },
+    {
+      "TitleSource": "Case Study: MapReduce Framework",
+      "TitleTranslated": "案例研究：MapReduce框架",
+      "SummaryMD": "详细剖析Google MapReduce的设计动机、编程模型（map/reduce函数）、执行流程（master-workers架构、shuffle阶段）及优化技巧（数据本地性、GFS协同）。讨论2004年网络瓶颈对设计的影响，以及现代数据中心网络的演进。"
+    }
+  ],
+  "static_metrics": {
+    "raw_chapter_count": 6,
+    "final_chapter_count": 6,
+    "mean_dur_ms": 795245,
+    "min_dur_ms": 474820,
+    "max_dur_ms": 1867520,
+    "merge_actions": 0,
+    "split_actions": 0,
+    "boundary_jitter_ms": 40662
+  },
+  "glossary_entry_count": 26,
+  "speaker_hint_count": 1,
+  "reference_card_chars": 1132
+}

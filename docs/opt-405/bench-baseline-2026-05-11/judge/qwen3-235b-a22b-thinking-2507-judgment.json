@@ -1,0 +1,42 @@
+{
+  "candidate_model": "qwen3-235b-a22b-thinking-2507",
+  "judge_model": "kimi-k2-thinking",
+  "runs": 1,
+  "wall_time_ms": 407865,
+  "boundary_scores": [
+    {
+      "boundary_idx": 0,
+      "boundary_coherence": 1,
+      "rationale": "Cut separates question from answer about grading mechanics, breaking conversational flow."
+    },
+    {
+      "boundary_idx": 1,
+      "boundary_coherence": 5,
+      "rationale": "Speaker explicitly concludes previous section and announces transition to MapReduce case study."
+    }
+  ],
+  "chapter_scores": [
+    {
+      "chapter_idx": 0,
+      "title_quality": 5,
+      "topic_completeness": 1,
+      "rationale": "Title accurately reflects content but chapter cuts off course mechanics Q\u0026A partway through."
+    },
+    {
+      "chapter_idx": 1,
+      "title_quality": 3,
+      "topic_completeness": 3,
+      "rationale": "Generic title for specific challenges; chapter mixes brief grading Q\u0026A with core challenges."
+    },
+    {
+      "chapter_idx": 2,
+      "title_quality": 5,
+      "topic_completeness": 5,
+      "rationale": "Title precisely describes MapReduce case study; chapter maintains coherent theme throughout."
+    }
+  ],
+  "boundary_avg": 3,
+  "title_avg": 4.333333333333333,
+  "topic_avg": 3,
+  "total": 3.444444444444444
+}

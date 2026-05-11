@@ -1,0 +1,158 @@
+{
+  "model": "qwen-max-latest",
+  "run_index": 2,
+  "wall_time_ms": 44344,
+  "raw_chapters": [
+    {
+      "start_segment_idx": 0,
+      "end_segment_idx": 17,
+      "title_source": "Course Introduction and Overview",
+      "title_translated": "课程介绍与概览",
+      "summary_md": "介绍分布式系统课程的基本信息，包括课程内容、目标和结构。"
+    },
+    {
+      "start_segment_idx": 18,
+      "end_segment_idx": 36,
+      "title_source": "Course Components Breakdown",
+      "title_translated": "课程组成部分详解",
+      "summary_md": "详细讲解课程的组成部分，包括讲座、论文阅读、考试和编程实验。"
+    },
+    {
+      "start_segment_idx": 37,
+      "end_segment_idx": 51,
+      "title_source": "Implementation Topics in Distributed Systems",
+      "title_translated": "分布式系统中的实现话题",
+      "summary_md": "讨论分布式系统中的实现问题，如远程过程调用和线程。"
+    },
+    {
+      "start_segment_idx": 52,
+      "end_segment_idx": 72,
+      "title_source": "Performance and Scalability in Distributed Systems",
+      "title_translated": "分布式系统中的性能与可扩展性",
+      "summary_md": "探讨性能和可扩展性在分布式系统设计中的重要性。"
+    },
+    {
+      "start_segment_idx": 73,
+      "end_segment_idx": 82,
+      "title_source": "Fault Tolerance and Replication Strategies",
+      "title_translated": "容错性与复制策略",
+      "summary_md": "分析容错性以及如何通过复制来实现。"
+    },
+    {
+      "start_segment_idx": 83,
+      "end_segment_idx": 105,
+      "title_source": "Consistency Issues in Distributed Systems",
+      "title_translated": "分布式系统中的一致性问题",
+      "summary_md": "一致性问题及其对分布式系统的影响。"
+    },
+    {
+      "start_segment_idx": 106,
+      "end_segment_idx": 174,
+      "title_source": "Case Study: MapReduce",
+      "title_translated": "案例研究：MapReduce",
+      "summary_md": "MapReduce案例研究，涵盖其工作原理及在Google的应用。"
+    }
+  ],
+  "validation_ok": true,
+  "final_ranges": [
+    {
+      "Ordinal": 1,
+      "StartMs": 0,
+      "EndMs": 511605,
+      "StartSegmentIdx": 0,
+      "EndSegmentIdx": 17,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    },
+    {
+      "Ordinal": 2,
+      "StartMs": 511605,
+      "EndMs": 1027025,
+      "StartSegmentIdx": 18,
+      "EndSegmentIdx": 36,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    },
+    {
+      "Ordinal": 3,
+      "StartMs": 1027025,
+      "EndMs": 1380005,
+      "StartSegmentIdx": 37,
+      "EndSegmentIdx": 51,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    },
+    {
+      "Ordinal": 4,
+      "StartMs": 1380005,
+      "EndMs": 1982810,
+      "StartSegmentIdx": 52,
+      "EndSegmentIdx": 72,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    },
+    {
+      "Ordinal": 5,
+      "StartMs": 1982810,
+      "EndMs": 2862440,
+      "StartSegmentIdx": 73,
+      "EndSegmentIdx": 105,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    },
+    {
+      "Ordinal": 6,
+      "StartMs": 2862440,
+      "EndMs": 4771470,
+      "StartSegmentIdx": 106,
+      "EndSegmentIdx": 174,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    }
+  ],
+  "final_titles": [
+    {
+      "TitleSource": "Course Introduction and Overview",
+      "TitleTranslated": "课程介绍与概览",
+      "SummaryMD": "介绍分布式系统课程的基本信息，包括课程内容、目标和结构。"
+    },
+    {
+      "TitleSource": "Course Components Breakdown",
+      "TitleTranslated": "课程组成部分详解",
+      "SummaryMD": "详细讲解课程的组成部分，包括讲座、论文阅读、考试和编程实验。"
+    },
+    {
+      "TitleSource": "Implementation Topics in Distributed Systems",
+      "TitleTranslated": "分布式系统中的实现话题",
+      "SummaryMD": "讨论分布式系统中的实现问题，如远程过程调用和线程。"
+    },
+    {
+      "TitleSource": "Performance and Scalability in Distributed Systems",
+      "TitleTranslated": "分布式系统中的性能与可扩展性",
+      "SummaryMD": "探讨性能和可扩展性在分布式系统设计中的重要性。"
+    },
+    {
+      "TitleSource": "Fault Tolerance and Replication Strategies • Consistency Issues in Distributed Systems",
+      "TitleTranslated": "容错性与复制策略 • 分布式系统中的一致性问题",
+      "SummaryMD": "分析容错性以及如何通过复制来实现。 • 一致性问题及其对分布式系统的影响。"
+    },
+    {
+      "TitleSource": "Case Study: MapReduce",
+      "TitleTranslated": "案例研究：MapReduce",
+      "SummaryMD": "MapReduce案例研究，涵盖其工作原理及在Google的应用。"
+    }
+  ],
+  "static_metrics": {
+    "raw_chapter_count": 7,
+    "final_chapter_count": 6,
+    "mean_dur_ms": 795245,
+    "min_dur_ms": 352980,
+    "max_dur_ms": 1909030,
+    "merge_actions": 1,
+    "split_actions": 0,
+    "boundary_jitter_ms": 45255
+  },
+  "glossary_entry_count": 12,
+  "speaker_hint_count": 1,
+  "reference_card_chars": 491
+}

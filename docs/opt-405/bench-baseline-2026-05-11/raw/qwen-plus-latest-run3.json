@@ -1,0 +1,116 @@
+{
+  "model": "qwen-plus-latest",
+  "run_index": 3,
+  "wall_time_ms": 30617,
+  "raw_chapters": [
+    {
+      "start_segment_idx": 0,
+      "end_segment_idx": 8,
+      "title_source": "Course Introduction \u0026 What Is a Distributed System?",
+      "title_translated": "课程导论与分布式系统定义",
+      "summary_md": "开篇介绍课程编号6824及核心目标，明确定义分布式系统为“通过网络协同工作的多台计算机集合”，并列举典型应用场景（大型网站存储、MapReduce计算、P2P文件共享），强调其在现代关键基础设施中的基础地位。"
+    },
+    {
+      "start_segment_idx": 9,
+      "end_segment_idx": 37,
+      "title_source": "Why Build Distributed Systems? Core Motivations \u0026 Challenges",
+      "title_translated": "为何构建分布式系统？核心动因与挑战",
+      "summary_md": "系统阐述构建分布式系统的四大动因：提升性能（并行化）、实现容错（冗余备份）、适应物理分布（如跨地域银行系统）及达成安全目标（隔离不可信代码）。继而剖析其固有难点：并发编程复杂性、部分故障的不可预测性，以及实现理想线性加速比的技术障碍。"
+    },
+    {
+      "start_segment_idx": 38,
+      "end_segment_idx": 65,
+      "title_source": "Course Structure, Labs \u0026 Infrastructure Abstractions",
+      "title_translated": "课程结构、实验与基础设施抽象",
+      "summary_md": "详述课程组织：授课、论文研读、两次考试及四次编程实验（Lab1 MapReduce、Lab2-3 Raft容错、Lab4分片键值服务）。重点阐释课程核心思想——为上层应用提供简化接口，即通过抽象隐藏分布式本质，使应用能像使用单机文件系统一样便捷地调用高性能、高容错的分布式存储与计算服务。"
+    },
+    {
+      "start_segment_idx": 66,
+      "end_segment_idx": 105,
+      "title_source": "Cross-Cutting Themes: Performance, Fault Tolerance \u0026 Consistency",
+      "title_translated": "三大交叉主题：性能、容错性与一致性",
+      "summary_md": "深入解析贯穿全课的三大技术主题：性能（可扩展加速比的原理、瓶颈与实例分析）、容错性（可用性与可恢复性的定义、非易失性存储与复制的关键作用）及一致性（以键值服务为例，对比强一致性与弱一致性的语义、实现代价及地理分布带来的通信延迟挑战）。"
+    },
+    {
+      "start_segment_idx": 106,
+      "end_segment_idx": 174,
+      "title_source": "Case Study: MapReduce in Depth",
+      "title_translated": "案例精析：MapReduce深度解析",
+      "summary_md": "以MapReduce为详细案例，完整呈现其设计动机（应对海量数据处理需求）、编程模型（map/reduce函数、job/task概念）、执行流程（输入分片、本地化计算、shuffle数据重分布、reduce聚合）及底层架构（GFS存储、master-worker模型）。同时讨论其局限性（单阶段流水线）及现代演进（流式处理、网络优化）。"
+    }
+  ],
+  "validation_ok": true,
+  "final_ranges": [
+    {
+      "Ordinal": 1,
+      "StartMs": 0,
+      "EndMs": 1027025,
+      "StartSegmentIdx": 0,
+      "EndSegmentIdx": 37,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    },
+    {
+      "Ordinal": 2,
+      "StartMs": 1027025,
+      "EndMs": 1758860,
+      "StartSegmentIdx": 38,
+      "EndSegmentIdx": 65,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    },
+    {
+      "Ordinal": 3,
+      "StartMs": 1758860,
+      "EndMs": 2862440,
+      "StartSegmentIdx": 66,
+      "EndSegmentIdx": 105,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    },
+    {
+      "Ordinal": 4,
+      "StartMs": 2862440,
+      "EndMs": 4771470,
+      "StartSegmentIdx": 106,
+      "EndSegmentIdx": 174,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    }
+  ],
+  "final_titles": [
+    {
+      "TitleSource": "Course Introduction \u0026 What Is a Distributed System? • Why Build Distributed Systems? Core Motivations \u0026 Challenges",
+      "TitleTranslated": "课程导论与分布式系统定义 • 为何构建分布式系统？核心动因与挑战",
+      "SummaryMD": "开篇介绍课程编号6824及核心目标，明确定义分布式系统为“通过网络协同工作的多台计算机集合”，并列举典型应用场景（大型网站存储、MapReduce计算、P2P文件共享），强调其在现代关键基础设施中的基础地位。 • 系统阐述构建分布式系统的四大动因：提升性能（并行化）、实现容错（冗余备份）、适应物理分布（如跨地域银行系统）及达成安全目标（隔离不可信代码）。继而剖析其固有难点：并发编程复杂性、部分故障的不可预测性，以及实现理想线性加速比的技术障碍。"
+    },
+    {
+      "TitleSource": "Course Structure, Labs \u0026 Infrastructure Abstractions",
+      "TitleTranslated": "课程结构、实验与基础设施抽象",
+      "SummaryMD": "详述课程组织：授课、论文研读、两次考试及四次编程实验（Lab1 MapReduce、Lab2-3 Raft容错、Lab4分片键值服务）。重点阐释课程核心思想——为上层应用提供简化接口，即通过抽象隐藏分布式本质，使应用能像使用单机文件系统一样便捷地调用高性能、高容错的分布式存储与计算服务。"
+    },
+    {
+      "TitleSource": "Cross-Cutting Themes: Performance, Fault Tolerance \u0026 Consistency",
+      "TitleTranslated": "三大交叉主题：性能、容错性与一致性",
+      "SummaryMD": "深入解析贯穿全课的三大技术主题：性能（可扩展加速比的原理、瓶颈与实例分析）、容错性（可用性与可恢复性的定义、非易失性存储与复制的关键作用）及一致性（以键值服务为例，对比强一致性与弱一致性的语义、实现代价及地理分布带来的通信延迟挑战）。"
+    },
+    {
+      "TitleSource": "Case Study: MapReduce in Depth",
+      "TitleTranslated": "案例精析：MapReduce深度解析",
+      "SummaryMD": "以MapReduce为详细案例，完整呈现其设计动机（应对海量数据处理需求）、编程模型（map/reduce函数、job/task概念）、执行流程（输入分片、本地化计算、shuffle数据重分布、reduce聚合）及底层架构（GFS存储、master-worker模型）。同时讨论其局限性（单阶段流水线）及现代演进（流式处理、网络优化）。"
+    }
+  ],
+  "static_metrics": {
+    "raw_chapter_count": 5,
+    "final_chapter_count": 4,
+    "mean_dur_ms": 1192867,
+    "min_dur_ms": 731835,
+    "max_dur_ms": 1909030,
+    "merge_actions": 1,
+    "split_actions": 0,
+    "boundary_jitter_ms": 32303
+  },
+  "glossary_entry_count": 23,
+  "speaker_hint_count": 1,
+  "reference_card_chars": 689
+}

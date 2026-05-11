@@ -1,0 +1,21 @@
+{
+  "model": "kimi-k2-thinking",
+  "run_index": 1,
+  "wall_time_ms": 364169,
+  "error": "glossary tool call: llm.chat.completions: Post \"https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions\": context deadline exceeded (Client.Timeout exceeded while awaiting headers)",
+  "raw_chapters": null,
+  "validation_ok": false,
+  "static_metrics": {
+    "raw_chapter_count": 0,
+    "final_chapter_count": 0,
+    "mean_dur_ms": 0,
+    "min_dur_ms": 0,
+    "max_dur_ms": 0,
+    "merge_actions": 0,
+    "split_actions": 0,
+    "boundary_jitter_ms": 0
+  },
+  "glossary_entry_count": 0,
+  "speaker_hint_count": 0,
+  "reference_card_chars": 0
+}

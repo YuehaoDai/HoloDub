@@ -1,0 +1,109 @@
+{
+  "model": "qwen-plus-latest",
+  "run_index": 1,
+  "wall_time_ms": 28655,
+  "raw_chapters": [
+    {
+      "start_segment_idx": 0,
+      "end_segment_idx": 38,
+      "title_source": "Course Introduction \u0026 What Is a Distributed System?",
+      "title_translated": "课程导论与分布式系统定义",
+      "summary_md": "本章介绍课程基本信息（编号6824）、分布式系统的本质定义（协同计算机通过网络完成一致任务），并列举典型应用场景（大型网站存储、MapReduce大数据计算、P2P文件共享）。强调其重要性源于关键基础设施的物理与逻辑分布需求。"
+    },
+    {
+      "start_segment_idx": 39,
+      "end_segment_idx": 77,
+      "title_source": "Why Build Distributed Systems? Core Challenges",
+      "title_translated": "为何构建分布式系统？核心挑战",
+      "summary_md": "本章系统阐述构建分布式系统的四大动因：性能（并行化）、效率（资源利用）、容错（故障转移）、地理分布（如跨城银行转账）与安全（隔离不可信代码）。继而剖析其固有难点：并发编程复杂性、部分故障（非全有或全无）、以及实现理想可扩展加速比的技术障碍。"
+    },
+    {
+      "start_segment_idx": 78,
+      "end_segment_idx": 105,
+      "title_source": "Cross-Cutting Themes: Performance, Fault Tolerance, Consistency",
+      "title_translated": "三大横切主题：性能、容错性、一致性",
+      "summary_md": "本章深入解析分布式系统设计的三大支柱。性能聚焦可扩展加速比及其在Web服务器扩容中的瓶颈转移现象；容错性区分可用性（故障下持续服务）与可恢复性（修复后正确重启），并强调复制与非易失性存储的关键作用；一致性则以键值服务为例，对比强一致性（最新写入可见）与弱一致性（牺牲即时性换性能），揭示地理复制带来的网络延迟与通信开销权衡。"
+    },
+    {
+      "start_segment_idx": 106,
+      "end_segment_idx": 174,
+      "title_source": "Case Study: MapReduce Architecture \u0026 Design Trade-offs",
+      "title_translated": "案例研究：MapReduce架构与设计权衡",
+      "summary_md": "本章以MapReduce为详细案例，讲解其Map-Reduce两阶段计算模型、任务（job/task）概念及WordCount示例。重点分析其底层实现：GFS文件系统如何支撑输入/输出、master-worker架构、本地化数据读取（避免网络瓶颈）、shuffle阶段的网络密集型数据重分布，以及2004年受限于根交换机带宽的设计妥协与2020年高速网络下的范式演进。"
+    }
+  ],
+  "validation_ok": true,
+  "final_ranges": [
+    {
+      "Ordinal": 1,
+      "StartMs": 0,
+      "EndMs": 1027025,
+      "StartSegmentIdx": 0,
+      "EndSegmentIdx": 38,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    },
+    {
+      "Ordinal": 2,
+      "StartMs": 1027025,
+      "EndMs": 2039390,
+      "StartSegmentIdx": 39,
+      "EndSegmentIdx": 77,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    },
+    {
+      "Ordinal": 3,
+      "StartMs": 2039390,
+      "EndMs": 2862440,
+      "StartSegmentIdx": 78,
+      "EndSegmentIdx": 105,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    },
+    {
+      "Ordinal": 4,
+      "StartMs": 2862440,
+      "EndMs": 4771470,
+      "StartSegmentIdx": 106,
+      "EndSegmentIdx": 174,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    }
+  ],
+  "final_titles": [
+    {
+      "TitleSource": "Course Introduction \u0026 What Is a Distributed System?",
+      "TitleTranslated": "课程导论与分布式系统定义",
+      "SummaryMD": "本章介绍课程基本信息（编号6824）、分布式系统的本质定义（协同计算机通过网络完成一致任务），并列举典型应用场景（大型网站存储、MapReduce大数据计算、P2P文件共享）。强调其重要性源于关键基础设施的物理与逻辑分布需求。"
+    },
+    {
+      "TitleSource": "Why Build Distributed Systems? Core Challenges",
+      "TitleTranslated": "为何构建分布式系统？核心挑战",
+      "SummaryMD": "本章系统阐述构建分布式系统的四大动因：性能（并行化）、效率（资源利用）、容错（故障转移）、地理分布（如跨城银行转账）与安全（隔离不可信代码）。继而剖析其固有难点：并发编程复杂性、部分故障（非全有或全无）、以及实现理想可扩展加速比的技术障碍。"
+    },
+    {
+      "TitleSource": "Cross-Cutting Themes: Performance, Fault Tolerance, Consistency",
+      "TitleTranslated": "三大横切主题：性能、容错性、一致性",
+      "SummaryMD": "本章深入解析分布式系统设计的三大支柱。性能聚焦可扩展加速比及其在Web服务器扩容中的瓶颈转移现象；容错性区分可用性（故障下持续服务）与可恢复性（修复后正确重启），并强调复制与非易失性存储的关键作用；一致性则以键值服务为例，对比强一致性（最新写入可见）与弱一致性（牺牲即时性换性能），揭示地理复制带来的网络延迟与通信开销权衡。"
+    },
+    {
+      "TitleSource": "Case Study: MapReduce Architecture \u0026 Design Trade-offs",
+      "TitleTranslated": "案例研究：MapReduce架构与设计权衡",
+      "SummaryMD": "本章以MapReduce为详细案例，讲解其Map-Reduce两阶段计算模型、任务（job/task）概念及WordCount示例。重点分析其底层实现：GFS文件系统如何支撑输入/输出、master-worker架构、本地化数据读取（避免网络瓶颈）、shuffle阶段的网络密集型数据重分布，以及2004年受限于根交换机带宽的设计妥协与2020年高速网络下的范式演进。"
+    }
+  ],
+  "static_metrics": {
+    "raw_chapter_count": 4,
+    "final_chapter_count": 4,
+    "mean_dur_ms": 1192867,
+    "min_dur_ms": 823050,
+    "max_dur_ms": 1909030,
+    "merge_actions": 0,
+    "split_actions": 0,
+    "boundary_jitter_ms": 36465
+  },
+  "glossary_entry_count": 21,
+  "speaker_hint_count": 1,
+  "reference_card_chars": 852
+}

@@ -1,0 +1,130 @@
+{
+  "model": "deepseek-v3",
+  "run_index": 2,
+  "wall_time_ms": 22455,
+  "raw_chapters": [
+    {
+      "start_segment_idx": 0,
+      "end_segment_idx": 16,
+      "title_source": "Introduction to Distributed Systems",
+      "title_translated": "分布式系统简介",
+      "summary_md": "介绍分布式系统的定义、核心概念及其重要性，包括性能、容错和自然分布的原因。"
+    },
+    {
+      "start_segment_idx": 17,
+      "end_segment_idx": 38,
+      "title_source": "Course Structure and Logistics",
+      "title_translated": "课程结构与安排",
+      "summary_md": "概述课程结构，包括讲座、实验、考试和项目，以及学习资源的获取方式。"
+    },
+    {
+      "start_segment_idx": 39,
+      "end_segment_idx": 82,
+      "title_source": "Technical Challenges in Distributed Systems",
+      "title_translated": "分布式系统的技术挑战",
+      "summary_md": "探讨分布式系统中的性能、容错和一致性等核心挑战及其解决方案。"
+    },
+    {
+      "start_segment_idx": 83,
+      "end_segment_idx": 107,
+      "title_source": "Case Study: MapReduce",
+      "title_translated": "案例研究：MapReduce",
+      "summary_md": "深入分析MapReduce的设计、工作原理及其在分布式计算中的应用。"
+    },
+    {
+      "start_segment_idx": 108,
+      "end_segment_idx": 174,
+      "title_source": "MapReduce Implementation and Optimization",
+      "title_translated": "MapReduce的实现与优化",
+      "summary_md": "讨论MapReduce的实现细节、网络优化及其在现代数据中心中的应用。"
+    }
+  ],
+  "validation_ok": true,
+  "final_ranges": [
+    {
+      "Ordinal": 1,
+      "StartMs": 0,
+      "EndMs": 462380,
+      "StartSegmentIdx": 0,
+      "EndSegmentIdx": 16,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    },
+    {
+      "Ordinal": 2,
+      "StartMs": 462380,
+      "EndMs": 1027025,
+      "StartSegmentIdx": 17,
+      "EndSegmentIdx": 38,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    },
+    {
+      "Ordinal": 3,
+      "StartMs": 1027025,
+      "EndMs": 2233680,
+      "StartSegmentIdx": 39,
+      "EndSegmentIdx": 82,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    },
+    {
+      "Ordinal": 4,
+      "StartMs": 2233680,
+      "EndMs": 2903950,
+      "StartSegmentIdx": 83,
+      "EndSegmentIdx": 107,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    },
+    {
+      "Ordinal": 5,
+      "StartMs": 2903950,
+      "EndMs": 4771470,
+      "StartSegmentIdx": 108,
+      "EndSegmentIdx": 174,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    }
+  ],
+  "final_titles": [
+    {
+      "TitleSource": "Introduction to Distributed Systems",
+      "TitleTranslated": "分布式系统简介",
+      "SummaryMD": "介绍分布式系统的定义、核心概念及其重要性，包括性能、容错和自然分布的原因。"
+    },
+    {
+      "TitleSource": "Course Structure and Logistics",
+      "TitleTranslated": "课程结构与安排",
+      "SummaryMD": "概述课程结构，包括讲座、实验、考试和项目，以及学习资源的获取方式。"
+    },
+    {
+      "TitleSource": "Technical Challenges in Distributed Systems",
+      "TitleTranslated": "分布式系统的技术挑战",
+      "SummaryMD": "探讨分布式系统中的性能、容错和一致性等核心挑战及其解决方案。"
+    },
+    {
+      "TitleSource": "Case Study: MapReduce",
+      "TitleTranslated": "案例研究：MapReduce",
+      "SummaryMD": "深入分析MapReduce的设计、工作原理及其在分布式计算中的应用。"
+    },
+    {
+      "TitleSource": "MapReduce Implementation and Optimization",
+      "TitleTranslated": "MapReduce的实现与优化",
+      "SummaryMD": "讨论MapReduce的实现细节、网络优化及其在现代数据中心中的应用。"
+    }
+  ],
+  "static_metrics": {
+    "raw_chapter_count": 5,
+    "final_chapter_count": 5,
+    "mean_dur_ms": 954294,
+    "min_dur_ms": 462380,
+    "max_dur_ms": 1867520,
+    "merge_actions": 0,
+    "split_actions": 0,
+    "boundary_jitter_ms": 39841
+  },
+  "glossary_entry_count": 21,
+  "speaker_hint_count": 1,
+  "reference_card_chars": 344
+}

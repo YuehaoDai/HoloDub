@@ -1,0 +1,75 @@
+{
+  "candidate_model": "deepseek-v3",
+  "judge_model": "kimi-k2-thinking",
+  "runs": 1,
+  "wall_time_ms": 275374,
+  "boundary_scores": [
+    {
+      "boundary_idx": 0,
+      "boundary_coherence": 1,
+      "rationale": "Cut breaks flow; segment 17 continues research thread from 16 and reasons were already introduced in chapter 0."
+    },
+    {
+      "boundary_idx": 1,
+      "boundary_coherence": 1,
+      "rationale": "Cut is in middle of logistics Q\u0026A; technical content doesn't start until segment 41, making boundary artificial."
+    },
+    {
+      "boundary_idx": 2,
+      "boundary_coherence": 4,
+      "rationale": "Clear topic shift from scalability to fault tolerance, though lacks explicit verbal transition."
+    },
+    {
+      "boundary_idx": 3,
+      "boundary_coherence": 4,
+      "rationale": "Clear shift from fault tolerance to consistency, signaled by 'final topic... is consistency'."
+    },
+    {
+      "boundary_idx": 4,
+      "boundary_coherence": 5,
+      "rationale": "Explicit verbal pivot: 'I want to switch to MapReduce as a sort of detailed case study'."
+    }
+  ],
+  "chapter_scores": [
+    {
+      "chapter_idx": 0,
+      "title_quality": 3,
+      "topic_completeness": 1,
+      "rationale": "Title is accurate but too broad; chapter mixes introduction with reasons and challenges that belong elsewhere."
+    },
+    {
+      "chapter_idx": 1,
+      "title_quality": 0,
+      "topic_completeness": 1,
+      "rationale": "Title is completely wrong (claims reasons but covers course logistics); content is coherent but mismatched."
+    },
+    {
+      "chapter_idx": 2,
+      "title_quality": 1,
+      "topic_completeness": 1,
+      "rationale": "Title misleading (says challenges but covers infrastructure, implementation, performance); mixes leftover logistics with multiple technical topics."
+    },
+    {
+      "chapter_idx": 3,
+      "title_quality": 0,
+      "topic_completeness": 2,
+      "rationale": "Title is completely wrong (says logistics but is about fault tolerance); fault tolerance content is coherent but segments 39-40 don't belong here."
+    },
+    {
+      "chapter_idx": 4,
+      "title_quality": 3,
+      "topic_completeness": 4,
+      "rationale": "Title is accurate but overly generic for a chapter focused specifically on consistency; maintains coherent theme throughout."
+    },
+    {
+      "chapter_idx": 5,
+      "title_quality": 5,
+      "topic_completeness": 5,
+      "rationale": "Perfectly specific title and coherent MapReduce case study from introduction to implementation details."
+    }
+  ],
+  "boundary_avg": 3,
+  "title_avg": 2,
+  "topic_avg": 2.3333333333333335,
+  "total": 2.4444444444444446
+}

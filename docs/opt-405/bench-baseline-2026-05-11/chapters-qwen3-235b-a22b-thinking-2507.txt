@@ -1,0 +1,25 @@
+model: qwen3-235b-a22b-thinking-2507
+best_run: 1 (validation_ok=true) chapters=3
+static metrics: mean=26.5min min=17.1min max=31.3min merge=0 split=0
+
+ch01 [0:00 — 17:07] 17.1min segs[0..38]
+  src: Course Introduction & Structure
+  tgt: 课程导论与结构
+
+  first_seg: All right, let's get started. This is 6824, distributed systems.
+  last_seg:  And have a lot of concurrency. And communication. Sort of strange. Difficult to debug. Errors can crop up. So you really…
+
+ch02 [17:07 — 48:23] 31.3min segs[39..106]
+  src: Core Challenges in Distributed Systems
+  tgt: 分布式系统核心挑战
+
+  first_seg: So the question is. What is. How does. How do the different factors. These things factor in the grade. I forget. But it'…
+  last_seg:  All right. So, that's a lightning sort of preview of the technical ideas in the course.
+
+ch03 [48:23 — 79:31] 31.1min segs[107..174]
+  src: MapReduce Case Study
+  tgt: MapReduce 案例研究
+
+  first_seg: Any questions about this before I start talking about MapReduce? All right. I want to switch to MapReduce as a sort of d…
+  last_seg:  We have a lab due at the end of next week in which you'll write your own somewhat simplified MapReduce. So have fun with…
+

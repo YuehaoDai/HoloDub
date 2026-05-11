@@ -1,0 +1,137 @@
+{
+  "model": "qwen3-235b-a22b-thinking-2507",
+  "run_index": 2,
+  "wall_time_ms": 49986,
+  "raw_chapters": [
+    {
+      "start_segment_idx": 0,
+      "end_segment_idx": 38,
+      "title_source": "Course Introduction \u0026 Logistics",
+      "title_translated": "课程导论与教学安排",
+      "summary_md": "介绍分布式系统课程目标、教学团队构成、评估方式及实验要求。重点说明课程网站、Piazza问答平台使用规范，以及四阶段实验项目（含MapReduce和Raft实现）的时间安排与评分标准。"
+    },
+    {
+      "start_segment_idx": 39,
+      "end_segment_idx": 46,
+      "title_source": "Infrastructure Abstractions",
+      "title_translated": "基础设施抽象模型",
+      "summary_md": "阐述分布式系统三大核心基础设施：存储、计算与通信。强调存储系统的抽象化目标——向应用层提供类单机系统的简单接口，同时实现高性能与容错能力。指出课程将聚焦存储与计算系统，通信仅作为实现工具。"
+    },
+    {
+      "start_segment_idx": 47,
+      "end_segment_idx": 66,
+      "title_source": "Implementation \u0026 Performance",
+      "title_translated": "实现机制与性能优化",
+      "summary_md": "分析分布式系统实现的关键技术（RPC、线程）与性能挑战。详解可扩展性概念：通过增加计算资源实现线性性能提升，但受限于瓶颈转移问题（如数据库成为Web服务器扩展后的瓶颈）。"
+    },
+    {
+      "start_segment_idx": 67,
+      "end_segment_idx": 83,
+      "title_source": "Fault Tolerance Fundamentals",
+      "title_translated": "容错基础原理",
+      "summary_md": "探讨大规模分布式系统中故障的必然性及其应对策略。区分可用性（故障时持续服务）与可恢复性（修复后恢复服务），重点说明非易失性存储与复制技术在容错设计中的核心作用。"
+    },
+    {
+      "start_segment_idx": 84,
+      "end_segment_idx": 106,
+      "title_source": "Consistency Models",
+      "title_translated": "一致性模型解析",
+      "summary_md": "通过键值存储案例说明分布式一致性挑战。对比强一致性（读取最新写入值）与弱一致性（允许陈旧数据）的实现代价，分析地理复制场景下网络延迟对强一致性的制约。"
+    },
+    {
+      "start_segment_idx": 107,
+      "end_segment_idx": 174,
+      "title_source": "MapReduce Case Study",
+      "title_translated": "MapReduce案例研究",
+      "summary_md": "深度解析Google MapReduce框架：设计动机（处理海量数据）、编程模型（Map/Reduce函数）、数据流（输入分片→Map→Shuffle→Reduce→输出）。结合GFS存储系统说明网络优化策略，并讨论现代分布式计算的发展演进。"
+    }
+  ],
+  "validation_ok": true,
+  "final_ranges": [
+    {
+      "Ordinal": 1,
+      "StartMs": 0,
+      "EndMs": 1027025,
+      "StartSegmentIdx": 0,
+      "EndSegmentIdx": 38,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    },
+    {
+      "Ordinal": 2,
+      "StartMs": 1027025,
+      "EndMs": 1758860,
+      "StartSegmentIdx": 39,
+      "EndSegmentIdx": 66,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    },
+    {
+      "Ordinal": 3,
+      "StartMs": 1758860,
+      "EndMs": 2233680,
+      "StartSegmentIdx": 67,
+      "EndSegmentIdx": 83,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    },
+    {
+      "Ordinal": 4,
+      "StartMs": 2233680,
+      "EndMs": 2903950,
+      "StartSegmentIdx": 84,
+      "EndSegmentIdx": 106,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    },
+    {
+      "Ordinal": 5,
+      "StartMs": 2903950,
+      "EndMs": 4771470,
+      "StartSegmentIdx": 107,
+      "EndSegmentIdx": 174,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    }
+  ],
+  "final_titles": [
+    {
+      "TitleSource": "Course Introduction \u0026 Logistics",
+      "TitleTranslated": "课程导论与教学安排",
+      "SummaryMD": "介绍分布式系统课程目标、教学团队构成、评估方式及实验要求。重点说明课程网站、Piazza问答平台使用规范，以及四阶段实验项目（含MapReduce和Raft实现）的时间安排与评分标准。"
+    },
+    {
+      "TitleSource": "Infrastructure Abstractions • Implementation \u0026 Performance",
+      "TitleTranslated": "基础设施抽象模型 • 实现机制与性能优化",
+      "SummaryMD": "阐述分布式系统三大核心基础设施：存储、计算与通信。强调存储系统的抽象化目标——向应用层提供类单机系统的简单接口，同时实现高性能与容错能力。指出课程将聚焦存储与计算系统，通信仅作为实现工具。 • 分析分布式系统实现的关键技术（RPC、线程）与性能挑战。详解可扩展性概念：通过增加计算资源实现线性性能提升，但受限于瓶颈转移问题（如数据库成为Web服务器扩展后的瓶颈）。"
+    },
+    {
+      "TitleSource": "Fault Tolerance Fundamentals",
+      "TitleTranslated": "容错基础原理",
+      "SummaryMD": "探讨大规模分布式系统中故障的必然性及其应对策略。区分可用性（故障时持续服务）与可恢复性（修复后恢复服务），重点说明非易失性存储与复制技术在容错设计中的核心作用。"
+    },
+    {
+      "TitleSource": "Consistency Models",
+      "TitleTranslated": "一致性模型解析",
+      "SummaryMD": "通过键值存储案例说明分布式一致性挑战。对比强一致性（读取最新写入值）与弱一致性（允许陈旧数据）的实现代价，分析地理复制场景下网络延迟对强一致性的制约。"
+    },
+    {
+      "TitleSource": "MapReduce Case Study",
+      "TitleTranslated": "MapReduce案例研究",
+      "SummaryMD": "深度解析Google MapReduce框架：设计动机（处理海量数据）、编程模型（Map/Reduce函数）、数据流（输入分片→Map→Shuffle→Reduce→输出）。结合GFS存储系统说明网络优化策略，并讨论现代分布式计算的发展演进。"
+    }
+  ],
+  "static_metrics": {
+    "raw_chapter_count": 6,
+    "final_chapter_count": 5,
+    "mean_dur_ms": 954294,
+    "min_dur_ms": 474820,
+    "max_dur_ms": 1867520,
+    "merge_actions": 1,
+    "split_actions": 0,
+    "boundary_jitter_ms": 28045
+  },
+  "glossary_entry_count": 16,
+  "speaker_hint_count": 1,
+  "reference_card_chars": 699
+}

@@ -1,0 +1,46 @@
+model: kimi-k2.5
+best_run: 1 (validation_ok=true) chapters=6
+static metrics: mean=13.3min min=7.9min max=31.1min merge=0 split=0
+
+ch01 [0:00 — 8:31] 8.5min segs[0..17]
+  src: Introduction to Distributed Systems
+  tgt: 分布式系统导论
+
+  first_seg: All right, let's get started. This is 6824, distributed systems.
+  last_seg:  This means that there's been a lot of attention paid to them. A lot of problems have been solved. But there's still quit…
+
+ch02 [8:31 — 17:07] 8.6min segs[18..38]
+  src: Course Logistics & Lab Overview
+  tgt: 课程安排与实验介绍
+
+  first_seg: All right. Let me talk about course structure a bit before I get started on real technical content. You should be able t…
+  last_seg:  And have a lot of concurrency. And communication. Sort of strange. Difficult to debug. Errors can crop up. So you really…
+
+ch03 [17:07 — 29:18] 12.2min segs[39..66]
+  src: Infrastructure Abstractions & Scalability
+  tgt: 基础设施抽象与可扩展性
+
+  first_seg: So the question is. What is. How does. How do the different factors. These things factor in the grade. I forget. But it'…
+  last_seg:  Okay, so another big topic that comes up a lot is fault tolerance.
+
+ch04 [29:18 — 37:13] 7.9min segs[67..82]
+  src: Fault Tolerance: Concepts & Tools
+  tgt: 容错：概念与工具
+
+  first_seg: If you're building a system with a single computer in it, well, a single computer often can stay up for years. Like I ha…
+  last_seg:  As you'll see, it's pretty complex. A
+
+ch05 [37:13 — 48:23] 11.2min segs[83..106]
+  src: Consistency Models & Trade-offs
+  tgt: 一致性模型与权衡
+
+  first_seg: final topic, final cross -cutting topic is consistency.
+  last_seg:  All right. So, that's a lightning sort of preview of the technical ideas in the course.
+
+ch06 [48:23 — 79:31] 31.1min segs[107..174]
+  src: MapReduce: Design & Implementation
+  tgt: MapReduce：设计与实现
+
+  first_seg: Any questions about this before I start talking about MapReduce? All right. I want to switch to MapReduce as a sort of d…
+  last_seg:  We have a lab due at the end of next week in which you'll write your own somewhat simplified MapReduce. So have fun with…
+

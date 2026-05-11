@@ -1,0 +1,109 @@
+{
+  "model": "qwen-max-latest",
+  "run_index": 1,
+  "wall_time_ms": 32120,
+  "raw_chapters": [
+    {
+      "start_segment_idx": 0,
+      "end_segment_idx": 37,
+      "title_source": "Course Introduction and Logistics",
+      "title_translated": "课程介绍与安排",
+      "summary_md": "讲师介绍了课程的基本信息，包括课程结构、评分标准、实验室作业等，并强调了分布式系统的重要性及其在现实世界中的应用。"
+    },
+    {
+      "start_segment_idx": 38,
+      "end_segment_idx": 82,
+      "title_source": "Distributed Systems Overview",
+      "title_translated": "分布式系统概览",
+      "summary_md": "讨论了分布式系统的核心概念，如实现细节、性能考量及容错机制。特别提到了远程过程调用（RPC）、线程以及并发控制等实现工具。"
+    },
+    {
+      "start_segment_idx": 83,
+      "end_segment_idx": 105,
+      "title_source": "Fault Tolerance and Consistency",
+      "title_translated": "容错与一致性",
+      "summary_md": "探讨了分布式系统中的容错性和一致性问题，包括可用性、可恢复性以及不同的一致性定义。"
+    },
+    {
+      "start_segment_idx": 106,
+      "end_segment_idx": 174,
+      "title_source": "Case Study: MapReduce",
+      "title_translated": "案例研究：MapReduce",
+      "summary_md": "通过MapReduce作为案例研究，详细解释了其工作原理、应用场景及在Google的实际使用情况。"
+    }
+  ],
+  "validation_ok": true,
+  "final_ranges": [
+    {
+      "Ordinal": 1,
+      "StartMs": 0,
+      "EndMs": 1027025,
+      "StartSegmentIdx": 0,
+      "EndSegmentIdx": 37,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    },
+    {
+      "Ordinal": 2,
+      "StartMs": 1027025,
+      "EndMs": 2233680,
+      "StartSegmentIdx": 38,
+      "EndSegmentIdx": 82,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    },
+    {
+      "Ordinal": 3,
+      "StartMs": 2233680,
+      "EndMs": 2862440,
+      "StartSegmentIdx": 83,
+      "EndSegmentIdx": 105,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    },
+    {
+      "Ordinal": 4,
+      "StartMs": 2862440,
+      "EndMs": 4771470,
+      "StartSegmentIdx": 106,
+      "EndSegmentIdx": 174,
+      "StartCutSilenceMs": 0,
+      "EndCutSilenceMs": 0
+    }
+  ],
+  "final_titles": [
+    {
+      "TitleSource": "Course Introduction and Logistics",
+      "TitleTranslated": "课程介绍与安排",
+      "SummaryMD": "讲师介绍了课程的基本信息，包括课程结构、评分标准、实验室作业等，并强调了分布式系统的重要性及其在现实世界中的应用。"
+    },
+    {
+      "TitleSource": "Distributed Systems Overview",
+      "TitleTranslated": "分布式系统概览",
+      "SummaryMD": "讨论了分布式系统的核心概念，如实现细节、性能考量及容错机制。特别提到了远程过程调用（RPC）、线程以及并发控制等实现工具。"
+    },
+    {
+      "TitleSource": "Fault Tolerance and Consistency",
+      "TitleTranslated": "容错与一致性",
+      "SummaryMD": "探讨了分布式系统中的容错性和一致性问题，包括可用性、可恢复性以及不同的一致性定义。"
+    },
+    {
+      "TitleSource": "Case Study: MapReduce",
+      "TitleTranslated": "案例研究：MapReduce",
+      "SummaryMD": "通过MapReduce作为案例研究，详细解释了其工作原理、应用场景及在Google的实际使用情况。"
+    }
+  ],
+  "static_metrics": {
+    "raw_chapter_count": 4,
+    "final_chapter_count": 4,
+    "mean_dur_ms": 1192867,
+    "min_dur_ms": 628760,
+    "max_dur_ms": 1909030,
+    "merge_actions": 0,
+    "split_actions": 0,
+    "boundary_jitter_ms": 41101
+  },
+  "glossary_entry_count": 4,
+  "speaker_hint_count": 1,
+  "reference_card_chars": 604
+}
