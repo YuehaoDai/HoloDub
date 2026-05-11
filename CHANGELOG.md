@@ -15,6 +15,57 @@ once we cut a tagged release.
 
 ### Added
 
+- **Episode-level LLM-as-Judge (OPT-406)**: every `Episode` is now
+  scored asynchronously after `pipeline.runEpisodeMerge` transitions
+  it to `Completed`. The new `internal/llm/episode_judge.go`
+  `JudgeEpisode` drives a strict `emit_episode_judge_verdict` tool
+  call against `EPISODE_JUDGE_MODEL` (default `kimi-k2.5` — same
+  model used by OPT-409 chapter judge for cost/quality parity) and
+  returns seven 0–1 axis scores covering exactly the cross-chapter
+  dimensions that segment-level OPT-002 and chapter-level OPT-409
+  judges cannot see: terminology consistency (cross-chapter glossary
+  drift), register consistency (academic / casual stays stable
+  across chapters), narrative coherence (end-to-end discourse flow),
+  character voice stability (one speaker keeps one voice across
+  chapters), cultural localization, overall fidelity, overall
+  fluency. Plus TWO weakest lists — `top_3_weakest_chapters` (whole-
+  chapter rework candidates) AND `top_3_weakest_segments` (each
+  pinpointed by `chapter_ordinal:ordinal` so OPT-407 closed-loop
+  rework can dispatch chapter-level OR segment-level retranslate),
+  a `terminology_glossary_observed` array (cross-chapter terms with
+  inconsistent translations flagged), and a verdict enum
+  (`production_ready` / `needs_minor_revision` /
+  `needs_major_revision`, stricter than chapter-level because
+  episode-judge is the final gate). Results land on the pre-reserved
+  `episodes.episode_judge_score` (`NUMERIC`) +
+  `episodes.episode_judge_meta` (`JSONB`) columns (migration
+  `migrations/005_episodes.sql`). The dispatcher
+  `internal/pipeline/stage_episode_judge.go` `maybeJudgeEpisodeAsync`
+  mirrors the OPT-409 contract: detached background context with
+  configurable timeout (`EPISODE_JUDGE_TIMEOUT_SEC`, default 90 s
+  to absorb the larger episode prompt = reference card + glossary +
+  chapter overview + every segment), best-effort log-and-drop on any
+  failure, never fails episode merge or anything downstream. The
+  frontend (`ui/src/components/EpisodeDetail.vue`) now renders the
+  score on the episode header card as a green / amber / red badge
+  (≥ 0.9 / 0.8 / < 0.8 — stricter than the chapter-level 0.85 / 0.7
+  thresholds because the episode judge is the final whole-output
+  gate) with a hover tooltip showing every axis sub-score plus the
+  weak-chapters list, the weak-segments list, the observed cross-
+  chapter glossary, and a one-paragraph summary. New env knobs
+  `EPISODE_JUDGE_MODEL=kimi-k2.5` / `EPISODE_JUDGE_OBSERVE_ONLY=true`
+  / `EPISODE_JUDGE_TIMEOUT_SEC=90` /
+  `EPISODE_JUDGE_ESCALATE_MODEL=` (the MVP is observe-only and
+  single-model; the escalate hook is reserved for OPT-406-followup-2).
+  Reuses the OPT-405 `isThinkingModelName` helper to auto-degrade
+  `tool_choice` to `"auto"` for DashScope reasoning models, and the
+  existing `Store.ListSegmentsByEpisode` to bulk-load every segment
+  in one DB round-trip (no N+1). Validated end-to-end on staging
+  episode 131: 9 s LLM round-trip, persisted
+  verdict=`production_ready` overall_fidelity=0.95 (every axis ≥ 0.95,
+  zero weak chapters / segments, eight cross-chapter glossary terms
+  observed including `MapReduce` → `MapReduce`, `fault tolerance` →
+  `容错`).
 - **Chapter-level LLM-as-Judge (OPT-409)**: every chapter (one `Job`
   under a multi-chapter `Episode`, see OPT-401) is now scored
   asynchronously after `pipeline.runMerge` persists the chapter

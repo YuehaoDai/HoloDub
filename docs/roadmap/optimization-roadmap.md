@@ -104,7 +104,7 @@ flowchart LR
 | OPT-404 | Episode merge + 跨 chapter 一致性广播 | P2 | done | 3d | OPT-403 |
 | OPT-405 | LLM-Driven Chapterization（语义切分替代 DP） | P2 | done | 3d | OPT-403, OPT-402 |
 | OPT-405.1 | Multi-Model Chapterize Benchmark（kimi-k2.5 baseline） | P2 | done | 1d | OPT-405 |
-| OPT-406 | Episode-level Judge productize（兼容 OPT-EPISODE-JUDGE-PROMOTE） | P2 | planned | 2d | OPT-404, OPT-409 |
+| OPT-406 | Episode-level Judge productize（兼容 OPT-EPISODE-JUDGE-PROMOTE） | P2 | done | 2d | OPT-404, OPT-409 |
 | OPT-407 | Closed-loop rework engine（三级 verdict → 返工调度） | P2 | planned | 5d | OPT-409, OPT-406, OPT-201 |
 | OPT-408 | Multi-episode 调度 + GPU 公平性 | P2 | planned | 3d | OPT-403 |
 | OPT-409 | Chapter-level Judge（原 OPT-405 计划，2026-05-11 重编号；OPT-405 ID 已被 LLM-Driven Chapterization 占用） | P2 | done | 2d | OPT-403, OPT-002 |
@@ -878,33 +878,68 @@ flowchart TD
 
 #### OPT-406 Episode-level Judge productize
 
-- **Status**: planned (合并入 OPT-EPISODE-JUDGE-PROMOTE 候选)
+- **Status**: done (2026-05-11)
 - **Source**: 业务对话 2026-05 + 节 6 "OPT-EPISODE-JUDGE-PROMOTE" 候选
-- **Estimate**: 2d
+- **Estimate**: 2d → **实际 ~0.5d**（与 OPT-409 同结构高复用）
 - **Depends on**: OPT-404, OPT-409（原 OPT-405 = Chapter Judge 已重编号，详见 §3 备注）
 - **背景**：`scripts/episode_judge.ps1` 已经在 job 131 验证完整可用。本 OPT 把它从一次性 PowerShell 提升为 Go API，做为 `episode_merge` 完成后自动触发的 stage。重点关注**跨章节**维度（segment / chapter judge 都看不到）：
   - 跨 chapter 术语漂移（chapter 1 用"分布式系统"，chapter 3 用"distributed systems"留英文 → 标记不一致）
   - 跨 chapter 角色 voice 漂移（讲师在 chapter 2 突然像换人）
   - 整体叙事弧线 coherence
 - **Outcome**:
-  - 新增 stage `episode_judge` 自动跑在 `episode_merge` 之后
+  - 新增 episode-level judge dispatch 自动跑在 `runEpisodeMerge` 末尾（Episode → Completed 之后）
   - 写入 `episodes.episode_judge_score / episode_judge_meta`
-  - 默认用 cheaper model (`EPISODE_JUDGE_MODEL=qwen-turbo`)；当 chapter judge 平均 < 0.9 自动升级为 qwen-max
-  - 验收：episode_judge_score < `EPISODE_JUDGE_REWORK_THRESHOLD` (默认 0.85) 触发 OPT-407 闭环
+  - **MVP 简化**：单模型 `EPISODE_JUDGE_MODEL=kimi-k2.5`（与 OPT-409 chapter judge 同模型；自动升级到 qwen-max 留 OPT-406-followup-2）
+  - 验收：observe-only 模式（`EPISODE_JUDGE_OBSERVE_ONLY=true`）；不阻塞 merge 完成；OPT-407 闭环 rework 上线后会消费此分数
 - **Verification**:
-  - PowerShell 版本 (job 131) 与 Go 版本对同一 episode 评分差异 < 0.05
-  - 所有 baseline 视频跑通后 score ≥ 0.95
-  - 升级到 qwen-max 的触发率 < 10%（避免常态高成本）
-- **Rollout**: L1→L4，env `EPISODE_JUDGE_ENABLED=true` 默认开
+  - **L1**：`go vet ./...` clean；`go test ./internal/llm/... -run TestEpisodeJudge` 8 case 全绿（schema valid / disabled / empty / happy path / 缺 verdict 默认 / user msg 组装 / overall score / thinking model tool_choice 降级）；`go test ./internal/store/... -run TestUpdateEpisodeJudgeResult` 1 case 绿（partial UPDATE 不触碰 Status / OutputRelPath / ChaptersManifestRelPath / ReferenceCard）；GOOS=linux GOARCH=amd64 双 binary 编译通过
+  - **L2 staging**：episode 131（1-chapter，p0-10min-semantic-validation）触发 retry stage=ep_episode_merge → worker 9 s 内完成 LLM 调用并写入 `episode_judge_score=0.95`，meta JSONB 含 7 axes 全 ≥ 0.95 + verdict=`production_ready` + 8 个 cross-chapter glossary 观察（`MapReduce` → `MapReduce`、`fault tolerance` → `容错`、`distributed systems` → `分布式系统` 等），与 PowerShell 版 [scripts/episode_judge.ps1](../../scripts/episode_judge.ps1) 同 episode 输出一致
+  - **L3 跨章 drift correlation 待补**：与 OPT-409 chapter correlation 共用 episode 142/141/140 窗口，等 multi-chapter episode 走通 merge 后做（不阻塞本 OPT 完成）
+- **Rollout**: 已 L1+L2 落地；observe-only 默认开（无 user-visible 行为变化），OPT-407 上线时切换 observe_only=false
 - **Related rules**: [llm-call-standards.mdc#1](../../.cursor/rules/llm-call-standards.mdc), [observability-and-cost.mdc](../../.cursor/rules/observability-and-cost.mdc), [testing-and-rollout.mdc#3](../../.cursor/rules/testing-and-rollout.mdc) (golden set)
-- **关键改动点**:
-  - 新增 `internal/llm/episode_judge.go`（搬 PowerShell 提示工程 + tool schema 落地到 Go）
-  - 新增 `internal/pipeline/stage_episode_judge.go`
-  - DashScope 不接受 strict tools 时退化为 `response_format=json_object`（同 PowerShell 版的 fallback）
-  - 新增 API `POST /episodes/:id/episode-judge`（手动触发）+ `GET /episodes/:id/episode-judge`（读结果）
-  - 前端：`EpisodeDetail.vue` 显示 7 维 radar chart + verdict badge
-  - PowerShell `scripts/episode_judge.ps1` 保留为备用工具（manual triage 仍有用）
-- **PRs**: TBD
+- **实际改动**:
+  - 新增 [internal/llm/episode_judge.go](../../internal/llm/episode_judge.go) `JudgeEpisode` + `EpisodeJudgeArgs / Result` 类型 + 7 维 strict tool schema (`emit_episode_judge_verdict`)，含 `top_3_weakest_chapters` + `top_3_weakest_segments` + `terminology_glossary_observed` + verdict (`production_ready` / `needs_minor_revision` / `needs_major_revision`)；自动复用 `isThinkingModelName` 降 `tool_choice` 到 `"auto"`（DashScope thinking 兼容）；缺 verdict 默认 `needs_minor_revision`
+  - 新增 [internal/llm/episode_judge_test.go](../../internal/llm/episode_judge_test.go) 8 case 单测（schema/disabled/empty/happy/fallback/user-msg/overall-score/thinking-mode）
+  - 新增 [internal/pipeline/stage_episode_judge.go](../../internal/pipeline/stage_episode_judge.go) `(*Service).maybeJudgeEpisodeAsync(ep, chapters)`：detached `context.Background()` + 90s timeout + 一次性 `Store.ListSegmentsByEpisode` 拿全部 segments（避免 N+1）+ 镜像 `maybeJudgeChapterAsync` 的 observe-only log+drop 契约
+  - [internal/pipeline/stage_episode_merge.go](../../internal/pipeline/stage_episode_merge.go) `runEpisodeMerge` 末尾（Episode → Completed 后）一行 hook
+  - [internal/llm/client.go](../../internal/llm/client.go) `Client` 加 `episodeJudgeModel` 字段 + `OpEpisodeJudge` 常量；[internal/store/store.go](../../internal/store/store.go) 加 `UpdateEpisodeJudgeResult` partial UPDATE 三列（不触碰状态机字段）；[internal/store/store_test.go](../../internal/store/store_test.go) 加 `TestUpdateEpisodeJudgeResult_PartialUpdateOnly`
+  - [internal/config/config.go](../../internal/config/config.go) + `.env*.example` 加 `EPISODE_JUDGE_MODEL=kimi-k2.5` / `EPISODE_JUDGE_OBSERVE_ONLY=true` / `EPISODE_JUDGE_TIMEOUT_SEC=90` / `EPISODE_JUDGE_ESCALATE_MODEL=`（escalate 留 followup）
+  - 前端 [ui/src/api.ts](../../ui/src/api.ts) `Episode` 加 `episode_judge_meta` + 新 `EpisodeJudgeMeta` interface；[ui/src/components/EpisodeDetail.vue](../../ui/src/components/EpisodeDetail.vue) episode header 加 badge（绿 ≥ 0.9 / 黄 ≥ 0.8 / 红，比 chapter 0.85 / 0.7 更严，因为 episode-level 是最终把关）+ hover tooltip 7 维表 + 弱章节列表 + 弱段列表（c{N}.s{M} 定位）+ 观察术语表 + 一段式 summary
+  - **未做**（衍生为 followup）：`POST /episodes/:id/episode-judge` 手动 trigger endpoint（OPT-406-followup-3）；`response_format=json_object` fallback（OPT-406-followup-1）；自动 escalate 到 qwen-max（OPT-406-followup-2）
+- **PRs**: feat(judge): OPT-406 episode-level Judge productize
+
+---
+
+#### OPT-406-followup-1 `response_format=json_object` fallback when strict tool fails
+
+- **Status**: planned
+- **Estimate**: 0.5d
+- **Depends on**: OPT-406
+- **Background**：当前 OPT-406 `JudgeEpisode` 在 `doChatTool` 返回空 args 时直接报错（计入 `IncLLMStrictParseFailed(OpEpisodeJudge)`）。PowerShell 版 [scripts/episode_judge.ps1](../../scripts/episode_judge.ps1) 在 strict tool 持续失败时退化为 `response_format=json_object` + content parse —— 与 chapter judge 同步加同一个 fallback，让一两个 provider 抽风不至于让整集 episode 没分。
+- **Trigger**: 当 `holodub_llm_strict_parse_failed_total{operation="episode_judge"}` 24h 累计 > 5% 调用量（经 production 监控）时落地。
+- **Verification**: stub provider 返回 content message → fallback 解析 → meta 写入；strict 路径正常时 fallback 不触发。
+
+---
+
+#### OPT-406-followup-2 escalate model when chapter judge avg < 0.9
+
+- **Status**: planned
+- **Estimate**: 0.5d
+- **Depends on**: OPT-406, OPT-409
+- **Background**：env `EPISODE_JUDGE_ESCALATE_MODEL`（默认空）已在 OPT-406 MVP 预埋。本 followup 在 `maybeJudgeEpisodeAsync` 加一行：当 `chapters` 切片的 `ChapterJudgeScore` 平均值 < 0.9（OPT-409 信号显示有 chapter 级问题），切到 `EpisodeJudgeEscalateModel`（推荐 `qwen-max`），让更强的模型给最终判分；其余情况仍用 cheaper 单模型 `EPISODE_JUDGE_MODEL=kimi-k2.5`，避免常态高成本。
+- **Trigger**: OPT-407 闭环 rework 上线前完成（OPT-407 决策表需要更可靠的 episode 分数），或观察到 production episode 平均 < 0.9 占比 > 20% 时上线。
+- **Verification**: 构造一个 chapters all 0.85 的 mock episode → 运行 judge → 验证用 escalate model（捕获 HTTP request 的 model 字段）；chapters all 0.95 → 仍用默认。
+
+---
+
+#### OPT-406-followup-3 `POST /episodes/:id/episode-judge` 手动 trigger endpoint
+
+- **Status**: planned
+- **Estimate**: 0.5d
+- **Depends on**: OPT-406
+- **Background**：当前 OPT-406 MVP 触发路径仅 `runEpisodeMerge` 末尾一次（episode merge 完成时）。运营场景需要在不重跑整个 merge 的前提下重新评分（例如：换 model / 改 prompt / 修了一个 segment 后想看分数变化）。本 followup 加一个 HTTP endpoint 直接触发 `maybeJudgeEpisodeAsync`，复用现有 dispatch + DB 写入。
+- **Trigger**: 运营反馈 retry stage=ep_episode_merge 的副作用（重写 manifest / 重新 mux）太重时落地；当前 retry 路径已可达成（L2 验证用的就是它），不阻塞 OPT-407。
+- **Verification**: `curl -X POST .../episodes/131/episode-judge` 返回 202 + worker 日志在 90s 内出现 `episode judge result recorded`；GET `/episodes/131` 看到 `episode_judge_score` 更新。
 
 ---
 
@@ -1314,6 +1349,12 @@ flowchart TD
   - 关键改动：`internal/store/store.go` 加 `ListSegmentsAwaitingJudge(ctx, limit)` + 单测；新增 `internal/pipeline/judge_backfill.go` `(*Service).BackfillSegmentJudges(ctx, limit, concurrency)` 用 buffered channel 做 bounded concurrency；`internal/config/config.go` 加 `JudgeBackfillOnStart bool` (default true) + `JudgeBackfillLimit int` (default 500)；`cmd/worker/main.go` 服务初始化后 spawn 15s 延迟的 backfill goroutine；env 加 `JUDGE_BACKFILL_ON_START=true / JUDGE_BACKFILL_LIMIT=500`
   - 验证：worker 重启后 15s `judge backfill: dispatching count=500 limit=500 concurrency=3` → 12s 后 `dispatch complete dispatched=500`；未判分段从 5908 → 5408（job 119/120/121 历史 restart-window gap 全部补齐）
   - 衍生：**OPT-002-followup-3** PrevContext for backfill（当前 backfill 路径传 nil 简化首版，可补成查 segment 前一段拼 ContextSegment）
+- **OPT-406** Episode-level Judge productize
+  - 实际工时：~0.5d（与 OPT-409 同结构高复用，PowerShell 版 `scripts/episode_judge.ps1` 提示工程直接搬运）
+  - CHANGELOG: [Episode-level LLM-as-Judge (OPT-406)](../../CHANGELOG.md)
+  - 关键改动：新增 `internal/llm/episode_judge.go` 7 维 strict tool schema + `JudgeEpisode` 入口（自动复用 `isThinkingModelName` 降 `tool_choice` "auto"）+ 8-case 单测；新增 `internal/pipeline/stage_episode_judge.go` `maybeJudgeEpisodeAsync`（detached ctx + 90s timeout + `Store.ListSegmentsByEpisode` 一次拿全部 segments 避 N+1 + observe-only log+drop）；`runEpisodeMerge` 末尾插入 hook；`internal/store/store.go` `UpdateEpisodeJudgeResult` partial UPDATE 三列 + 单测验证不触碰状态机字段；`internal/config/config.go` + `.env*.example` 加 `EPISODE_JUDGE_MODEL=kimi-k2.5` / `EPISODE_JUDGE_OBSERVE_ONLY=true` / `EPISODE_JUDGE_TIMEOUT_SEC=90` / `EPISODE_JUDGE_ESCALATE_MODEL=`（escalate 留 followup-2）；前端 `EpisodeDetail.vue` episode header 加 badge（绿/黄/红 阈值 0.9 / 0.8）+ hover tooltip 7 维表 + 弱章节 + 弱段（c{N}.s{M} 定位）+ 观察术语表 + 一段式 summary
+  - 验证：staging episode 131（1-chapter，p0-10min-semantic-validation）触发 retry stage=ep_episode_merge → 9 s 内 LLM round-trip 完成并写入 `episode_judge_score=0.95`，meta JSONB 含 7 axes 全 ≥ 0.95 + verdict=`production_ready` + 8 个 cross-chapter glossary 观察（`MapReduce` → `MapReduce`、`fault tolerance` → `容错` 等）；DB partial UPDATE 验证：`Status` / `OutputRelPath` / `ChaptersManifestRelPath` / `ReferenceCard` 未触碰
+  - 衍生：(a) episode 142/141/140 多 chapter 跑通后验证"弱章节列表 vs OPT-409 chapter judge 低分章节相关性 ≥0.7"；(b) **OPT-406-followup-1** `response_format=json_object` fallback；(c) **OPT-406-followup-2** escalate 模型自动切（chapter judge 平均 < 0.9 → qwen-max）；(d) **OPT-406-followup-3** 手动 trigger endpoint `POST /episodes/:id/episode-judge`
 
 ---
 

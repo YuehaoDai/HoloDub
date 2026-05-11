@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -540,5 +541,87 @@ func TestListSegmentsAwaitingJudge_FiltersAndOrdersCorrectly(t *testing.T) {
 	}
 	if gotNeg, err := st.ListSegmentsAwaitingJudge(ctx, -5); err != nil || gotNeg != nil {
 		t.Fatalf("limit<0 must short-circuit (got %d rows, err=%v)", len(gotNeg), err)
+	}
+}
+
+// TestUpdateEpisodeJudgeResult_PartialUpdateOnly verifies the OPT-406
+// partial UPDATE only touches episode_judge_score / episode_judge_meta /
+// updated_at — episode state-machine columns (Status, OutputRelPath,
+// ChaptersManifestRelPath, OutputLayoutVersion, ReferenceCard, Name)
+// MUST NOT be clobbered, because the judge dispatch runs asynchronously
+// AFTER ep_episode_merge has already written them and an unrelated
+// UpdateEpisodeStatus / UpdateEpisodeOutput may race with us.
+func TestUpdateEpisodeJudgeResult_PartialUpdateOnly(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+
+	ep := &models.Episode{
+		TenantKey:               "default",
+		Name:                    "ep-judge-target",
+		SourceLanguage:          "en",
+		TargetLanguage:          "zh",
+		TotalChapters:           2,
+		Status:                  models.EpisodeStatusCompleted,
+		OutputRelPath:           "episodes/9001/output/vp0/final.mp4",
+		ChaptersManifestRelPath: "episodes/9001/chapters.json",
+		OutputLayoutVersion:     2,
+		ReferenceCard:           "EXISTING_REFERENCE_CARD",
+		DurationMs:              123456,
+	}
+	if err := st.CreateEpisode(ctx, ep); err != nil {
+		t.Fatalf("create episode: %v", err)
+	}
+
+	// Sanity: nothing in judge columns yet.
+	before, err := st.GetEpisode(ctx, ep.ID)
+	if err != nil {
+		t.Fatalf("get episode: %v", err)
+	}
+	if before.EpisodeJudgeScore != nil {
+		t.Fatalf("expected EpisodeJudgeScore nil before update, got %v", *before.EpisodeJudgeScore)
+	}
+
+	metaJSON := []byte(`{"verdict":"production_ready","overall_fidelity":0.91}`)
+	if err := st.UpdateEpisodeJudgeResult(ctx, ep.ID, 0.91, metaJSON); err != nil {
+		t.Fatalf("UpdateEpisodeJudgeResult: %v", err)
+	}
+
+	after, err := st.GetEpisode(ctx, ep.ID)
+	if err != nil {
+		t.Fatalf("re-get episode: %v", err)
+	}
+	if after.EpisodeJudgeScore == nil || *after.EpisodeJudgeScore != 0.91 {
+		t.Fatalf("EpisodeJudgeScore want 0.91, got %v", after.EpisodeJudgeScore)
+	}
+	if len(after.EpisodeJudgeMeta) == 0 {
+		t.Fatalf("EpisodeJudgeMeta should be populated, got empty")
+	}
+	if !strings.Contains(string(after.EpisodeJudgeMeta), "production_ready") {
+		t.Fatalf("EpisodeJudgeMeta should contain verdict text, got %q", string(after.EpisodeJudgeMeta))
+	}
+
+	// Critical assertion: state-machine and OPT-403/404 columns untouched.
+	if after.Status != before.Status {
+		t.Fatalf("Status was clobbered: %q → %q", before.Status, after.Status)
+	}
+	if after.OutputRelPath != before.OutputRelPath {
+		t.Fatalf("OutputRelPath was clobbered: %q → %q", before.OutputRelPath, after.OutputRelPath)
+	}
+	if after.ChaptersManifestRelPath != before.ChaptersManifestRelPath {
+		t.Fatalf("ChaptersManifestRelPath was clobbered: %q → %q",
+			before.ChaptersManifestRelPath, after.ChaptersManifestRelPath)
+	}
+	if after.OutputLayoutVersion != before.OutputLayoutVersion {
+		t.Fatalf("OutputLayoutVersion was clobbered: %d → %d",
+			before.OutputLayoutVersion, after.OutputLayoutVersion)
+	}
+	if after.ReferenceCard != before.ReferenceCard {
+		t.Fatalf("ReferenceCard was clobbered: %q → %q", before.ReferenceCard, after.ReferenceCard)
+	}
+	if after.Name != before.Name {
+		t.Fatalf("Name was clobbered: %q → %q", before.Name, after.Name)
+	}
+	if after.DurationMs != before.DurationMs {
+		t.Fatalf("DurationMs was clobbered: %d → %d", before.DurationMs, after.DurationMs)
 	}
 }

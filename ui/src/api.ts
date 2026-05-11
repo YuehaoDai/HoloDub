@@ -79,6 +79,41 @@ export interface ChapterJudgeMeta {
   one_paragraph_summary?: string;
 }
 
+// EpisodeJudgeMeta is the structured episode-level judge verdict written
+// by the OPT-406 hook in pipeline.runEpisodeMerge. Mirrors the Go schema
+// in internal/llm/episode_judge.go (EpisodeJudgeResult). Seven axes vs
+// chapter judge's six (adds character_voice_stability +
+// cultural_localization), and TWO weakest arrays (whole chapters + pin-
+// pointed segments) so OPT-407 closed-loop rework can dispatch chapter-
+// level OR segment-level retranslation.
+export interface EpisodeJudgeMeta {
+  terminology_consistency?: number;
+  register_consistency?: number;
+  narrative_coherence?: number;
+  character_voice_stability?: number;
+  cultural_localization?: number;
+  overall_fidelity?: number;
+  overall_fluency?: number;
+  top_3_weakest_chapters?: Array<{
+    ordinal: number;
+    issue: string;
+    recommended_fix: string;
+  }>;
+  top_3_weakest_segments?: Array<{
+    chapter_ordinal: number;
+    ordinal: number;
+    issue: string;
+    recommended_fix: string;
+  }>;
+  terminology_glossary_observed?: Array<{
+    source_term: string;
+    target_term: string;
+    note?: string;
+  }>;
+  verdict?: "production_ready" | "needs_minor_revision" | "needs_major_revision";
+  one_paragraph_summary?: string;
+}
+
 // GlossaryEntry is one (source -> target) translation pair the canonical
 // episode glossary published by the OPT-402 ep_glossary_extract stage.
 // Older API bundles return no glossary field — UI degrades gracefully.
@@ -109,7 +144,13 @@ export interface Episode {
   output_relpath?: string;
   error_message?: string;
   reference_card?: string;
+  // OPT-406 episode-level judge — populated by maybeJudgeEpisodeAsync after
+  // ep_episode_merge transitions the episode to Completed. Score is the
+  // scalar 0..1 (currently equal to EpisodeJudgeResult.overall_fidelity);
+  // meta carries the full 7-axis verdict + weakest-chapters + weakest-
+  // segments + cross-chapter glossary observations + summary.
   episode_judge_score?: number;
+  episode_judge_meta?: EpisodeJudgeMeta;
   completed_at?: string | null;
   created_at: string;
   updated_at: string;

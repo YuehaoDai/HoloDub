@@ -185,6 +185,12 @@ func (s *Service) runEpisodeMerge(ctx context.Context, task models.TaskPayload) 
 			"episode_id", ep.ID, "error", err)
 	}
 
+	// OPT-406 trigger: episode is now Completed. Fire off the cross-chapter
+	// LLM judge in a detached goroutine — observe-only in the MVP, MUST NOT
+	// block episode_merge return. The judge writes Episode.episode_judge_score
+	// + episode_judge_meta when it finishes (or logs+drops on any failure).
+	s.maybeJudgeEpisodeAsync(ep, chapters)
+
 	slog.Info("ep_episode_merge completed",
 		"episode_id", ep.ID,
 		"chapter_count", len(chapters),

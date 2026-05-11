@@ -772,6 +772,25 @@ func (s *Store) UpdateChapterJudgeResult(ctx context.Context, jobID uint, score 
 	return s.db.WithContext(ctx).Model(&models.Job{}).Where("id = ?", jobID).Updates(updates).Error
 }
 
+// UpdateEpisodeJudgeResult writes the OPT-406 episode-level judge verdict for
+// one Episode. score is the scalar overall (0..1, currently equal to
+// EpisodeJudgeResult.OverallFidelity); metaJSON is the full structured
+// verdict serialised to JSON (7-axis sub-scores, top-3 weakest chapters +
+// segments, observed cross-chapter glossary, verdict enum, summary).
+//
+// Same observe-only contract as UpdateChapterJudgeResult: MUST NOT run inside
+// the main pipeline transaction. The partial UPDATE only touches three columns
+// so concurrent writes from other paths (episode status machine, output_relpath,
+// chapters_manifest_rel_path, loudnorm_stats, etc.) are not clobbered.
+func (s *Store) UpdateEpisodeJudgeResult(ctx context.Context, episodeID uint, score float64, metaJSON []byte) error {
+	updates := map[string]any{
+		"episode_judge_score": score,
+		"episode_judge_meta":  metaJSON,
+		"updated_at":          time.Now().UTC(),
+	}
+	return s.db.WithContext(ctx).Model(&models.Episode{}).Where("id = ?", episodeID).Updates(updates).Error
+}
+
 // ListSegmentsAwaitingJudge returns at most `limit` segments that have been
 // synthesised but never received a judge verdict (OPT-002-followup-2 worker
 // startup back-fill source). Filters out empty source / target text so the

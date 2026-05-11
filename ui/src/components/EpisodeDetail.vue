@@ -32,13 +32,77 @@
             {{ episode.duration_ms ? formatDuration(episode.duration_ms) : "—" }}
           </div>
         </div>
-        <div class="p-3 rounded-lg bg-[#1e2535] border border-[#273246]">
-          <div class="text-[10px] uppercase tracking-wider text-[#9db0c9] mb-1">Episode 评分 (OPT-406)</div>
-          <div class="text-sm font-mono text-white">
-            {{ episode.episode_judge_score !== undefined && episode.episode_judge_score !== null
-                ? episode.episode_judge_score.toFixed(2)
-                : "—" }}
+        <div class="p-3 rounded-lg bg-[#1e2535] border border-[#273246] relative">
+          <div class="flex items-center justify-between mb-1">
+            <div class="text-[10px] uppercase tracking-wider text-[#9db0c9]">Episode 评分 (OPT-406)</div>
+            <span
+              v-if="episode.episode_judge_meta?.verdict"
+              class="text-[9px] px-1.5 py-0.5 rounded-full font-mono"
+              :class="episodeJudgeBadgeClass(episode.episode_judge_score ?? 0)"
+              :title="episodeJudgeVerdictLabel(episode.episode_judge_meta.verdict)"
+            >{{ episodeJudgeVerdictBadge(episode.episode_judge_meta.verdict) }}</span>
           </div>
+          <div
+            v-if="episode.episode_judge_score !== undefined && episode.episode_judge_score !== null"
+            class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-sm font-mono cursor-help group relative"
+            :class="episodeJudgeBadgeClass(episode.episode_judge_score)"
+            :title="`Episode judge score · ${episodeJudgeVerdictLabel(episode.episode_judge_meta?.verdict)}`"
+          >
+            <span class="font-semibold">{{ episode.episode_judge_score.toFixed(2) }}</span>
+            <!-- Tooltip on hover: 7-axis breakdown + weakest chapters/segments + glossary observed + summary. -->
+            <div
+              class="hidden group-hover:block absolute z-30 left-0 top-full mt-1 w-80 max-w-[92vw] p-2.5 rounded-lg bg-[#0f1420] border border-[#273246] shadow-xl text-left text-[11px] text-[#cbd6e4] font-sans normal-case"
+              @click.stop
+            >
+              <div class="font-semibold text-white mb-1.5">
+                整集 Judge · {{ episodeJudgeVerdictLabel(episode.episode_judge_meta?.verdict) }}
+              </div>
+              <table class="w-full text-[10px] mb-1.5">
+                <tbody>
+                  <tr v-for="row in episodeJudgeAxes(episode.episode_judge_meta)" :key="row.label" class="leading-snug">
+                    <td class="text-[#9db0c9] pr-1.5">{{ row.label }}</td>
+                    <td class="text-right font-mono" :class="episodeJudgeAxisColor(row.value)">{{ row.value !== undefined ? row.value.toFixed(2) : "—" }}</td>
+                  </tr>
+                </tbody>
+              </table>
+              <div v-if="episode.episode_judge_meta?.top_3_weakest_chapters && episode.episode_judge_meta.top_3_weakest_chapters.length > 0">
+                <div class="font-semibold text-white mt-1.5 mb-1">弱章节 (top {{ episode.episode_judge_meta.top_3_weakest_chapters.length }})</div>
+                <ul class="space-y-1 text-[10px]">
+                  <li v-for="w in episode.episode_judge_meta.top_3_weakest_chapters" :key="`ch-${w.ordinal}`" class="border-l-2 border-amber-700 pl-1.5">
+                    <div class="text-amber-300 font-mono">ch{{ w.ordinal }}</div>
+                    <div class="text-[#cbd6e4]">{{ w.issue }}</div>
+                    <div class="text-[#9db0c9] italic">→ {{ w.recommended_fix }}</div>
+                  </li>
+                </ul>
+              </div>
+              <div v-if="episode.episode_judge_meta?.top_3_weakest_segments && episode.episode_judge_meta.top_3_weakest_segments.length > 0">
+                <div class="font-semibold text-white mt-1.5 mb-1">弱段 (top {{ episode.episode_judge_meta.top_3_weakest_segments.length }})</div>
+                <ul class="space-y-1 text-[10px]">
+                  <li v-for="w in episode.episode_judge_meta.top_3_weakest_segments" :key="`seg-${w.chapter_ordinal}-${w.ordinal}`" class="border-l-2 border-rose-700 pl-1.5">
+                    <div class="text-rose-300 font-mono">c{{ w.chapter_ordinal }}.s{{ w.ordinal }}</div>
+                    <div class="text-[#cbd6e4]">{{ w.issue }}</div>
+                    <div class="text-[#9db0c9] italic">→ {{ w.recommended_fix }}</div>
+                  </li>
+                </ul>
+              </div>
+              <div v-if="episode.episode_judge_meta?.terminology_glossary_observed && episode.episode_judge_meta.terminology_glossary_observed.length > 0">
+                <div class="font-semibold text-white mt-1.5 mb-1">观测术语表 ({{ episode.episode_judge_meta.terminology_glossary_observed.length }})</div>
+                <ul class="space-y-0.5 text-[10px] max-h-32 overflow-y-auto">
+                  <li v-for="g in episode.episode_judge_meta.terminology_glossary_observed" :key="g.source_term" class="font-mono">
+                    <span class="text-[#cbd6e4]">{{ g.source_term }}</span>
+                    <span class="text-[#9db0c9]"> → </span>
+                    <span class="text-[#cbd6e4]">{{ g.target_term }}</span>
+                    <span v-if="g.note" class="text-amber-300 italic"> · {{ g.note }}</span>
+                  </li>
+                </ul>
+              </div>
+              <div
+                v-if="episode.episode_judge_meta?.one_paragraph_summary"
+                class="mt-1.5 pt-1.5 border-t border-[#273246] text-[10px] text-[#cbd6e4]"
+              >{{ episode.episode_judge_meta.one_paragraph_summary }}</div>
+            </div>
+          </div>
+          <div v-else class="text-sm font-mono text-[#9db0c9]">—</div>
         </div>
         <div class="p-3 rounded-lg bg-[#1e2535] border border-[#273246]">
           <div class="flex items-center justify-between mb-1">
@@ -266,7 +330,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { api, type Episode, type Job, type ChapterJudgeMeta } from "../api";
+import { api, type Episode, type Job, type ChapterJudgeMeta, type EpisodeJudgeMeta } from "../api";
 
 const route = useRoute();
 const router = useRouter();
@@ -410,6 +474,60 @@ function chapterJudgeAxes(meta: ChapterJudgeMeta | undefined): Array<{ label: st
     { label: "语域一致", value: meta.register_consistency_within_chapter },
     { label: "整体保真", value: meta.overall_fidelity_chapter },
     { label: "整体流畅", value: meta.overall_fluency_chapter },
+  ];
+}
+
+// OPT-406 episode judge UI helpers. Episode-level thresholds are stricter
+// than chapter-level (0.9 / 0.8 vs 0.85 / 0.7) because the episode judge
+// is the final whole-output gate — a borderline-acceptable chapter is
+// fine to ship; a borderline-acceptable episode means the episode needs
+// rework somewhere the per-chapter judges missed.
+function episodeJudgeBadgeClass(score: number): string {
+  if (score >= 0.9) return "bg-emerald-900/60 text-emerald-300 border border-emerald-700";
+  if (score >= 0.8) return "bg-amber-900/40 text-amber-300 border border-amber-700";
+  return "bg-red-900/50 text-red-300 border border-red-700";
+}
+
+function episodeJudgeAxisColor(value: number | undefined): string {
+  if (value === undefined) return "text-[#9db0c9]";
+  if (value >= 0.9) return "text-emerald-300";
+  if (value >= 0.8) return "text-amber-300";
+  return "text-red-300";
+}
+
+function episodeJudgeVerdictBadge(verdict?: string): string {
+  switch (verdict) {
+    case "production_ready": return "ready";
+    case "needs_minor_revision": return "minor";
+    case "needs_major_revision": return "major";
+    default: return verdict || "";
+  }
+}
+
+function episodeJudgeVerdictLabel(verdict?: string): string {
+  switch (verdict) {
+    case "production_ready": return "可发布";
+    case "needs_minor_revision": return "需小修";
+    case "needs_major_revision": return "需大改";
+    default: return verdict || "—";
+  }
+}
+
+// Flatten the structured meta into the 7-axis table shown in the tooltip.
+// Order matches what an editor scans top-down: cross-chapter axes first
+// (the ones segment + chapter judges cannot see — terminology / register /
+// narrative drift), then character/cultural, then aggregate fidelity /
+// fluency last for context.
+function episodeJudgeAxes(meta: EpisodeJudgeMeta | undefined): Array<{ label: string; value: number | undefined }> {
+  if (!meta) return [];
+  return [
+    { label: "术语一致 (跨章)", value: meta.terminology_consistency },
+    { label: "语域一致 (跨章)", value: meta.register_consistency },
+    { label: "叙事连贯 (整集)", value: meta.narrative_coherence },
+    { label: "角色音色稳定", value: meta.character_voice_stability },
+    { label: "本地化得体", value: meta.cultural_localization },
+    { label: "整体保真", value: meta.overall_fidelity },
+    { label: "整体流畅", value: meta.overall_fluency },
   ];
 }
 

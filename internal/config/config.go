@@ -110,6 +110,32 @@ type Config struct {
 	// are calibrated against operator labels.
 	ChapterJudgeObserveOnly bool
 
+	// EpisodeJudgeModel: OPT-406. Empty = episode-level judging disabled.
+	// When non-empty, every Episode is scored asynchronously after
+	// ep_episode_merge transitions Episode → Completed. Scores cross-
+	// chapter properties (terminology drift, register stability, character
+	// voice across chapters) that segment-level OPT-002 and chapter-level
+	// OPT-409 cannot see. Recommended: kimi-k2.5 (one call per episode at
+	// ~10-20k input tokens for a 79min lecture, ~$0.05).
+	EpisodeJudgeModel string
+	// EpisodeJudgeObserveOnly: OPT-406 MVP. true = episode judge score is
+	// persisted on episodes.episode_judge_score / episode_judge_meta but
+	// does NOT influence anything else. OPT-407 closed-loop rework will
+	// consume this once thresholds are calibrated.
+	EpisodeJudgeObserveOnly bool
+	// EpisodeJudgeTimeoutSec: per-call deadline for the JudgeEpisode
+	// goroutine. Default 90s — episode prompts are larger than chapter
+	// prompts (reference card + glossary + chapter overview + every
+	// segment) and reasoning models routinely take 20-40s.
+	EpisodeJudgeTimeoutSec int
+	// EpisodeJudgeEscalateModel: optional OPT-406-followup-2 escalation
+	// hook. Empty = single-model mode (use EpisodeJudgeModel for every
+	// episode). When non-empty, the future escalator will switch to this
+	// model if the chapter-judge average drops below a threshold; the
+	// MVP keeps it unwired so operators can pre-configure without changing
+	// behaviour.
+	EpisodeJudgeEscalateModel string
+
 	// GlossaryModel: OPT-402. The model used by ExtractEpisodeGlossary
 	// to derive the canonical episode-level term sheet from the full ASR
 	// text. Empty = fall back to OpenAIModel. Recommended: qwen-turbo
@@ -410,6 +436,17 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("parse CHAPTER_JUDGE_OBSERVE_ONLY: %w", err)
 	}
+
+	cfg.EpisodeJudgeModel = getEnv("EPISODE_JUDGE_MODEL", "kimi-k2.5")
+	cfg.EpisodeJudgeObserveOnly, err = getEnvBool("EPISODE_JUDGE_OBSERVE_ONLY", true)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse EPISODE_JUDGE_OBSERVE_ONLY: %w", err)
+	}
+	cfg.EpisodeJudgeTimeoutSec, err = getEnvInt("EPISODE_JUDGE_TIMEOUT_SEC", 90)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse EPISODE_JUDGE_TIMEOUT_SEC: %w", err)
+	}
+	cfg.EpisodeJudgeEscalateModel = getEnv("EPISODE_JUDGE_ESCALATE_MODEL", "")
 
 	cfg.GlossaryModel = getEnv("GLOSSARY_MODEL", "")
 	cfg.GlossaryEnabled, err = getEnvBool("GLOSSARY_ENABLED", true)

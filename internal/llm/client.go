@@ -31,6 +31,7 @@ type Client struct {
 	segmentReviewUseTools    bool
 	judgeModel               string // OPT-002; "" disables segment judging
 	chapterJudgeModel        string // OPT-409; "" disables chapter-level judging
+	episodeJudgeModel        string // OPT-406; "" disables episode-level judging
 	glossaryModel            string // OPT-402; "" => fall back to model
 	chapterReviewModel       string // OPT-403; "" => fall back to model
 	thinkingHTTPClient       *http.Client
@@ -59,6 +60,7 @@ func New(cfg config.Config) *Client {
 		segmentReviewUseTools:    cfg.SegmentReviewUseTools,
 		judgeModel:               cfg.JudgeModel,
 		chapterJudgeModel:        cfg.ChapterJudgeModel,
+		episodeJudgeModel:        cfg.EpisodeJudgeModel,
 		glossaryModel:            cfg.GlossaryModel,
 		chapterReviewModel:       cfg.ChapterReviewModel,
 		thinkingHTTPClient: &http.Client{
@@ -588,6 +590,7 @@ const (
 	OpReview              = "review"
 	OpJudge               = "judge"          // OPT-002 segment-level judge
 	OpChapterJudge        = "chapter_judge"  // OPT-409 chapter-level judge (within-chapter coherence)
+	OpEpisodeJudge        = "episode_judge"  // OPT-406 episode-level judge (cross-chapter holistic)
 	OpGlossary            = "glossary"       // OPT-402 episode glossary extraction
 	OpChapterReview       = "chapter_review" // OPT-403 chapter cut review + bilingual title
 )
