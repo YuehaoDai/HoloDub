@@ -1,13 +1,27 @@
-// Package pipeline — OPT-403 chapterize episode-stage handler.
+// Package pipeline — OPT-403 + OPT-405 chapterize episode-stage handler.
 //
 // The chapterize stage runs ONCE per episode immediately after
 // ep_glossary_extract finishes. It decides whether the episode should
 // stay as a single chapter (short-circuit path) or be fanned out into
-// 2..N sibling chapter Jobs (long-form path), and on the long-form path
-// performs the entire fan-out atomically:
+// 2..N sibling chapter Jobs (long-form path).
 //
-//  1. ExtractCandidates + DPOptimalCuts → deterministic cut positions.
-//  2. (Optional) ReviewChapterCuts → LLM Pass 3 nudges + bilingual titles.
+// Cut decision (in priority order):
+//
+//  1. OPT-405 LLM-driven: if Episode.LLMChapters is populated AND the
+//     plan validates against the segment list, snap each end_segment_idx
+//     boundary to the nearest qualifying silence, enforce hard min/max
+//     guardrails, and use the resulting ranges. Bilingual titles +
+//     summaries come straight from the LLM (no extra OPT-403 Pass 3
+//     call needed).
+//
+//  2. OPT-403 DP fallback: ExtractCandidates + DPOptimalCuts produce
+//     deterministic cuts; the optional OPT-403 Pass 3 LLM review then
+//     mints titles. Used when LLM-driven is disabled, when the LLM
+//     call failed at glossary_extract, OR when the LLM-emitted plan
+//     fails validation.
+//
+// Once cuts are decided the long-form path performs fan-out atomically:
+//
 //  3. ffmpeg-slice the source video / vocals / BGM into per-chapter files
 //     at episodes/{ep_id}/chapters/source/ch{ord:02d}.{mp4,vocals.wav,bgm.wav}.
 //  4. Reset chapter 1 to its new [0, cuts[0]) window + create chapter 2..N
@@ -26,6 +40,7 @@ package pipeline
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -91,18 +106,41 @@ func (s *Service) runEpisodeChapterize(ctx context.Context, task models.TaskPayl
 		"max_chapter_ms", s.cfg.ChapterizeMaxChapterMs,
 	)
 
-	// Short-circuit: episode fits in a single chapter.
-	if episodeDurMs <= s.cfg.ChapterizeMaxChapterMs {
-		slog.Info("ep_chapterize short-circuit: episode fits one chapter",
-			"episode_id", ep.ID, "episode_duration_ms", episodeDurMs)
-		return s.resumeChapter1IfWaiting(ctx, &chapter1, "short_circuit")
-	}
-
-	// Pass 1 + Pass 2: deterministic cut decision.
 	chapterSegs := make([]chapterize.Segment, len(segs))
 	for i, seg := range segs {
 		chapterSegs[i] = chapterize.Segment{StartMs: seg.StartMs, EndMs: seg.EndMs}
 	}
+
+	// OPT-405 priority path: try the LLM-emitted plan first. Falls back
+	// to the DP path on any breach (validation, missing column, parse
+	// error). The fallback is intentionally indistinguishable from
+	// "OPT-405 turned off" — operators get the safety net for free.
+	if ranges, titles, source, ok := s.tryLLMChapterPlan(ep, chapterSegs); ok {
+		// Short-circuit even on the LLM path when it returns a single
+		// chapter (e.g. the model decided the episode is one theme).
+		if len(ranges) == 1 {
+			slog.Info("ep_chapterize: LLM returned single chapter; short-circuit",
+				"episode_id", ep.ID, "source", source)
+			return s.resumeChapter1IfWaiting(ctx, &chapter1, "llm_single_chapter")
+		}
+		slog.Info("ep_chapterize: cuts decided by LLM",
+			"episode_id", ep.ID,
+			"chapter_count", len(ranges),
+			"mean_chapter_ms", chapterize.MeanChapterDuration(ranges),
+			"source", source,
+		)
+		// LLM titles are already bilingual; no extra Pass 3 call.
+		return s.runFanOutChapters(ctx, ep, &chapter1, ranges, titles, "", segs)
+	}
+
+	// Short-circuit: episode fits in a single chapter (DP fallback rule).
+	if episodeDurMs <= s.cfg.ChapterizeMaxChapterMs {
+		slog.Info("ep_chapterize short-circuit: episode fits one chapter (DP fallback)",
+			"episode_id", ep.ID, "episode_duration_ms", episodeDurMs)
+		return s.resumeChapter1IfWaiting(ctx, &chapter1, "short_circuit")
+	}
+
+	// OPT-403 DP fallback: deterministic cut decision.
 	cands := chapterize.ExtractCandidates(chapterSegs, s.cfg.ChapterizeMinSilenceGapMs)
 	cuts := chapterize.DPOptimalCuts(cands, episodeDurMs,
 		s.cfg.ChapterizeTargetChapterMs,
@@ -120,17 +158,123 @@ func (s *Service) runEpisodeChapterize(ctx context.Context, task models.TaskPayl
 	}
 
 	ranges := chapterize.BuildChapterRanges(chapterSegs, cuts, episodeDurMs)
-	slog.Info("ep_chapterize: cuts decided",
+	slog.Info("ep_chapterize: cuts decided by DP",
 		"episode_id", ep.ID,
 		"chapter_count", len(ranges),
 		"mean_chapter_ms", chapterize.MeanChapterDuration(ranges),
 		"max_abs_dev_ms", chapterize.MaxAbsDeviation(ranges, s.cfg.ChapterizeTargetChapterMs),
 	)
 
-	// Pass 3 (optional): LLM nudge + bilingual titles.
+	// Pass 3 (optional): LLM nudge + bilingual titles for the DP path.
 	titles, episodeTitle := s.maybeReviewChapterCuts(ctx, ep, &chapter1, ranges, segs)
 
 	return s.runFanOutChapters(ctx, ep, &chapter1, ranges, titles, episodeTitle, segs)
+}
+
+// tryLLMChapterPlan reads Episode.LLMChapters, validates and snaps it,
+// applies the hard min/max guardrails, and returns ChapterRange[] +
+// llm.ChapterReviewVerdict[] (titles) ready for runFanOutChapters.
+//
+// Returns ok=false on ANY of: column empty/NULL, JSON parse error, plan
+// validation failure (gaps/overlap/out-of-range indices), zero chapters
+// after snap+enforce. The caller falls back to the DP path.
+//
+// `source` is a short label (llm_kept / llm_merged / llm_split) the
+// caller logs so the dashboard can attribute outcomes; the values
+// reflect whether EnforceHardConstraints had to intervene.
+func (s *Service) tryLLMChapterPlan(
+	ep *models.Episode,
+	chapterSegs []chapterize.Segment,
+) ([]chapterize.ChapterRange, []llm.ChapterReviewVerdict, string, bool) {
+	if !s.cfg.ChapterizeEnabled || !s.cfg.ChapterizeLLMDriven {
+		return nil, nil, "", false
+	}
+	raw := ep.LLMChapters
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, nil, "", false
+	}
+	var rawPlan []llm.ChapterCut
+	if err := json.Unmarshal(raw, &rawPlan); err != nil {
+		slog.Warn("ep_chapterize: failed to parse Episode.LLMChapters; falling back to DP",
+			"episode_id", ep.ID, "error", err)
+		return nil, nil, "", false
+	}
+	if len(rawPlan) == 0 {
+		return nil, nil, "", false
+	}
+
+	// Convert llm.ChapterCut → chapterize.LLMChapter. Sort defensively
+	// in case the provider reordered the array under load.
+	plan := make([]chapterize.LLMChapter, len(rawPlan))
+	for i, c := range rawPlan {
+		plan[i] = chapterize.LLMChapter{
+			StartSegmentIdx: c.StartSegmentIdx,
+			EndSegmentIdx:   c.EndSegmentIdx,
+			TitleSource:     c.TitleSource,
+			TitleTranslated: c.TitleTranslated,
+			SummaryMD:       c.SummaryMD,
+		}
+	}
+	plan = chapterize.SortLLMPlan(plan)
+
+	if err := chapterize.ValidateLLMPlan(plan, len(chapterSegs)); err != nil {
+		slog.Warn("ep_chapterize: LLM plan failed validation; falling back to DP",
+			"episode_id", ep.ID, "error", err, "plan_size", len(plan))
+		return nil, nil, "", false
+	}
+
+	// Snap each end-segment boundary to the nearest qualifying silence.
+	// lookahead=3 keeps the snap close to the LLM's intent (≤3 segments
+	// either side); minSilenceGapMs uses the same threshold as the DP
+	// candidate extraction so we never accept a cut the DP would reject.
+	totalDurationMs := chapterSegs[len(chapterSegs)-1].EndMs
+	trailingCuts := chapterize.SnapBoundariesToSilences(
+		chapterSegs, plan, totalDurationMs, s.cfg.ChapterizeMinSilenceGapMs, 3)
+
+	ranges := chapterize.BuildLLMChapterRanges(plan, trailingCuts)
+	meta := make([]chapterize.LLMChapterMeta, len(plan))
+	for i, p := range plan {
+		meta[i] = chapterize.LLMChapterMeta{
+			TitleSource:     p.TitleSource,
+			TitleTranslated: p.TitleTranslated,
+			SummaryMD:       p.SummaryMD,
+		}
+	}
+
+	// Enforce hard min/max. maxSplitDepth=4 is enough to bring a 6×hardMax
+	// chapter under cap (4 splits = 16 halves); deeper than that almost
+	// certainly indicates a model that ignored its instructions and is
+	// safer left as-is than over-fragmented.
+	finalRanges, finalMeta := chapterize.EnforceHardConstraints(
+		ranges, meta, chapterSegs,
+		s.cfg.ChapterizeHardMinMs, s.cfg.ChapterizeHardMaxMs,
+		s.cfg.ChapterizeMinSilenceGapMs, 4)
+	if len(finalRanges) == 0 {
+		return nil, nil, "", false
+	}
+
+	// Convert chapterize.LLMChapterMeta → llm.ChapterReviewVerdict so the
+	// downstream runFanOutChapters code path is unchanged.
+	titles := make([]llm.ChapterReviewVerdict, len(finalMeta))
+	for i, m := range finalMeta {
+		titles[i] = llm.ChapterReviewVerdict{
+			Ordinal:         i + 1,
+			Action:          "keep",
+			TitleSource:     m.TitleSource,
+			TitleTranslated: m.TitleTranslated,
+			SummaryMD:       m.SummaryMD,
+		}
+	}
+
+	source := "llm_kept"
+	if len(finalRanges) != len(plan) {
+		if len(finalRanges) < len(plan) {
+			source = "llm_merged"
+		} else {
+			source = "llm_split"
+		}
+	}
+	return finalRanges, titles, source, true
 }
 
 // resumeChapter1IfWaiting wakes chapter 1 from JobStatusAwaitingChapterize

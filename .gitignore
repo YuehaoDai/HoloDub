@@ -48,6 +48,7 @@ build/
 
 # Runtime data and job outputs
 data/jobs/
+data/episodes/
 data/tmp/
 data/cache/
 data/voices/
@@ -87,6 +88,11 @@ token.txt
 
 # Temp test outputs in root
 test_output_*.mp4
+
+# OPT-405 / OPT-405.1 debug stream dumps from `kimi-k2-thinking` (or
+# similar reasoning models) — captured ad-hoc while debugging the
+# `doChatToolOnce` thinking-client switch; not historical artefacts.
+thinking-*-out.txt
 
 # episode-judge debug payloads (large per-job dumps used for one-shot
 # diagnosis when DashScope rejects a request; not historical artefacts)

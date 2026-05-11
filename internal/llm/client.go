@@ -795,7 +795,19 @@ func (c *Client) doChatToolOnce(ctx context.Context, payload chatCompletionReque
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := c.httpClient.Do(req)
+	// Pick the long-timeout client for thinking-mode models, since
+	// reasoning runs on these models routinely take 5+ minutes — well
+	// past the default httpClient.Timeout (typically 60–90s). The
+	// thinkingHTTPClient was wired up for OPT-201 streamed retranslate
+	// and is reused here so any tool-call path (production glossary +
+	// chapter review on a thinking model, OR offline cmd/chapterize-bench
+	// judge calls) gets the right ceiling automatically. Non-thinking
+	// models keep the strict default ceiling.
+	httpClient := c.httpClient
+	if isThinkingModelName(payload.Model) && c.thinkingHTTPClient != nil {
+		httpClient = c.thinkingHTTPClient
+	}
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return "", usageStats{}, httpx.Wrap("llm", "chat.completions", err)
 	}

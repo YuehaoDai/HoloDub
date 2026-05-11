@@ -292,15 +292,22 @@ func (s *Store) UpdateEpisodeMediaFromChapter(ctx context.Context, episodeID uin
 		Updates(updates).Error
 }
 
-// UpdateEpisodeGlossary persists the OPT-402 glossary_extract result and
-// stamps glossary_done_at. The glossary slice is JSON-encoded because the
-// column is jsonb (so a partial provider response isn't lossy).
+// UpdateEpisodeGlossary persists the OPT-402 glossary_extract result
+// (glossary + reference_card_md) plus the OPT-405 LLM-driven chapter
+// plan (llm_chapters), and stamps glossary_done_at. All three pieces
+// come from the SAME tool call (see internal/llm/glossary.go) so they
+// are written together in one transaction to keep the Episode row
+// internally consistent — partial writes would let the chapterize
+// stage see chapters[] without the matching reference_card.
 //
-// Caller contract: pass the exact GlossaryEntry slice the LLM returned —
-// this function does NOT validate / dedupe, on the rationale that the
-// schema enforces shape and the EpisodeDetail UI is the right surface
-// to surface duplicates.
-func (s *Store) UpdateEpisodeGlossary(ctx context.Context, episodeID uint, glossaryJSON []byte, referenceCard string) error {
+// llmChaptersJSON may be nil / empty; in that case the column is left
+// untouched (so a re-run with chapterization disabled doesn't wipe a
+// previous successful chapterization plan).
+//
+// Caller contract: pass the exact slices the LLM returned — this
+// function does NOT validate / dedupe, on the rationale that the
+// schema enforces shape and the EpisodeDetail UI surfaces duplicates.
+func (s *Store) UpdateEpisodeGlossary(ctx context.Context, episodeID uint, glossaryJSON []byte, referenceCard string, llmChaptersJSON []byte) error {
 	if episodeID == 0 {
 		return nil
 	}
@@ -310,6 +317,9 @@ func (s *Store) UpdateEpisodeGlossary(ctx context.Context, episodeID uint, gloss
 		"reference_card":   referenceCard,
 		"glossary_done_at": &now,
 		"updated_at":       now,
+	}
+	if len(llmChaptersJSON) > 0 {
+		updates["llm_chapters"] = datatypes.JSON(llmChaptersJSON)
 	}
 	return s.db.WithContext(ctx).Model(&models.Episode{}).
 		Where("id = ?", episodeID).

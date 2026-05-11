@@ -496,9 +496,21 @@ type Episode struct {
 	ChaptersManifestRelPath string `json:"chapters_manifest_rel_path" gorm:"size:512"`
 	// LoudnormStats records per-chapter measured EBU R128 LUFS / TP / LRA from
 	// stage_merge plus the optional master-pass stats from stage_episode_merge. Shape:
-	//   { "vp0": { "ch01": {...}, "ch02": {...}, "master": {...} }, "vp1": { ... } }
-	// Used by chapters.json to surface per-chapter loudness, and by future OPT-405/406.
+	//   { "vp0_ch01": {...}, "vp0_ch02": {...}, "vp0_master": {...}, "vp1_...": {...} }
+	// Used by chapters.json to surface per-chapter loudness, and by future OPT-406.
 	LoudnormStats datatypes.JSON `json:"loudnorm_stats,omitempty" gorm:"type:jsonb"`
+	// LLMChapters is the OPT-405 LLM-driven chapter plan emitted by
+	// ep_glossary_extract (see internal/llm/glossary.go ExtractEpisodeGlossary).
+	// Shape:
+	//   [{"start_segment_idx": 0, "end_segment_idx": 17,
+	//     "title_source": "...", "title_translated": "...",
+	//     "summary_md": "..."}, ...]
+	// Read by stage_chapterize.go: the LLM's segment-index boundaries get
+	// snapped to the nearest silence midpoint, then the hard min/max
+	// guardrails are applied. Empty / NULL means "fall back to the legacy
+	// deterministic DP algorithm" — which happens when the LLM is disabled,
+	// the call failed, or the episode is short enough to short-circuit.
+	LLMChapters datatypes.JSON `json:"llm_chapters,omitempty" gorm:"type:jsonb"`
 	ErrorMessage  string         `json:"error_message" gorm:"type:text"`
 	CompletedAt   *time.Time     `json:"completed_at"`
 	CreatedAt     time.Time      `json:"created_at"`

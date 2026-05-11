@@ -119,19 +119,51 @@ type Config struct {
 	// fan out long episodes into 2..N chapters. Defaults to true.
 	ChapterizeEnabled bool
 	// ChapterizeMinChapterMs / ChapterizeTargetChapterMs / ChapterizeMaxChapterMs
-	// configure DPOptimalCuts. An episode whose duration is <= MaxChapterMs is
-	// short-circuited to a single chapter; longer episodes get split so every
-	// chapter falls in [MinChapterMs, MaxChapterMs] and minimises distance
-	// from TargetChapterMs. Defaults are 18 / 22 / 30 minutes (matches the
-	// long-form podcast format the OPT-403 baseline targets).
+	// configure DPOptimalCuts (the OPT-403 deterministic fallback). An episode
+	// whose duration is <= MaxChapterMs is short-circuited to a single chapter;
+	// longer episodes get split so every chapter falls in [MinChapterMs,
+	// MaxChapterMs] and minimises distance from TargetChapterMs. Defaults
+	// 18 / 22 / 30 minutes (long-form podcast tuning).
+	//
+	// OPT-405: when ChapterizeLLMDriven=true the LLM does the chapter cut
+	// decision instead, and these knobs are NOT consulted on the happy path
+	// — only when the LLM call fails or returns invalid cuts and the pipeline
+	// falls back to the DP algorithm.
 	ChapterizeMinChapterMs    int64
 	ChapterizeTargetChapterMs int64
 	ChapterizeMaxChapterMs    int64
 	// ChapterizeMinSilenceGapMs is the silence width (in ms) required between
 	// two ASR segments to qualify as a chapter-cut candidate. Default 800ms
 	// — at less than ~600ms ASR routinely produces unintended boundaries
-	// inside a single sentence.
+	// inside a single sentence. Used by both the DP fallback AND OPT-405's
+	// snap-to-silence pass (which honours this threshold when looking for a
+	// natural cut near the LLM-suggested boundary).
 	ChapterizeMinSilenceGapMs int64
+
+	// OPT-405 LLM-driven chapterization knobs.
+
+	// ChapterizeLLMDriven toggles the OPT-405 path. true = ep_glossary_extract
+	// produces chapter cuts in the same tool call as the glossary, and
+	// ep_chapterize uses them (snapping each end_segment_idx to the nearest
+	// silence midpoint, then enforcing the hard min/max guardrails). false =
+	// chapterize falls straight back to the OPT-403 DP algorithm. Defaults
+	// to true on new installs since OPT-403 review proved the deterministic
+	// path produces semantically wrong cuts on long talks.
+	ChapterizeLLMDriven bool
+
+	// ChapterizeHardMaxMs is the hard upper bound on a single chapter even
+	// when the LLM decided otherwise. Anything longer is force-cut at the
+	// nearest silence to the midpoint. Default 45min — long enough to keep
+	// natural lecture themes intact, short enough that download / playback
+	// remains practical. Set to a very large number to effectively disable.
+	ChapterizeHardMaxMs int64
+
+	// ChapterizeHardMinMs is the hard lower bound. Any LLM-emitted chapter
+	// shorter than this is merged into its successor (last chapter merges
+	// into its predecessor). Default 5min — short enough not to fight the
+	// LLM on intentional brief intros / outros, long enough to filter out
+	// model hallucinations that emit a 30s chapter for a single sentence.
+	ChapterizeHardMinMs int64
 
 	// LoudnormTargetI / LoudnormTargetTP / LoudnormTargetLRA are the EBU R128
 	// targets passed to media.LoudnormTwoPass for chapter-level + master-level
@@ -374,6 +406,23 @@ func Load() (Config, error) {
 	cfg.ChapterizeMinSilenceGapMs, err = getEnvInt64("CHAPTERIZE_MIN_SILENCE_GAP_MS", 800)
 	if err != nil {
 		return Config{}, fmt.Errorf("parse CHAPTERIZE_MIN_SILENCE_GAP_MS: %w", err)
+	}
+
+	cfg.ChapterizeLLMDriven, err = getEnvBool("CHAPTERIZE_LLM_DRIVEN", true)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse CHAPTERIZE_LLM_DRIVEN: %w", err)
+	}
+	cfg.ChapterizeHardMaxMs, err = getEnvInt64("CHAPTERIZE_HARD_MAX_MS", 45*60*1000)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse CHAPTERIZE_HARD_MAX_MS: %w", err)
+	}
+	cfg.ChapterizeHardMinMs, err = getEnvInt64("CHAPTERIZE_HARD_MIN_MS", 5*60*1000)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse CHAPTERIZE_HARD_MIN_MS: %w", err)
+	}
+	if cfg.ChapterizeHardMinMs >= cfg.ChapterizeHardMaxMs {
+		return Config{}, fmt.Errorf("CHAPTERIZE_HARD_MIN_MS (%d) must be < CHAPTERIZE_HARD_MAX_MS (%d)",
+			cfg.ChapterizeHardMinMs, cfg.ChapterizeHardMaxMs)
 	}
 
 	cfg.LoudnormTargetI, err = getEnvFloat("LOUDNORM_TARGET_I", -23.0)

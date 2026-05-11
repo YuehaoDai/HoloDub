@@ -1,0 +1,31 @@
+-- Migration: OPT-405 LLM-driven chapterization
+--
+-- Persists the LLM-produced chapter cuts emitted by the upgraded
+-- ep_glossary_extract stage (see internal/llm/glossary.go AnalyzeEpisode).
+-- The ep_chapterize stage reads this column, snaps each segment-index
+-- boundary to the nearest silence midpoint, applies the hard min/max
+-- guardrails, then fans out chapters as before. Falls back to the
+-- legacy DP algorithm when the column is empty / NULL (LLM disabled
+-- or call failed).
+--
+-- Shape (filled by glossary_extract; consumed by chapterize):
+--
+--   [
+--     {
+--       "start_segment_idx": 0,
+--       "end_segment_idx":  17,
+--       "title_source":     "Course Logistics & Grading",
+--       "title_translated": "课程结构与评分",
+--       "summary_md":       "讲师介绍课程结构、labs 占成绩主要部分..."
+--     },
+--     ...
+--   ]
+--
+-- Idempotent: re-running this migration on a partial install is safe.
+-- Applied automatically by GORM AutoMigrate at API startup unless
+-- AUTO_MIGRATE_ON_START=false.
+--
+-- Corresponding Go field lives in internal/models/models.go on Episode
+-- as LLMChapters datatypes.JSON.
+
+ALTER TABLE episodes ADD COLUMN IF NOT EXISTS llm_chapters JSONB;
