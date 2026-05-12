@@ -66,6 +66,11 @@ func NewEngine(cfg config.Config, st *store.Store, api RetryJobAPI) *Engine {
 // segment-level llm.JudgeResult (verdict + OverallScore) so the engine
 // does not need to import package llm.
 //
+// driftSec (OPT-407-followup-6) is the segment's "actual TTS audio length
+// minus target slot length" in seconds (signed). Positive = audio longer
+// than target. Pass 0 when drift is unknown — the drift guard then
+// silently disables itself for this segment.
+//
 // Always safe to call — gates on cfg.ReworkEngineLevel internally and on
 // EpisodeID == 0 (orphan segments are rare but should not crash us).
 func (e *Engine) MaybeReworkSegment(
@@ -75,6 +80,7 @@ func (e *Engine) MaybeReworkSegment(
 	segmentID uint,
 	verdict string,
 	score float64,
+	driftSec float64,
 ) {
 	if e == nil || e.store == nil {
 		return
@@ -83,13 +89,16 @@ func (e *Engine) MaybeReworkSegment(
 		return
 	}
 	in := DecideInput{
-		Level:        LevelSegment,
-		EnabledLevel: ParseLevel(e.cfg.ReworkEngineLevel),
-		Verdict:      verdict,
-		TargetID:     segmentID,
-		JobID:        jobID,
-		EpisodeID:    episodeID,
-		Score:        score,
+		Level:                  LevelSegment,
+		EnabledLevel:           ParseLevel(e.cfg.ReworkEngineLevel),
+		Verdict:                verdict,
+		TargetID:               segmentID,
+		JobID:                  jobID,
+		EpisodeID:              episodeID,
+		Score:                  score,
+		DriftSec:               driftSec,
+		DriftHardLimitOverSec:  e.cfg.SegmentDriftHardLimitOverSec,
+		DriftHardLimitUnderSec: e.cfg.SegmentDriftHardLimitUnderSec,
 	}
 	e.runDecisionLoop(ctx, in)
 }
@@ -204,6 +213,12 @@ func (e *Engine) runDecisionLoop(ctx context.Context, in DecideInput) {
 	in.ChapterReworkMaxRounds = e.cfg.ChapterReworkMaxRounds
 	in.EpisodeReworkCostCeilingUSD = e.cfg.EpisodeReworkCostCeilingUSD
 	in.OscillationThreshold = e.cfg.ReworkOscillationThreshold
+	// OPT-407-followup-6: drift guard config is plumbed here too so
+	// callers that don't go through MaybeReworkSegment (chapter / episode
+	// paths) still receive the threshold values. They never set DriftSec
+	// so the guard is naturally inert at chapter / episode level.
+	in.DriftHardLimitOverSec = e.cfg.SegmentDriftHardLimitOverSec
+	in.DriftHardLimitUnderSec = e.cfg.SegmentDriftHardLimitUnderSec
 
 	action := Decide(in)
 
@@ -365,10 +380,13 @@ func boolToStr(b bool) string {
 	return "false"
 }
 
-// isHaltedStatus reports whether an Episode's rework_status indicates that
-// no further auto-rework should be attempted. The engine refuses to
+// IsHaltedReworkStatus reports whether an Episode's rework_status indicates
+// that no further auto-rework should be attempted. The engine refuses to
 // dispatch when this is true; an operator must clear the column manually.
-func isHaltedStatus(s string) bool {
+//
+// Exported so non-engine callers (judge_backfill, future operator endpoints)
+// can apply the same gate without re-implementing the status set.
+func IsHaltedReworkStatus(s string) bool {
 	switch strings.TrimSpace(s) {
 	case "halted_cost", "escalated_human", "escalated_oscillation",
 		"escalated_chapter":
@@ -376,3 +394,9 @@ func isHaltedStatus(s string) bool {
 	}
 	return false
 }
+
+// isHaltedStatus is the legacy unexported alias kept for the existing
+// engine call site. It will be inlined / removed once all internal uses
+// migrate to the exported name; keeping it as a shim avoids a noisy diff
+// in this followup.
+func isHaltedStatus(s string) bool { return IsHaltedReworkStatus(s) }

@@ -280,12 +280,31 @@ type DecideInput struct {
 	// for the cost ceiling check.
 	AccumulatedCostUSD float64
 
+	// DriftSec is the segment-level "actual TTS audio length minus target
+	// slot length" in seconds (signed). Positive = TTS audio is LONGER
+	// than target (will overflow into the next slot). Negative = TTS
+	// audio is SHORTER (leaves dead air). Only consulted on Level==Segment.
+	// Zero = drift not provided (older callers; guard is disabled in that
+	// case so we never override a valid LLM verdict on no signal).
+	//
+	// OPT-407-followup-6: the drift guard treats the LLM judge's verdict
+	// as advisory whenever |drift| exceeds the configured hard limit; the
+	// LLM does not see actual audio length so it routinely scores high-
+	// drift segments as fidelity=1.0 (translation is faithful) even though
+	// the configured-quality bar is broken at the dub layer.
+	DriftSec float64
+
 	// Configuration values, plumbed from internal/config so the pure
 	// function never reads env vars directly.
 	SegmentRetryMaxAttempts     int
 	ChapterReworkMaxRounds      int
 	EpisodeReworkCostCeilingUSD float64
 	OscillationThreshold        int
+	// DriftHardLimitOverSec / DriftHardLimitUnderSec: OPT-407-followup-6
+	// per-segment drift override thresholds. See cfg.SegmentDriftHardLimit*
+	// for semantics. Zero = guard disabled (no override).
+	DriftHardLimitOverSec  float64
+	DriftHardLimitUnderSec float64
 }
 
 // CountConsecutiveSame returns how many entries at the END of `history`

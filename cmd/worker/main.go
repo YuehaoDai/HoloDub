@@ -115,6 +115,28 @@ func main() {
 		}()
 	}
 
+	// OPT-407-followup-6: scan for segments stuck at status='translated'
+	// long after their parent job's stage advanced past tts_duration.
+	// Re-enqueues the affected segments through the same RetryJob path the
+	// rework engine uses, so the recovery is observable in the existing
+	// rework_attempts / task_queue metrics. Limit hard-coded to 200 — far
+	// fewer than judge backfill (we expect 0 stuck segments on a healthy
+	// worker; >200 indicates a systemic ml-service outage that operator
+	// must investigate manually). 30s delay layers AFTER judge_backfill
+	// so we don't compete for the same DB query budget on boot.
+	go func() {
+		select {
+		case <-rootCtx.Done():
+			return
+		case <-time.After(30 * time.Second):
+		}
+		if err := service.BackfillStuckTTSSegments(rootCtx, 200); err != nil {
+			if !errors.Is(err, context.Canceled) {
+				slog.Warn("tts-stuck backfill failed", "error", err)
+			}
+		}
+	}()
+
 	for {
 		if rootCtx.Err() != nil {
 			slog.Info("worker shutting down", "reason", "signal received")

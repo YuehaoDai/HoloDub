@@ -553,3 +553,219 @@ func abs(f float64) float64 {
 	}
 	return f
 }
+
+// ─── OPT-407-followup-6: Drift hard guard ──────────────────────────────────
+
+// TestDecide_DriftGuard_OverridesAcceptOnOverflow: an LLM verdict=accept
+// with a high score is overridden to ActionSegmentRetry when the audio
+// overflows the over-limit. The override skip_reason and note must record
+// the drift evidence so operators understand why the LLM was overruled.
+func TestDecide_DriftGuard_OverridesAcceptOnOverflow(t *testing.T) {
+	got := Decide(DecideInput{
+		Level:                  LevelSegment,
+		EnabledLevel:           LevelSegment,
+		Verdict:                "accept",
+		TargetID:               42,
+		EpisodeID:              7,
+		Score:                  1.0,
+		DriftSec:               0.85, // overflow by 0.85s — exceeds 0.3 over-limit
+		DriftHardLimitOverSec:  0.3,
+		DriftHardLimitUnderSec: 0.7,
+	})
+	if got.Type != ActionSegmentRetry {
+		t.Fatalf("expected drift override → ActionSegmentRetry, got %s", got.Type)
+	}
+	if !strings.Contains(got.SkipReason, "drift_override") {
+		t.Errorf("expected SkipReason to start with drift_override, got %q", got.SkipReason)
+	}
+	if !strings.Contains(got.Note, "OPT-407-followup-6") {
+		t.Errorf("expected Note to cite OPT-407-followup-6, got %q", got.Note)
+	}
+	if !strings.Contains(got.Note, "+0.85") {
+		t.Errorf("expected Note to include drift value, got %q", got.Note)
+	}
+}
+
+// TestDecide_DriftGuard_OverridesAcceptOnUnderflow: the under-limit path.
+// Negative drift exceeding the under-limit triggers the same override.
+func TestDecide_DriftGuard_OverridesAcceptOnUnderflow(t *testing.T) {
+	got := Decide(DecideInput{
+		Level:                  LevelSegment,
+		EnabledLevel:           LevelSegment,
+		Verdict:                "accept",
+		TargetID:               99,
+		EpisodeID:              7,
+		Score:                  1.0,
+		DriftSec:               -1.5, // 1.5s short — exceeds 0.7 under-limit
+		DriftHardLimitOverSec:  0.3,
+		DriftHardLimitUnderSec: 0.7,
+	})
+	if got.Type != ActionSegmentRetry {
+		t.Fatalf("expected drift override → ActionSegmentRetry, got %s", got.Type)
+	}
+	if !strings.Contains(got.Note, "-1.50") {
+		t.Errorf("expected Note to include negative drift value, got %q", got.Note)
+	}
+}
+
+// TestDecide_DriftGuard_RespectsAsymmetry: a small overflow that exceeds
+// the strict over-limit triggers, but the same magnitude as a short clip
+// does NOT (under-limit is looser).
+func TestDecide_DriftGuard_RespectsAsymmetry(t *testing.T) {
+	base := DecideInput{
+		Level: LevelSegment, EnabledLevel: LevelSegment,
+		Verdict: "accept", TargetID: 1, EpisodeID: 7, Score: 1.0,
+		DriftHardLimitOverSec: 0.3, DriftHardLimitUnderSec: 0.7,
+	}
+	overInputs := base
+	overInputs.DriftSec = 0.5 // 0.5s overflow → exceeds 0.3 over-limit → retry
+	if got := Decide(overInputs); got.Type != ActionSegmentRetry {
+		t.Fatalf("0.5s overflow should override accept, got %s", got.Type)
+	}
+	underInputs := base
+	underInputs.DriftSec = -0.5 // 0.5s short → does NOT exceed 0.7 under-limit → keep accept
+	if got := Decide(underInputs); got.Type != ActionNoop {
+		t.Fatalf("0.5s under-run is within 0.7 under-limit; expected ActionNoop, got %s", got.Type)
+	}
+}
+
+// TestDecide_DriftGuard_DisabledWhenDriftZero: caller passing DriftSec=0
+// (e.g. backfill that doesn't compute drift) keeps the LLM verdict
+// untouched. This is the safety-by-default behaviour for the migration
+// window where stage_tts may dispatch with the parameter not yet wired.
+func TestDecide_DriftGuard_DisabledWhenDriftZero(t *testing.T) {
+	got := Decide(DecideInput{
+		Level:                  LevelSegment,
+		EnabledLevel:           LevelSegment,
+		Verdict:                "accept",
+		TargetID:               1,
+		EpisodeID:              7,
+		Score:                  1.0,
+		DriftSec:               0,
+		DriftHardLimitOverSec:  0.3,
+		DriftHardLimitUnderSec: 0.7,
+	})
+	if got.Type != ActionNoop {
+		t.Fatalf("DriftSec=0 should not trigger guard; expected ActionNoop, got %s", got.Type)
+	}
+	if got.SkipReason != "verdict_accept" {
+		t.Errorf("expected verdict_accept skip reason, got %q", got.SkipReason)
+	}
+}
+
+// TestDecide_DriftGuard_DisabledWhenLimitZero: a per-side limit of <= 0
+// disables the guard for that side, leaving the LLM verdict alone even
+// for arbitrarily large drift on the disabled side.
+func TestDecide_DriftGuard_DisabledWhenLimitZero(t *testing.T) {
+	// Under-limit disabled; large negative drift should NOT override.
+	got := Decide(DecideInput{
+		Level:                  LevelSegment,
+		EnabledLevel:           LevelSegment,
+		Verdict:                "accept",
+		TargetID:               1,
+		EpisodeID:              7,
+		Score:                  1.0,
+		DriftSec:               -10.0,
+		DriftHardLimitOverSec:  0.3,
+		DriftHardLimitUnderSec: 0, // disabled
+	})
+	if got.Type != ActionNoop {
+		t.Fatalf("under-limit=0 should disable guard; expected ActionNoop, got %s", got.Type)
+	}
+}
+
+// TestDecide_DriftGuard_DoesNotOverrideRetry: when the LLM already says
+// "retry", we keep its verdict (no work to do, the retry path is already
+// chosen). The guard's job is to escalate accept→retry, not retry→retry.
+func TestDecide_DriftGuard_DoesNotOverrideRetry(t *testing.T) {
+	got := Decide(DecideInput{
+		Level:                   LevelSegment,
+		EnabledLevel:            LevelSegment,
+		Verdict:                 "retry",
+		TargetID:                1,
+		EpisodeID:               7,
+		Score:                   0.5,
+		DriftSec:                5.0,
+		DriftHardLimitOverSec:   0.3,
+		DriftHardLimitUnderSec:  0.7,
+		SegmentRetryMaxAttempts: 3,
+	})
+	if got.Type != ActionSegmentRetry {
+		t.Fatalf("LLM verdict=retry should produce ActionSegmentRetry directly, got %s", got.Type)
+	}
+	if strings.Contains(got.SkipReason, "drift_override") {
+		t.Errorf("verdict was already retry; SkipReason should NOT mention drift_override, got %q", got.SkipReason)
+	}
+}
+
+// TestDecide_DriftGuard_DoesNotOverrideSplit: split has its own remediation
+// path; we don't reroute it to retry just because drift is high (the split
+// algorithm will subdivide and re-synthesise both halves).
+func TestDecide_DriftGuard_DoesNotOverrideSplit(t *testing.T) {
+	got := Decide(DecideInput{
+		Level:                  LevelSegment,
+		EnabledLevel:           LevelSegment,
+		Verdict:                "split",
+		TargetID:               1,
+		EpisodeID:              7,
+		Score:                  0.6,
+		DriftSec:               5.0,
+		DriftHardLimitOverSec:  0.3,
+		DriftHardLimitUnderSec: 0.7,
+	})
+	if got.Type != ActionSegmentSplit {
+		t.Fatalf("expected ActionSegmentSplit even with high drift, got %s", got.Type)
+	}
+}
+
+// TestDecide_DriftGuard_NotApplicableAtChapterLevel: chapter-level callers
+// will not set DriftSec (chapter is many segments) — but defensively
+// even if a stale value leaks in, the guard must NOT fire.
+func TestDecide_DriftGuard_NotApplicableAtChapterLevel(t *testing.T) {
+	got := Decide(DecideInput{
+		Level:                  LevelChapter,
+		EnabledLevel:           LevelChapter,
+		Verdict:                "chapter_ready",
+		TargetID:               123,
+		EpisodeID:              7,
+		Score:                  1.0,
+		DriftSec:               5.0, // would trip the guard at segment level
+		DriftHardLimitOverSec:  0.3,
+		DriftHardLimitUnderSec: 0.7,
+	})
+	if got.Type != ActionNoop {
+		t.Fatalf("chapter level must ignore drift guard; got %s", got.Type)
+	}
+	if got.SkipReason != "verdict_chapter_ready" {
+		t.Errorf("expected verdict_chapter_ready, got %q", got.SkipReason)
+	}
+}
+
+// TestShouldDriftOverrideToRetry: pure-function tests for the helper
+// covering all branches without going through the full Decide pipeline.
+func TestShouldDriftOverrideToRetry(t *testing.T) {
+	cases := []struct {
+		name     string
+		in       DecideInput
+		expected bool
+	}{
+		{"zero_drift", DecideInput{Verdict: "accept", DriftSec: 0, DriftHardLimitOverSec: 0.3, DriftHardLimitUnderSec: 0.7}, false},
+		{"verdict_retry", DecideInput{Verdict: "retry", DriftSec: 5, DriftHardLimitOverSec: 0.3, DriftHardLimitUnderSec: 0.7}, false},
+		{"verdict_split", DecideInput{Verdict: "split", DriftSec: 5, DriftHardLimitOverSec: 0.3, DriftHardLimitUnderSec: 0.7}, false},
+		{"over_at_limit", DecideInput{Verdict: "accept", DriftSec: 0.3, DriftHardLimitOverSec: 0.3, DriftHardLimitUnderSec: 0.7}, false},      // strictly greater than
+		{"over_just_above", DecideInput{Verdict: "accept", DriftSec: 0.31, DriftHardLimitOverSec: 0.3, DriftHardLimitUnderSec: 0.7}, true},
+		{"over_far_above", DecideInput{Verdict: "accept", DriftSec: 5.0, DriftHardLimitOverSec: 0.3, DriftHardLimitUnderSec: 0.7}, true},
+		{"under_at_limit", DecideInput{Verdict: "accept", DriftSec: -0.7, DriftHardLimitOverSec: 0.3, DriftHardLimitUnderSec: 0.7}, false},
+		{"under_just_above", DecideInput{Verdict: "accept", DriftSec: -0.71, DriftHardLimitOverSec: 0.3, DriftHardLimitUnderSec: 0.7}, true},
+		{"over_limit_disabled", DecideInput{Verdict: "accept", DriftSec: 5.0, DriftHardLimitOverSec: 0, DriftHardLimitUnderSec: 0.7}, false},
+		{"under_limit_disabled", DecideInput{Verdict: "accept", DriftSec: -5.0, DriftHardLimitOverSec: 0.3, DriftHardLimitUnderSec: 0}, false},
+		{"both_limits_disabled", DecideInput{Verdict: "accept", DriftSec: 5.0, DriftHardLimitOverSec: 0, DriftHardLimitUnderSec: 0}, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := shouldDriftOverrideToRetry(c.in); got != c.expected {
+				t.Errorf("shouldDriftOverrideToRetry(%+v) = %v, want %v", c.in, got, c.expected)
+			}
+		})
+	}
+}

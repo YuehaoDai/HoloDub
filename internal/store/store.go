@@ -903,6 +903,61 @@ func (s *Store) ListSegmentsAwaitingJudge(ctx context.Context, limit int) ([]mod
 	return segments, err
 }
 
+// ListSegmentsStuckInTranslated returns at most `limit` segments that have a
+// translated target text but never reached the synthesised state — typical
+// signature of TTS calls that errored out and were never retried. The
+// parent Job's current_stage is loaded so the caller (BackfillStuckTTS-
+// Segments) can decide whether to re-enqueue: only jobs whose stage has
+// already advanced past tts_duration are candidates (jobs still pending
+// or actively in tts_duration would be a false positive — TTS just hasn't
+// run yet).
+//
+// updated_at < NOW() - 2 minutes filter avoids a race where the worker
+// boots in the middle of an active tts_duration stage; segments synthesised
+// in the last two minutes may still be transitioning to "synthesized"
+// without us having observed the write yet.
+//
+// OPT-407-followup-6: the rework engine cannot dispatch retries on these
+// segments through MaybeReworkSegment because they have no judge_score
+// (judge only fires after synthesis). The TTS-stuck recovery scans for
+// them outside the OPT-407 path so the workflow self-heals after a
+// crash / OOM / ml-service outage.
+// HasJobStageCompleted reports whether the given job has a completed run
+// of the given stage in job_stage_runs history. Unlike Job.CurrentStage
+// (which OPT-407 segment_retry rewinds to "translate") this lookup uses
+// the immutable historical record of stage runs, so the answer stays true
+// once tts_duration has finished even when a later retry rewinds the
+// pipeline. Used by tts-stuck recovery to avoid recovering segments in
+// jobs whose TTS stage has not yet run for the first time.
+func (s *Store) HasJobStageCompleted(ctx context.Context, jobID uint, stage models.JobStage) (bool, error) {
+	if jobID == 0 || stage == "" {
+		return false, nil
+	}
+	var count int64
+	err := s.db.WithContext(ctx).
+		Model(&models.JobStageRun{}).
+		Where("job_id = ? AND stage = ? AND status = ?", jobID, stage, "completed").
+		Count(&count).Error
+	return count > 0, err
+}
+
+func (s *Store) ListSegmentsStuckInTranslated(ctx context.Context, limit int) ([]models.Segment, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	// Compute cutoff in Go (instead of NOW() - INTERVAL) so the query
+	// stays portable across postgres and sqlite (test backend).
+	cutoff := time.Now().Add(-2 * time.Minute)
+	var segments []models.Segment
+	err := s.db.WithContext(ctx).
+		Where("status = ? AND target_text <> '' AND updated_at < ?",
+			models.SegmentStatusTranslated, cutoff).
+		Order("id ASC").
+		Limit(limit).
+		Find(&segments).Error
+	return segments, err
+}
+
 func (s *Store) UpsertBindings(ctx context.Context, jobID uint, inputs []BindingInput) ([]uint, error) {
 	if len(inputs) == 0 {
 		return nil, nil

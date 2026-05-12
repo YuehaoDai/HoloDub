@@ -23,6 +23,8 @@ import (
 	"context"
 	"log/slog"
 	"sync"
+
+	"holodub/internal/rework"
 )
 
 // BackfillSegmentJudges is intended to be called from cmd/worker/main.go
@@ -68,6 +70,12 @@ func (s *Service) BackfillSegmentJudges(ctx context.Context, limit, concurrency 
 	var dispatched int
 	var dispatchedMu sync.Mutex
 
+	// OPT-407-followup-6: cache "halted" episode_id → skip decision so we
+	// don't issue O(N) episode lookups across thousands of historical
+	// segments (the back-fill query intentionally orders by id DESC so
+	// multiple stuck segments often share the same parent episode).
+	episodeSkip := make(map[uint]bool, 16)
+
 	for i := range segments {
 		seg := segments[i] // capture by value so the closure does not reference the loop variable
 		// Reload the parent Job to pick up SourceLanguage / TargetLanguage /
@@ -82,6 +90,32 @@ func (s *Service) BackfillSegmentJudges(ctx context.Context, limit, concurrency 
 				"error", err,
 			)
 			continue
+		}
+		// OPT-407-followup-6: skip segments whose parent episode has been
+		// halted by an operator (rework_status = halted_* / escalated_*).
+		// Without this guard the LLM judge bills the operator's budget on
+		// segments whose verdicts will be ignored downstream by the rework
+		// engine's isHaltedStatus check, and contributes nothing to job
+		// closure. Cached per-episode so consecutive segments from the
+		// same episode share the lookup result.
+		if job.EpisodeID != 0 {
+			skip, cached := episodeSkip[job.EpisodeID]
+			if !cached {
+				ep, err := s.store.GetEpisode(ctx, job.EpisodeID)
+				if err != nil {
+					slog.Warn("judge backfill: get parent episode failed; skip segment",
+						"segment_id", seg.ID, "episode_id", job.EpisodeID, "error", err)
+					episodeSkip[job.EpisodeID] = true
+					continue
+				}
+				skip = rework.IsHaltedReworkStatus(ep.ReworkStatus)
+				episodeSkip[job.EpisodeID] = skip
+			}
+			if skip {
+				slog.Debug("judge backfill: skip segment in halted episode",
+					"segment_id", seg.ID, "episode_id", job.EpisodeID)
+				continue
+			}
 		}
 		// PrevContext nil: back-fill simplification (see plan §3, debt-3b).
 		// Loses the "prev sentence coherence" signal vs steady-state, but

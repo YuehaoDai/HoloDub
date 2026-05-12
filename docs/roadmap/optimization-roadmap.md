@@ -1016,7 +1016,32 @@ flowchart TD
   - **OPT-407-followup-3** `escalated_human` 的 SSE / UI 通知（依赖 OPT-203）
   - **OPT-407-followup-4** `MODEL_PRICE_OVERRIDE_JSON` env 让运维覆盖 `internal/llm/pricing.go` 的硬编码价格表（季度同步太慢的话）
   - **OPT-407-followup-5** 多 worker 部署下的全局 cost ledger 一致性（依赖 OPT-303 多租户）
+  - **OPT-407-followup-6 (DONE 2026-05-11)** Drift-aware verdict guard + TTS-stuck recovery — 详见下方专项条目
 - **PRs**: feat(rework): OPT-407 closed-loop rework engine
+
+#### OPT-407-followup-6 Drift-aware verdict guard + TTS-stuck recovery
+
+- **Status**: done 2026-05-11
+- **Source**: job 153 (79 min episode 143) chapter 1 实跑反馈 — AI judge 把 `drift=-5.65s / -4.14s / +1.75s` 的高漂移段全打 `score=1.0`，OPT-407 引擎拿不到 retry 信号，全部错过；同时 ml-service 间歇性超时让 3 段卡在 `status='translated'`，OPT-407 hook 在 `maybeJudgeSegmentAsync` 后才触发，根本不会被 invoke。
+- **Estimate**: 0.5d
+- **Depends on**: OPT-407
+- **背景**：OPT-002 segment judge 的 system prompt 评的是翻译质量（fidelity / fluency / coherence），LLM 看不到生成音频的实际时长，所以高 drift 段照样能拿 1.0 分。这导致 OPT-407 closed-loop 的 segment-level 决策天花板就是"LLM 觉得行的全放过"，运维必须手动 catch。同时 TTS 偶发失败（ml-service timeout / GPU OOM）会让 segment 卡在 `status='translated'` 永远没有 judge → OPT-407 hook 永远不被调用 → 没人发现需要恢复。
+- **Outcome**:
+  - **Drift hard guard**：`internal/rework/decision.go::shouldDriftOverrideToRetry` 在 per-verdict 规则之前检查 `DriftSec` 是否超过非对称阈值，超过即覆盖 `verdict='accept' → 'retry'`，原 verdict 写入 `Action.SkipReason='drift_override (orig_verdict=...)'` + `Note` 包含 OPT-407-followup-6 标识便于 ops 追溯
+  - **非对称阈值**：`SEGMENT_DRIFT_HARD_LIMIT_OVER_SEC=0.3`（音频超长更危险，会溢到下一段）/ `SEGMENT_DRIFT_HARD_LIMIT_UNDER_SEC=0.7`（偏短只是死气，可后期补静音），任一边设 `0` 关闭对应方向
+  - **TTS-stuck recovery**：`internal/pipeline/tts_stuck_backfill.go::BackfillStuckTTSSegments` 在 worker 启动后 30s 扫描 `status='translated' AND target_text<>'' AND updated_at < NOW()-2min` 的段，按 job_id 分组后通过 `RetryJob` 重新派发到 `tts_duration` 阶段；2 分钟 cooldown 避免与正在跑的 tts_duration 阶段竞争
+  - **Job-stage 历史判断**：用 `Store.HasJobStageCompleted(jobID, StageTTSDuration)` 替代 `Job.CurrentStage` 判断 eligibility，因为 OPT-407 segment_retry 会把 `current_stage` 重置回 `translate`，否则误判已合成的 chapter 还没跑过 TTS
+  - **Judge backfill 跳 halted episode**：`internal/pipeline/judge_backfill.go` 加 per-episode 缓存，跳过 `rework.IsHaltedReworkStatus()=true` 的 episode 段，避免 worker 启动时对历史 escalated 段烧 LLM token；新导出 `rework.IsHaltedReworkStatus(s)` 函数供非 engine 调用方复用判断逻辑
+- **Verification 设计**:
+  - L0：纯函数 `Decide()` 单测 `internal/rework/decision_test.go::TestDecide_DriftGuard_*` (8 个) + `TestShouldDriftOverrideToRetry` (11 个 sub-case) 覆盖：accept→retry 覆盖、retry/split 不被覆盖、对称/非对称阈值、单边禁用、chapter 级不触发
+  - L1：`go test ./internal/rework/... ./internal/pipeline/...` 全绿（含原 OPT-407 41+ 测试）
+  - L2 staging：worker 重启后 backfill log `tts-stuck backfill: re-enqueued chapter job_id=153 segments_recovered=3` + judge backfill 不再为 halted episode 派发
+  - L3 production-like：job 153 chapter 1 重跑 → 高 drift 段触发 drift_override 并通过 segment_retry 收敛到 |drift| ≤ 0.7s（under）/ ≤ 0.3s（over）
+- **Verification 实际**:
+  - L0 / L1：20 个新单测全绿（`TestDecide_DriftGuard_*` 8 + `TestShouldDriftOverrideToRetry` 11+1），rework + pipeline 包整体回归通过
+  - L2 staging：2026-05-11 14:11 实际 log `tts-stuck backfill: dispatching jobs=1 total_segments=3 scanned=181` + `re-enqueued chapter job_id=153 segments_recovered=3`，OPT-407-followup-6 binary 字符串验证通过 (`grep -c OPT-407-followup-6=1, tts_stuck_recovery=1`)
+- **Followups**: 暂无；OPT-407-followup-2 (SegmentAgent 整合) 落地后此处 segment_retry 接线随之升级
+- **PRs**: feat(rework): OPT-407-followup-6 drift-aware verdict guard + TTS-stuck recovery
 
 ---
 

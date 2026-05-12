@@ -648,6 +648,18 @@ func (s *Service) maybeJudgeSegmentAsync(job *models.Job, segCopy models.Segment
 		// or just record the attempt as observe-only. Engine swallows its
 		// own errors, so this is fire-and-forget. EpisodeID == 0 (older
 		// jobs without an episode) is handled inside MaybeReworkSegment.
+		//
+		// OPT-407-followup-6: pass signed drift in seconds so the engine's
+		// drift hard guard can override a high-LLM-score verdict when the
+		// audio length is well outside the configured tolerance. driftSec
+		// is "actual TTS audio - target slot" (positive = audio overflowed).
+		// Zero target (corrupt segment metadata) collapses to driftSec=0
+		// which silently disables the guard for that segment.
+		var driftSec float64
+		targetMs := segCopy.EndMs - segCopy.StartMs
+		if targetMs > 0 && segCopy.TTSDurationMs > 0 {
+			driftSec = float64(int64(segCopy.TTSDurationMs)-int64(targetMs)) / 1000.0
+		}
 		s.rework.MaybeReworkSegment(
 			ctx,
 			job.ID,
@@ -655,6 +667,7 @@ func (s *Service) maybeJudgeSegmentAsync(job *models.Job, segCopy models.Segment
 			segCopy.ID,
 			result.Verdict,
 			result.OverallScore(),
+			driftSec,
 		)
 	}()
 }

@@ -15,6 +15,53 @@ once we cut a tagged release.
 
 ### Added
 
+- **Drift-aware verdict guard + TTS-stuck recovery (OPT-407-followup-6)**:
+  the OPT-407 closed-loop now overrides a high-confidence LLM judge
+  verdict when the segment's actual TTS audio length deviates from its
+  target slot beyond an operator-tunable hard limit. The LLM judge prompt
+  scores translation quality (fidelity / fluency / coherence) but never
+  sees the audio length, so before this followup it routinely rated
+  high-drift segments at `1.0` while the dub was unusable (over-runs
+  leak into the next slot, under-runs leave dead air); operators had to
+  catch and rework these manually. The new guard lives inside the same
+  pure `Decide()` function as the rest of the decision table —
+  `internal/rework/decision.go::shouldDriftOverrideToRetry` checks
+  `DriftSec` against asymmetric thresholds
+  (`SEGMENT_DRIFT_HARD_LIMIT_OVER_SEC` default `0.3` for over-run,
+  `SEGMENT_DRIFT_HARD_LIMIT_UNDER_SEC` default `0.7` for under-run; set
+  either to `0` to disable that side) and rewrites `verdict` from
+  `accept` to `retry`, then defers to the existing per-verdict rules so
+  the override flows through the normal segment_retry capping +
+  oscillation detection + cost ceiling. Verdict `retry` and `split`
+  pass through unchanged (the guard only escalates, never overrides a
+  remediation path the LLM already chose). Drift is computed inside
+  `internal/pipeline/stage_tts.go::maybeJudgeSegmentAsync` from
+  `tts_duration_ms - (end_ms - start_ms)` and threaded through the new
+  `MaybeReworkSegment(..., driftSec float64)` parameter; callers that
+  pass `0` (e.g. backfill paths that don't have audio metadata) silently
+  disable the guard for that segment so the migration is safe-by-
+  default. The same followup ships **TTS-stuck recovery**
+  (`internal/pipeline/tts_stuck_backfill.go`): a 30s-after-boot scanner
+  that finds segments whose status remains `translated` long after their
+  parent job's `tts_duration` stage completed (typical signature: a
+  transient ml-service timeout that errored out one segment of a batch
+  while the surrounding stage was retried), groups them by job, and
+  re-enqueues each chapter through the normal `RetryJob` path —
+  observable in the existing `rework_attempts` / `task_queue` metrics.
+  Eligibility is decided by `Store.HasJobStageCompleted(jobID,
+  StageTTSDuration)` instead of `Job.CurrentStage` because OPT-407
+  segment_retry rewinds `CurrentStage` back to `translate` after a
+  retry round, which would otherwise mis-classify legitimate stuck
+  segments as "TTS hasn't run yet". A two-minute `updated_at` cooldown
+  filter prevents the scanner from racing with an actively-running
+  `tts_duration` stage. The judge backfill path picks up the same
+  improvement: it now caches per-episode whether `episodes.rework_status`
+  is `halted_*` / `escalated_*` (via the newly exported
+  `rework.IsHaltedReworkStatus` helper) and skips segments in those
+  episodes — staging worker boots no longer burn LLM tokens judging
+  segments whose verdicts the rework engine will then refuse to act on
+  anyway. Documented end-to-end in `docs/roadmap/optimization-roadmap.md`
+  under **OPT-407-followup-6**.
 - **Closed-loop rework engine (OPT-407)**: the three-tier judge stack
   (segment OPT-002 / chapter OPT-409 / episode OPT-406) is now the input
   side of an automatic rework loop instead of an observe-only signal.

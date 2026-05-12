@@ -263,6 +263,22 @@ type Config struct {
 	// twice in a row, a third retry is unlikely to help.
 	ReworkOscillationThreshold int
 
+	// SegmentDriftHardLimitOverSec: OPT-407-followup-6 drift-aware verdict
+	// guard. When a segment's actual TTS audio is LONGER than its target
+	// slot by MORE than this many seconds, the rework engine forces
+	// verdict=retry regardless of the LLM judge's verdict. Asymmetric on
+	// purpose: over-run is more disruptive (will overflow into the next
+	// segment's slot) than under-run (which leaves silence we can pad).
+	// Default 0.3s. Set <= 0 to disable the over-limit guard.
+	SegmentDriftHardLimitOverSec float64
+	// SegmentDriftHardLimitUnderSec: OPT-407-followup-6 drift-aware verdict
+	// guard. When a segment's actual TTS audio is SHORTER than its target
+	// slot by MORE than this many seconds, the rework engine forces
+	// verdict=retry. Default 0.7s — looser than the over-limit because a
+	// short clip just produces dead air, which is recoverable. Set <= 0
+	// to disable the under-limit guard.
+	SegmentDriftHardLimitUnderSec float64
+
 	FFmpegBin  string
 	FFprobeBin string
 
@@ -576,6 +592,14 @@ func Load() (Config, error) {
 	cfg.ReworkOscillationThreshold, err = getEnvInt("REWORK_OSCILLATION_THRESHOLD", 2)
 	if err != nil {
 		return Config{}, fmt.Errorf("parse REWORK_OSCILLATION_THRESHOLD: %w", err)
+	}
+	cfg.SegmentDriftHardLimitOverSec, err = getEnvFloat("SEGMENT_DRIFT_HARD_LIMIT_OVER_SEC", 0.3)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse SEGMENT_DRIFT_HARD_LIMIT_OVER_SEC: %w", err)
+	}
+	cfg.SegmentDriftHardLimitUnderSec, err = getEnvFloat("SEGMENT_DRIFT_HARD_LIMIT_UNDER_SEC", 0.7)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse SEGMENT_DRIFT_HARD_LIMIT_UNDER_SEC: %w", err)
 	}
 
 	cfg.TTSConcurrency, err = getEnvInt("TTS_CONCURRENCY", 2)

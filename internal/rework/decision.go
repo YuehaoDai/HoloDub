@@ -84,7 +84,32 @@ func Decide(in DecideInput) Action {
 		}
 	}
 
-	// 4. Per-level verdict rules.
+	// 4. OPT-407-followup-6 drift hard guard (segment level only). When
+	//    the segment's actual TTS duration deviates from its target slot
+	//    by more than the operator-configured tolerance, override the LLM
+	//    verdict to "retry". The LLM judge prompt scores translation
+	//    quality (fidelity / fluency / coherence) without seeing the
+	//    audio length, so high-drift segments routinely receive fidelity=1
+	//    while the dub is unusable. The guard runs BEFORE per-verdict
+	//    rules so the override flows through the normal segment_retry
+	//    capping + escalation path; it is suppressed if the verdict was
+	//    already "retry" (no work to do) or "split" (different remediation).
+	if in.Level == LevelSegment && shouldDriftOverrideToRetry(in) {
+		over := in.DriftHardLimitOverSec
+		under := in.DriftHardLimitUnderSec
+		original := in.Verdict
+		in.Verdict = "retry"
+		// Stash the override reason in a dedicated note prefix so the
+		// downstream Action carries it through to operator logs.
+		ov := decideSegment(in)
+		ov.SkipReason = fmt.Sprintf("drift_override (orig_verdict=%s drift_sec=%+.2f over_limit=%.2f under_limit=%.2f)",
+			original, in.DriftSec, over, under)
+		ov.Note = fmt.Sprintf("OPT-407-followup-6: forced retry on segment %d — drift %+.2fs exceeds hard limit (LLM verdict was %q score=%.2f); %s",
+			in.TargetID, in.DriftSec, original, in.Score, ov.Note)
+		return ov
+	}
+
+	// 5. Per-level verdict rules.
 	switch in.Level {
 	case LevelSegment:
 		return decideSegment(in)
@@ -99,6 +124,40 @@ func Decide(in DecideInput) Action {
 			Note:       "rework engine received an unrecognised level; this is a programming error",
 		}
 	}
+}
+
+// shouldDriftOverrideToRetry returns true when the OPT-407-followup-6
+// drift hard guard should override the LLM judge verdict to "retry".
+//
+// Triggers ONLY when:
+//   - DriftSec was provided (!= 0) AND
+//   - the asymmetric over/under limit configured by the operator is exceeded AND
+//   - the original verdict is one we want to escalate (currently only "accept";
+//     "retry" is already retry, "split" needs a different action so we keep
+//     the LLM's choice).
+//
+// Both limit values are checked against absolute seconds, with sign
+// handling: positive DriftSec (audio longer than target) compares to
+// DriftHardLimitOverSec, negative (audio shorter) compares to
+// DriftHardLimitUnderSec. A limit of <= 0 disables that side.
+func shouldDriftOverrideToRetry(in DecideInput) bool {
+	if in.DriftSec == 0 {
+		return false
+	}
+	if in.Verdict != "accept" {
+		return false
+	}
+	if in.DriftSec > 0 {
+		if in.DriftHardLimitOverSec <= 0 {
+			return false
+		}
+		return in.DriftSec > in.DriftHardLimitOverSec
+	}
+	// in.DriftSec < 0
+	if in.DriftHardLimitUnderSec <= 0 {
+		return false
+	}
+	return -in.DriftSec > in.DriftHardLimitUnderSec
 }
 
 func decideSegment(in DecideInput) Action {
