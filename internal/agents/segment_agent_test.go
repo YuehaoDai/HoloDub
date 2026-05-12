@@ -345,6 +345,98 @@ func TestDecide_DecisionMatrix(t *testing.T) {
 	}
 }
 
+// TestDecide_OverShortGapStuckEscape: OPT-202-followup-1 (B3).
+//
+// Reproduces the segment-10186 deadlock from chapter 2 of job 154:
+// a segment that can't borrow (short gap), has fired ensemble once
+// (cap=1 in this test), AttemptsWithoutImprovement has climbed to 4,
+// and we're inside the last 3 attempts of the retry window. The
+// escape must return DecisionAccept with reason="over_short_gap_stuck"
+// so the loop stops burning LLM tokens on a non-converging case.
+func TestDecide_OverShortGapStuckEscape(t *testing.T) {
+	cfg := defaultCfg()
+	cfg.GapAfterMs = 500 // below ShortGapThresholdMs → no borrow
+	cfg.MaxAttempts = 10
+	cfg.RetranslationEnabled = true
+
+	cases := []struct {
+		name       string
+		state      State
+		wantKind   DecisionKind
+		wantReason string
+	}{
+		{
+			// AwI=4 AND Attempt=MaxAttempts-3 (== 7) → escape triggers.
+			name: "awi-4-attempt-7-of-10/escape",
+			state: State{
+				Text:                       "t",
+				Attempt:                    7,
+				AttemptsWithoutImprovement: 4,
+				BestAbsDrift:               math.MaxFloat64,
+			},
+			wantKind:   DecisionAccept,
+			wantReason: "over_short_gap_stuck",
+		},
+		{
+			// AwI=5 AND Attempt=MaxAttempts (10) → escape triggers
+			// even later in the window (we want to bail out, not
+			// keep retrying).
+			name: "awi-5-attempt-equals-max/escape",
+			state: State{
+				Text:                       "t",
+				Attempt:                    10,
+				AttemptsWithoutImprovement: 5,
+				BestAbsDrift:               math.MaxFloat64,
+			},
+			// NOTE: at Attempt == MaxAttempts the isLastAttempt
+			// short-circuit fires first and returns clip_overflow.
+			// over_short_gap_stuck only kicks in when we're WITHIN
+			// the tail but not yet at the absolute last attempt.
+			wantKind:   DecisionAccept,
+			wantReason: "clip_overflow",
+		},
+		{
+			// AwI=3 (below threshold) → standard retranslate.
+			name: "awi-3-attempt-7/no-escape",
+			state: State{
+				Text:                       "t",
+				Attempt:                    7,
+				AttemptsWithoutImprovement: 3,
+				BestAbsDrift:               math.MaxFloat64,
+			},
+			wantKind:   DecisionRetranslate,
+			wantReason: "over_short_gap",
+		},
+		{
+			// AwI=10 but Attempt=4 (well before tail) → keep retrying.
+			// The escape is deliberately late-only so a noisy first
+			// half of the window doesn't bail out prematurely.
+			name: "awi-10-attempt-4-still-early/no-escape",
+			state: State{
+				Text:                       "t",
+				Attempt:                    4,
+				AttemptsWithoutImprovement: 10,
+				BestAbsDrift:               math.MaxFloat64,
+			},
+			wantKind:   DecisionRetranslate,
+			wantReason: "over_short_gap",
+		},
+	}
+	obs := makeObs(10_000, 11_500) // +15% over-run, cannot borrow
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := Decide(c.state, obs, cfg)
+			if got.Kind != c.wantKind {
+				t.Errorf("Kind: want %v, got %v", c.wantKind, got.Kind)
+			}
+			if got.Reason != c.wantReason {
+				t.Errorf("Reason: want %q, got %q", c.wantReason, got.Reason)
+			}
+		})
+	}
+}
+
 // =========================================================================
 // OPT-002-followup-4 VETO branch (judge_veto_drift).
 // =========================================================================
@@ -357,15 +449,16 @@ func TestDecide_JudgeVetoDriftRetry(t *testing.T) {
 		wantReason string
 	}{
 		{
-			// 25s target, 23s actual: drift=2.0s = 8% < adaptive cap
-			// (10% for ≥20s segments) → VETO honored.
+			// 25s target, 23.2s actual: drift=1.8s = 7.2% < adaptive cap
+			// (8% for ≥20s segments after OPT-002-followup-5 tighten)
+			// → VETO honored.
 			name: "under-run-veto-long-segment",
 			obs: Observation{
-				ActualDurationMs: 23_000,
-				ActualSec:        23,
-				OverflowMs:       -2_000,
-				AbsDrift:         2.0,
-				DriftPct:         0.08,
+				ActualDurationMs: 23_200,
+				ActualSec:        23.2,
+				OverflowMs:       -1_800,
+				AbsDrift:         1.8,
+				DriftPct:         0.072,
 				JudgeVerdict:     "accept",
 				JudgeScore:       0.98,
 			},
@@ -382,13 +475,15 @@ func TestDecide_JudgeVetoDriftRetry(t *testing.T) {
 			wantReason: "judge_veto_drift",
 		},
 		{
+			// 20s target, 21.5s actual: drift=1.5s = 7.5% < adaptive cap
+			// (8% for ≥20s segments after tighten) → VETO honored.
 			name: "over-run-veto-long-segment-short-gap",
 			obs: Observation{
-				ActualDurationMs: 22_000,
-				ActualSec:        22,
-				OverflowMs:       2_000,
-				AbsDrift:         2.0,
-				DriftPct:         0.10,
+				ActualDurationMs: 21_500,
+				ActualSec:        21.5,
+				OverflowMs:       1_500,
+				AbsDrift:         1.5,
+				DriftPct:         0.075,
 				JudgeVerdict:     "accept",
 				JudgeScore:       0.96,
 			},
@@ -403,6 +498,33 @@ func TestDecide_JudgeVetoDriftRetry(t *testing.T) {
 			}(),
 			wantKind:   DecisionAccept,
 			wantReason: "judge_veto_drift",
+		},
+		{
+			// OPT-002-followup-5 (T1) regression case: 20s target with
+			// drift=2.0s (10%) was VETO-eligible under the old 10% cap;
+			// must now retranslate because the new cap is 8% = 1.6s.
+			// This is the headline behavioural change of the tighten.
+			name: "tightened-band-rejects-10pct-on-long-segment",
+			obs: Observation{
+				ActualDurationMs: 18_000,
+				ActualSec:        18.0,
+				OverflowMs:       -2_000,
+				AbsDrift:         2.0,
+				DriftPct:         0.10,
+				JudgeVerdict:     "accept",
+				JudgeScore:       0.99,
+			},
+			cfg: func() Config {
+				c := defaultCfg()
+				c.TargetSec = 20.0
+				c.TargetMs = 20_000
+				c.GapAfterMs = 500
+				c.JudgeVetoDriftRetry = true
+				c.JudgeVetoMinScore = 0.95
+				return c
+			}(),
+			wantKind:   DecisionRetranslate,
+			wantReason: "under_run_drift",
 		},
 		{
 			name: "veto-disabled-flag",
@@ -497,17 +619,18 @@ func TestDecide_JudgeVetoDriftRetry(t *testing.T) {
 }
 
 // Adaptive band cut-offs sanity check.
+// OPT-002-followup-5 (T1) tightened the bands from 10/6/3 to 8/5/2.5%.
 func TestAdaptiveMaxAcceptableDrift(t *testing.T) {
 	cases := []struct {
 		targetSec float64
 		want      float64
 	}{
-		{1.0, 0.03},
-		{4.99, 4.99 * 0.03},
-		{5.0, 5.0 * 0.06},
-		{19.99, 19.99 * 0.06},
-		{20.0, 20.0 * 0.10},
-		{30.0, 3.0},
+		{1.0, 0.025},                     // < 5s tier
+		{4.99, 4.99 * 0.025},             // just below 5s tier boundary
+		{5.0, 5.0 * 0.05},                // 5s-20s tier
+		{19.99, 19.99 * 0.05},            // just below 20s tier boundary
+		{20.0, 20.0 * 0.08},              // ≥ 20s tier
+		{30.0, 30.0 * 0.08},              // long segment, 8% band → 2.4s
 	}
 	for _, c := range cases {
 		got := AdaptiveMaxAcceptableDrift(c.targetSec)
@@ -529,11 +652,12 @@ func TestAgentRun_VetoSkipsRetry(t *testing.T) {
 	cfg.JudgeVetoDriftRetry = true
 	cfg.JudgeVetoMinScore = 0.95
 
-	// Sequence: 1 TTS call returning a 10% over-run on a 22s segment,
+	// Sequence: 1 TTS call returning a 6.8% over-run on a 22s segment
+	// (1.5s drift, within the new 8% adaptive cap → 1.76s),
 	// 1 judge call returning a perfect accept verdict, agent vetoes
 	// the drift retry, no second TTS call should be made.
 	ft := newFakeTools().
-		WantSynthesize(TTSResult{ActualDurationMs: 24_200, AudioRelPath: "ok.wav"}, nil).
+		WantSynthesize(TTSResult{ActualDurationMs: 23_500, AudioRelPath: "ok.wav"}, nil).
 		WantJudge(&JudgeResult{Fidelity: 0.98, Fluency: 0.95, Coherence: 0.95, Verdict: "accept"}, nil)
 	agent := NewAgent(ft)
 	out, err := agent.Run(context.Background(), RunInput{

@@ -795,7 +795,7 @@ with open("gpt.pth", "wb") as f:
 | `RETRANSLATION_ENABLED` | `true` | 设 `false` 完全关掉漂移率驱动的再翻译反馈循环 |
 | `RETRANSLATION_MODEL` | `kimi-k2.5` | 同一 `OPENAI_BASE_URL` 上的任意模型 |
 | `RETRANSLATION_DRIFT_THRESHOLD` | `0.06` | 最大允许 `|实际 − 目标| / 目标`；超出则触发再翻译 |
-| `RETRANSLATION_MAX_ATTEMPTS` | `10` | 每段最多再翻译次数 |
+| `RETRANSLATION_MAX_ATTEMPTS` | `30` | 每段最多再翻译次数（OPT-002-followup-5 从 10 抬升到 30，为 UI 重跑预留更大余地） |
 
 #### 并发、超时与安全
 

@@ -291,11 +291,15 @@ type Config struct {
 	EnsembleImportant bool
 
 	// EnsembleMaxPerSegment is the per-segment ensemble call cap.
-	// Default 1 (matches the plan's "ensemble triggers at most once
-	// before falling back to thinking-mode"). The agent counts ensemble
-	// uses in state.EnsembleCallsThisSegment; once the cap is hit,
-	// Decide downgrades subsequent ensemble triggers to plain
-	// UseThinking=true. This is the local cost ceiling; the global
-	// per-episode cost ledger lives at the rework engine layer.
+	// Default 2 (raised from 1 in OPT-202-followup-1, B3). One ensemble
+	// is rarely enough on long high-drift segments; chapter 2 of
+	// job 154 had segments stuck in over_short_gap retranslate loops
+	// after their single ensemble round failed to converge. 2
+	// ensembles bound the per-segment LLM cost at roughly 2×$0.02 =
+	// $0.04 (still ~5% of the global per-episode ceiling). The agent
+	// counts ensemble uses in state.EnsembleCallsThisSegment; once
+	// the cap is hit, Decide downgrades subsequent ensemble triggers
+	// to plain UseThinking=true. The global per-episode cost ledger
+	// lives at the rework engine layer.
 	EnsembleMaxPerSegment int
 }

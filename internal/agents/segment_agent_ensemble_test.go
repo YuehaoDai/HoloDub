@@ -159,6 +159,104 @@ func TestDecide_EnsembleEscalationDropsThinking(t *testing.T) {
 	}
 }
 
+// TestShouldUseEnsemble_AbsDriftTriggerAfterTwoAttempts:
+// OPT-202-followup-1 (B2). The chapter-2 failure mode: drift improves
+// linearly every retry (so AttemptsWithoutImprovement stays at 0/1
+// and the non-convergence trigger never fires), but the absolute
+// drift is still well outside the adaptive acceptance band. Once we
+// have spent ≥2 retranslate attempts and drift is STILL above the
+// adaptive band, escalate to ensemble.
+//
+// Scenario: 50s segment, current drift 8s (16% absolute). Adaptive
+// band for ≥20s segments is 10% = 5s. We have spent 3 attempts and
+// the drift exceeds the band → ensemble.
+func TestShouldUseEnsemble_AbsDriftTriggerAfterTwoAttempts(t *testing.T) {
+	cfg := baseEnsembleCfg()
+	cfg.TargetSec = 50.0
+	cfg.TargetMs = 50_000
+	// State.Attempt=2 (we are about to spend retry #3).
+	state := State{Attempt: 2, AttemptsWithoutImprovement: 0}
+	obs := Observation{
+		ActualSec: 42.0,
+		AbsDrift:  8.0,  // 16% — well above the 10% adaptive band
+	}
+	if !shouldUseEnsemble(state, obs, cfg) {
+		t.Fatalf("abs-drift trigger should fire when attempt>=2 and drift>adaptive band: state=%+v obs=%+v",
+			state, obs)
+	}
+}
+
+// TestShouldUseEnsemble_AbsDriftBelowBandNoTrigger:
+// drift is inside the adaptive band → the abs-drift trigger does
+// NOT fire (regardless of attempt count). Ensemble must stay off
+// because we are within the acceptable VETO window already.
+// Note: 50s target with new 8% band = 4.0s cap (OPT-002-followup-5).
+func TestShouldUseEnsemble_AbsDriftBelowBandNoTrigger(t *testing.T) {
+	cfg := baseEnsembleCfg()
+	cfg.TargetSec = 50.0
+	cfg.TargetMs = 50_000
+	state := State{Attempt: 5, AttemptsWithoutImprovement: 0}
+	obs := Observation{
+		ActualSec: 47.0,
+		AbsDrift:  3.0, // 6% — comfortably within the 8% adaptive band
+	}
+	if shouldUseEnsemble(state, obs, cfg) {
+		t.Fatalf("abs-drift trigger must NOT fire when drift is within band: state=%+v obs=%+v",
+			state, obs)
+	}
+}
+
+// TestShouldUseEnsemble_AbsDriftRespectsCap:
+// even if the abs-drift trigger would fire, the per-segment cap
+// must still block additional ensemble calls. The cap is the
+// ultimate budget guard — without it a chronically non-converging
+// segment could fire ensemble every attempt.
+func TestShouldUseEnsemble_AbsDriftRespectsCap(t *testing.T) {
+	cfg := baseEnsembleCfg()
+	cfg.TargetSec = 50.0
+	cfg.TargetMs = 50_000
+	cfg.EnsembleMaxPerSegment = 1
+	state := State{
+		Attempt:                    3,
+		AttemptsWithoutImprovement: 0,
+		EnsembleCallsThisSegment:   1, // cap already hit
+	}
+	obs := Observation{
+		ActualSec: 42.0,
+		AbsDrift:  8.0,
+	}
+	if shouldUseEnsemble(state, obs, cfg) {
+		t.Fatalf("cap must block abs-drift trigger: state=%+v", state)
+	}
+}
+
+// TestShouldUseEnsemble_AbsDriftRequiresMinAttempts:
+// the abs-drift trigger requires state.Attempt >= 2 so the first
+// two attempts go through the cheaper single-model retranslate path.
+// Otherwise every long-segment translation would jump straight to
+// ensemble on the very first attempt, blowing the cost budget.
+func TestShouldUseEnsemble_AbsDriftRequiresMinAttempts(t *testing.T) {
+	cfg := baseEnsembleCfg()
+	cfg.TargetSec = 50.0
+	cfg.TargetMs = 50_000
+	cases := []struct {
+		attempt int
+		want    bool
+	}{
+		{0, false},
+		{1, false},
+		{2, true},
+		{3, true},
+	}
+	for _, tc := range cases {
+		state := State{Attempt: tc.attempt}
+		obs := Observation{ActualSec: 42.0, AbsDrift: 8.0}
+		if got := shouldUseEnsemble(state, obs, cfg); got != tc.want {
+			t.Errorf("attempt=%d: want=%v got=%v", tc.attempt, tc.want, got)
+		}
+	}
+}
+
 // TestAgentRun_EnsembleHappyPath: agent fans out to ensemble when
 // triggered, accepts the winner. Models a stuck single-model
 // trajectory (each retranslate yields WORSE drift, not better) so

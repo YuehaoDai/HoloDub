@@ -806,7 +806,7 @@ with open("gpt.pth", "wb") as f:
 | `RETRANSLATION_ENABLED` | `true` | Disable to skip the drift-based re-translation feedback loop entirely |
 | `RETRANSLATION_MODEL` | `kimi-k2.5` | Any model on the same `OPENAI_BASE_URL` |
 | `RETRANSLATION_DRIFT_THRESHOLD` | `0.06` | Max allowed `|actual − target| / target`; triggers re-translation if exceeded |
-| `RETRANSLATION_MAX_ATTEMPTS` | `10` | Max re-translation attempts per segment |
+| `RETRANSLATION_MAX_ATTEMPTS` | `30` | Max re-translation attempts per segment (raised from 10 in OPT-002-followup-5 to give UI rerun more headroom) |
 
 #### Concurrency, timeouts and security
 

@@ -15,6 +15,102 @@ once we cut a tagged release.
 
 ### Added
 
+- **Chapter 2 drift fix — PR-1 bug bundle (OPT-201-followup-1,
+  OPT-202-followup-1, OPT-204-followup-1; code-complete, L2 pending)**:
+  three independent fixes shipped together because they target the
+  same chapter-2-of-episode-143 incident (job 154 had clusters of
+  long segments accepting via `judge_veto_drift` with 8–10 % drift
+  the operator considered audible).
+  - **B1 — DUBBING_PLAN JSON robustness** (OPT-204-followup-1):
+    `dubbingPlanSystemPrompt` now explicitly forbids ASCII `"` inside
+    the `translation` field and demonstrates `「」/『』` typographic
+    quotes instead. A single-pass recovery helper
+    `tryRecoverDubbingPlanJSON` in `internal/llm/dubbing_plan.go`
+    repairs the previously-observed "LLM wrote `他说"是的"` and broke
+    the top-level parse" failure mode: it isolates the translation
+    field with a non-greedy regex, alternates ASCII `"` to
+    typographic open/close, and refuses to claim success unless the
+    rebuilt JSON still has a non-empty `translation` string AND a
+    valid `emotion` object AND a `pacing` string (so a regex that
+    accidentally swallows downstream fields doesn't silently corrupt
+    the parse). New Prometheus counter
+    `holodub_llm_recovered_parse_total{operation}` tracks how often
+    recovery fires — when it stops growing, the helper can be
+    removed. Five new tests in `internal/llm/dubbing_plan_test.go`
+    cover the happy path, the no-quotes early-out, the no-translation-
+    field branch, the truncated-middle sanity check, and an end-to-
+    end provider stub.
+  - **B2 — ensemble abs-drift trigger** (OPT-202-followup-1):
+    `shouldUseEnsemble` in `internal/agents/segment_agent.go` now
+    fires when `state.Attempt >= 2 && obs.AbsDrift >
+    AdaptiveMaxAcceptableDrift(targetSec)` — closing the gap the
+    chapter-2 log showed (slow linear convergence kept
+    `AttemptsWithoutImprovement` at 0 / 1 so the non-convergence
+    trigger never fired). The new trigger reuses the same adaptive
+    band as the VETO branch, so the two work in lockstep: a segment
+    that ensemble fails to bring inside the band gets one more
+    ensemble attempt (via the raised cap, see B3) before falling
+    back to plain retranslate. Four new tests in
+    `segment_agent_ensemble_test.go` cover the trigger above-band,
+    the no-trigger inside-band case, the cap interaction, and the
+    `attempt >= 2` minimum.
+  - **B3 — per-segment ensemble cap raised + over-short-gap escape**
+    (OPT-201-followup-1): `EnsembleMaxPerSegment` default lifted
+    from 1 → 2 (`internal/agents/segment_agent.go` line ~270 and
+    `internal/agents/types.go` doc); a new `over_short_gap_stuck`
+    decision in `Decide` accepts the current audio with a clip when
+    `AttemptsWithoutImprovement >= 4 && Attempt >= MaxAttempts-3` —
+    reproducing the segment-10186-style deadlock saw retries burn
+    14× the single-segment LLM cost without converging. A new
+    `ENSEMBLE_MAX_PER_SEGMENT` env (default 2) lets operators
+    revert to the conservative budget without a rebuild. Coverage:
+    `TestDecide_OverShortGapStuckEscape` covers four state combos
+    (escape fires, escape blocked by clip_overflow short-circuit at
+    Attempt==MaxAttempts, AwI below threshold, attempt too early
+    in the window).
+- **Chapter 2 drift fix — PR-2 prompt + threshold tuning
+  (OPT-204-followup-2, OPT-002-followup-5; code-complete, L2 pending)**:
+  three coordinated tuning changes that complement PR-1 by shifting
+  WHEN drift is acceptable (VETO bands tightened) and HOW the LLM
+  is asked to fix it (retranslate prompt gives concrete expansion
+  guidance).
+  - **P1 — retranslate prompt teaches expansion** (OPT-204-followup-2):
+    `retranslateWithConstraintModel` in `internal/llm/client.go` now
+    adds an `[Adaptation strategy]` block to the system prompt when
+    `direction == "under"`: it states the Chinese-vs-English density
+    ratio (30–40 % shorter), lists four concrete expansion techniques
+    (restore pronouns, four-character idioms, expanded acronyms,
+    clarifying clauses) and explicitly grants permission to
+    paraphrase aggressively at drift > 15 %. The user message
+    switches from `"make minimal edits to THIS text"` to
+    `"you may rewrite the translation more freely"` at the same
+    > 15 % threshold; below that, the conservative phrasing stays
+    so easy convergence cases don't lose stability. Four new tests
+    in `internal/llm/client_test.go` use a request-capturing stub
+    to byte-assert the prompt content: under-run includes the
+    block, over-run omits it (compression is already handled by
+    `charTargetInstruction`), severe under-run loosens the user
+    instruction, mild under-run keeps the minimal-edits phrasing.
+  - **T1 — AdaptiveMaxAcceptableDrift bands tightened**
+    (OPT-002-followup-5): bands cut from 10 / 6 / 3 % to 8 / 5 /
+    2.5 % at the ≥ 20 s, 5–20 s, < 5 s tiers respectively. Existing
+    VETO test fixtures updated to the new boundaries plus a new
+    regression case `tightened-band-rejects-10pct-on-long-segment`
+    that fixes the tightening behaviour against future drift. The
+    abs-drift ensemble trigger (B2) shares this same function, so
+    tightening here also makes ensemble escalation more aggressive
+    — by design.
+  - **T2 — RETRANSLATION_MAX_ATTEMPTS default 10 → 30**: only the
+    manual-retry path uses this value (pipeline initial run keeps
+    `RETRANSLATION_INITIAL_MAX_ATTEMPTS=50`). Operators reported
+    10 was too low when iterating from the UI's 重跑 button.
+    Updated `.env`, `.env.example`, `internal/config/config.go`,
+    and both READMEs.
+  - **Operator playbook** in
+    [docs/chapter2-drift-fix/pr3-rerun-playbook.md](docs/chapter2-drift-fix/pr3-rerun-playbook.md)
+    documents the L2 rerun procedure, four KPI tracking signals,
+    the keep / rollback decision matrix and an opt-in episode 143
+    `rework_status` reset query for whole-episode replays.
 - **Three-tier baseline regression harness (Quality Mainline Q PR-14)**:
   new `tests/quality/run_baseline_diff.py` complements the existing
   pass/fail `run_regression.py` with a *relative* regression gate:

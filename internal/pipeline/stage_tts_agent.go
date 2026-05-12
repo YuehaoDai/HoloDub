@@ -246,7 +246,7 @@ func (s *Service) runSegmentAgentV2WithHint(ctx context.Context, job *models.Job
 		EnsembleEnabled:               s.cfg.EnsembleRetranslateEnabled && len(s.cfg.EnsembleModels) > 0,
 		EnsembleNonConvergenceTrigger: 2,
 		EnsembleJudgeScoreTrigger:     0.7,
-		EnsembleMaxPerSegment:         1,
+		EnsembleMaxPerSegment:         s.cfg.EnsembleMaxPerSegment,
 		EnsembleImportant:             segmentImportant(seg),
 	}
 

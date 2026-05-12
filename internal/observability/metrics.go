@@ -116,6 +116,17 @@ var (
 		Name: "holodub_segment_agent_decisions_total",
 		Help: "Count of OPT-201 SegmentAgent decisions by kind, reason, thinking-mode escalation, and ensemble escalation.",
 	}, []string{"decision", "reason", "use_thinking", "use_ensemble"})
+
+	// OPT-204-followup-1: count of strict-tool JSON parse failures that
+	// were successfully recovered by tryRecoverDubbingPlanJSON. Lets a
+	// dashboard answer "how often does the LLM emit ASCII " inside the
+	// translation field?" without grep-ing logs. When this counter
+	// stops growing AND the prompt fix is in place, the recovery
+	// helper can be removed.
+	llmRecoveredParseTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "holodub_llm_recovered_parse_total",
+		Help: "Times a strict tool JSON parse failed but was recovered by a defensive helper.",
+	}, []string{"operation"})
 )
 
 // ObserveExternalCall records the outcome of an outbound HTTP call to a
@@ -178,6 +189,16 @@ func IncLLMStrictParseFailed(operation string) {
 		operation = "unknown"
 	}
 	llmStrictParseFailedTotal.WithLabelValues(operation).Inc()
+}
+
+// IncLLMRecoveredParse records one successful recovery from a strict tool
+// JSON parse failure (OPT-204-followup-1). When the prompt fix lands and
+// the recovery counter stops growing, the recovery helper can be removed.
+func IncLLMRecoveredParse(operation string) {
+	if operation == "" {
+		operation = "unknown"
+	}
+	llmRecoveredParseTotal.WithLabelValues(operation).Inc()
 }
 
 // AddLLMCostUSD records the estimated dollar cost of one LLM call. usdCost

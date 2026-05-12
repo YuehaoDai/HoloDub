@@ -267,6 +267,95 @@ func TestTranslateWithDubbingPlan_MalformedJSON(t *testing.T) {
 	}
 }
 
+// TestTryRecoverDubbingPlanJSON_AsciiQuotesInTranslation: the most
+// common failure mode in chapter 2 of job 154 — the LLM emits an
+// ASCII " inside the translation field, breaking the top-level JSON
+// parse. The recovery helper must replace those quotes with Chinese
+// typographic quotes and produce a parseable result.
+func TestTryRecoverDubbingPlanJSON_AsciiQuotesInTranslation(t *testing.T) {
+	// Hand-crafted broken JSON: translation field has unescaped " characters.
+	// Building the literal directly so the test reads like the failure mode.
+	raw := `{"translation": "他说"是的"我同意", "emotion": {"valence": 0.0, "arousal": 0.3, "label": "neutral"}, "pacing": "normal"}`
+	fixed, ok := tryRecoverDubbingPlanJSON(raw)
+	if !ok {
+		t.Fatalf("recovery should have succeeded for unescaped ASCII quotes; got fixed=%q", fixed)
+	}
+	var plan DubbingPlan
+	if err := json.Unmarshal([]byte(fixed), &plan); err != nil {
+		t.Fatalf("fixed JSON still does not parse: %v\nfixed=%q", err, fixed)
+	}
+	if !strings.Contains(plan.Translation, "「") || !strings.Contains(plan.Translation, "」") {
+		t.Fatalf("recovered translation should use Chinese quotes, got %q", plan.Translation)
+	}
+}
+
+// TestTryRecoverDubbingPlanJSON_NoQuotesReturnsFalse: when the
+// translation field has no embedded ASCII " (i.e. the failure was
+// elsewhere), recovery must return false so the caller surfaces the
+// original parser error rather than pretending it fixed something.
+func TestTryRecoverDubbingPlanJSON_NoQuotesReturnsFalse(t *testing.T) {
+	// Translation is fine, but pacing has a typo (intentional schema-
+	// violation) so the original Unmarshal would still fail on
+	// strict-validated callers. The helper must not pretend to fix this.
+	raw := `{"translation": "你好世界", "emotion": {"valence": 0.0, "arousal": 0.3, "label": "neutral"}, "pacing": "INVALID"}`
+	_, ok := tryRecoverDubbingPlanJSON(raw)
+	if ok {
+		t.Fatalf("recovery must NOT claim to fix non-quote failures")
+	}
+}
+
+// TestTryRecoverDubbingPlanJSON_NoTranslationFieldReturnsFalse:
+// raw JSON that doesn't even have a translation field cannot be
+// recovered. The helper must return false in O(regex) time without
+// crashing.
+func TestTryRecoverDubbingPlanJSON_NoTranslationFieldReturnsFalse(t *testing.T) {
+	raw := `{"emotion": {"valence": 0.0, "arousal": 0.3, "label": "neutral"}, "pacing": "normal"}`
+	_, ok := tryRecoverDubbingPlanJSON(raw)
+	if ok {
+		t.Fatalf("recovery must return false when translation field is missing")
+	}
+}
+
+// TestTryRecoverDubbingPlanJSON_TruncatedMiddleReturnsFalse:
+// translation field is unterminated (no closing quote / delimiter).
+// The regex still matches the truncated value, but the resulting
+// fixed JSON does not parse cleanly. The sanity check must catch
+// this and return false rather than producing corrupted JSON.
+func TestTryRecoverDubbingPlanJSON_TruncatedMiddleReturnsFalse(t *testing.T) {
+	// Truncated: no closing quote at all → regex falls back to
+	// matching another field's quote, sanity check should fail.
+	raw := `{"translation": "他说"unfinished... "emotion": {"valence": 0.0, "arousal": 0.3, "label": "neutral"}`
+	_, ok := tryRecoverDubbingPlanJSON(raw)
+	if ok {
+		t.Fatalf("recovery must return false for truncated input that yields invalid result")
+	}
+}
+
+// TestTranslateWithDubbingPlan_RecoveredAsciiQuotes: end-to-end —
+// provider returns malformed JSON with ASCII quotes in translation,
+// recovery kicks in and the call succeeds with the cleaned text.
+func TestTranslateWithDubbingPlan_RecoveredAsciiQuotes(t *testing.T) {
+	rawArgs := `{"translation": "他说"是的，我同意"然后离开", "emotion": {"valence": 0.0, "arousal": 0.3, "label": "neutral"}, "pacing": "normal"}`
+	resp := buildToolCallResponse("emit_dubbing_plan", rawArgs, providerUsage{})
+	body, _ := json.Marshal(resp)
+	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(body)
+	}))
+	defer stub.Close()
+
+	c := &Client{
+		baseURL: stub.URL, apiKey: "sk-test", model: "qwen-plus",
+		httpClient: &http.Client{Timeout: 5 * time.Second},
+	}
+	got, err := c.TranslateWithDubbingPlan(context.Background(), "en", "zh", "He said yes and left.", 4.0, 4.0, nil, "")
+	if err != nil {
+		t.Fatalf("recovery should make this call succeed, got err: %v", err)
+	}
+	if !strings.Contains(got.Translation, "「") || !strings.Contains(got.Translation, "」") {
+		t.Fatalf("recovered translation should use Chinese quotes, got %q", got.Translation)
+	}
+}
+
 // buildSimplePlanJSON is a one-line dubbing plan builder for table-
 // driven tests. Keeps the test fixtures short.
 func buildSimplePlanJSON(translation, pacing, emoLabel string, pauseMs int) string {

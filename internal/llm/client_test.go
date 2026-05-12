@@ -560,3 +560,166 @@ func TestReviewToolFlagOff(t *testing.T) {
 		t.Fatalf("expected 1 HTTP call (prompt only), got %d", calls)
 	}
 }
+
+// captureRetranslatePayload spins up a stub server that returns a
+// fixed response and writes the inbound request body into the
+// captured slice. Used by the OPT-204-followup-2 prompt tests to
+// assert on the system / user message content without depending on
+// a real LLM endpoint.
+func captureRetranslatePayload(t *testing.T, returnText string) (*Client, *[]byte, func()) {
+	t.Helper()
+	captured := make([]byte, 0)
+	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		buf := make([]byte, r.ContentLength)
+		_, _ = r.Body.Read(buf)
+		captured = append(captured[:0], buf...)
+		w.Header().Set("Content-Type", "application/json")
+		resp := chatCompletionResponse{}
+		resp.Choices = []struct {
+			Message struct {
+				Content   string     `json:"content"`
+				ToolCalls []toolCall `json:"tool_calls,omitempty"`
+			} `json:"message"`
+			FinishReason string `json:"finish_reason,omitempty"`
+		}{
+			{
+				Message: struct {
+					Content   string     `json:"content"`
+					ToolCalls []toolCall `json:"tool_calls,omitempty"`
+				}{Content: returnText},
+				FinishReason: "stop",
+			},
+		}
+		body, _ := json.Marshal(resp)
+		_, _ = w.Write(body)
+	}))
+	c := &Client{
+		baseURL:                  stub.URL,
+		apiKey:                   "sk-test",
+		model:                    "qwen-plus",
+		retranslationModel:       "qwen-plus",
+		retranslationTemperature: 0.3,
+		httpClient:               &http.Client{Timeout: 5 * time.Second},
+	}
+	return c, &captured, stub.Close
+}
+
+// TestRetranslatePrompt_UnderRunIncludesAdaptationStrategy (OPT-204-followup-2 / P1):
+// when actualSec is significantly below targetSec, the system prompt
+// must include the "Adaptation strategy" block telling the LLM HOW
+// to expand the Chinese translation. Without this block, chapter 2
+// of job 154 had clusters of segments oscillating around -25% drift
+// because the LLM treated "Add N characters" as a literal pad-with-
+// filler instruction.
+func TestRetranslatePrompt_UnderRunIncludesAdaptationStrategy(t *testing.T) {
+	c, captured, close := captureRetranslatePayload(t, "updated translation")
+	defer close()
+	_, err := c.RetranslateWithConstraint(
+		context.Background(),
+		"en", "zh", "He delivered a profound and far-reaching speech.",
+		"他讲话很深刻。",
+		50.0, 35.0, // targetSec=50, actualSec=35 → -30% (under)
+		1, 10,
+		0.06,
+		nil, false, 4.0, nil, "", "",
+	)
+	if err != nil {
+		t.Fatalf("retranslate: %v", err)
+	}
+	body := string(*captured)
+	if !strings.Contains(body, "Adaptation strategy") {
+		t.Fatalf("under-run prompt must include [Adaptation strategy] block; body=%s", body)
+	}
+	if !strings.Contains(body, "Chinese typically renders 30-40%") {
+		t.Fatalf("adaptation strategy must mention Chinese density hint; body=%s", body)
+	}
+	if !strings.Contains(body, "four-character idioms") {
+		t.Fatalf("adaptation strategy should suggest 成语; body=%s", body)
+	}
+}
+
+// TestRetranslatePrompt_OverRunOmitsAdaptationStrategy (OPT-204-followup-2 / P1):
+// the adaptation block is under-run specific. Over-run segments need
+// compression guidance (already in charTargetInstruction) — adding
+// "you may paraphrase more aggressively" here would push the LLM
+// to produce LONGER output, the opposite of what we want.
+func TestRetranslatePrompt_OverRunOmitsAdaptationStrategy(t *testing.T) {
+	c, captured, close := captureRetranslatePayload(t, "shorter")
+	defer close()
+	_, err := c.RetranslateWithConstraint(
+		context.Background(),
+		"en", "zh", "Hi.",
+		"这是一个很长的翻译版本，包含了很多很多无关紧要的内容，长度严重超过目标时长。",
+		2.0, 5.0, // targetSec=2, actualSec=5 → +150% (over)
+		1, 10,
+		0.06,
+		nil, false, 4.0, nil, "", "",
+	)
+	if err != nil {
+		t.Fatalf("retranslate: %v", err)
+	}
+	body := string(*captured)
+	if strings.Contains(body, "Adaptation strategy") {
+		t.Fatalf("over-run prompt must NOT include [Adaptation strategy] block; body=%s", body)
+	}
+}
+
+// TestRetranslateUserMsg_SevereUnderRunLoosenesMinimalEdits (OPT-204-followup-2 / P1):
+// when under-run drift exceeds 15%, the user-message edit instruction
+// switches from "make minimal edits" to "you may rewrite more freely".
+// This is the second half of the chapter-2 fix: even with the
+// adaptation strategy in the system prompt, the LLM clung to the
+// existing translation when told to "make minimal edits". Lifting
+// that constraint at high drift gives it permission to rewrite.
+func TestRetranslateUserMsg_SevereUnderRunLoosenesMinimalEdits(t *testing.T) {
+	c, captured, close := captureRetranslatePayload(t, "rewritten")
+	defer close()
+	_, err := c.RetranslateWithConstraint(
+		context.Background(),
+		"en", "zh", "He spoke at length.",
+		"他说话。",
+		20.0, 15.0, // -25% under-run, > 15% threshold
+		1, 10,
+		0.06,
+		nil, false, 4.0, nil, "", "",
+	)
+	if err != nil {
+		t.Fatalf("retranslate: %v", err)
+	}
+	body := string(*captured)
+	if !strings.Contains(body, "rewrite the translation more freely") {
+		t.Fatalf("severe under-run user message must loosen edit instruction; body=%s", body)
+	}
+	if strings.Contains(body, "make minimal edits") {
+		t.Fatalf("severe under-run user message must NOT say 'make minimal edits'; body=%s", body)
+	}
+}
+
+// TestRetranslateUserMsg_MildUnderRunKeepsMinimalEdits (OPT-204-followup-2 / P1):
+// the loosened-instruction switch is at >15%, NOT every under-run.
+// Mild drift (≤ 15%) should keep the original "minimal edits"
+// instruction so the LLM doesn't over-rewrite when small tweaks would
+// suffice — preserving the convergence properties for the easy case.
+func TestRetranslateUserMsg_MildUnderRunKeepsMinimalEdits(t *testing.T) {
+	c, captured, close := captureRetranslatePayload(t, "tweaked")
+	defer close()
+	_, err := c.RetranslateWithConstraint(
+		context.Background(),
+		"en", "zh", "He spoke briefly.",
+		"他简要发言。",
+		10.0, 9.0, // -10% under-run, < 15% threshold
+		1, 10,
+		0.06,
+		nil, false, 4.0, nil, "", "",
+	)
+	if err != nil {
+		t.Fatalf("retranslate: %v", err)
+	}
+	body := string(*captured)
+	if !strings.Contains(body, "make minimal edits") {
+		t.Fatalf("mild under-run user message must keep 'minimal edits'; body=%s", body)
+	}
+	if strings.Contains(body, "rewrite the translation more freely") {
+		t.Fatalf("mild under-run user message must NOT loosen edit instruction; body=%s", body)
+	}
+}

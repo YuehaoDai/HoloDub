@@ -375,6 +375,22 @@ type Config struct {
 	// Env: ENSEMBLE_JUDGE_MODEL.
 	EnsembleJudgeModel string
 
+	// EnsembleMaxPerSegment (OPT-202-followup-1, B3) is the per-segment
+	// cap on how many ensemble fan-outs the agent can dispatch. Default
+	// 2 — chapter 2 of job 154 showed segments stuck in a single ensemble
+	// + over_short_gap loop because the first ensemble round didn't
+	// converge and the cap blocked a second attempt. 2 lets the agent
+	// retry ensemble once more before falling back to plain retranslate
+	// with the over_short_gap_stuck escape.
+	//
+	// Setting this to 1 reverts to the original conservative budget; 0
+	// or negative also falls back to 1 (the agent's local default kept
+	// for safety so a misconfigured value never disables ensemble for
+	// segments operators actually flagged Important).
+	//
+	// Env: ENSEMBLE_MAX_PER_SEGMENT (integer).
+	EnsembleMaxPerSegment int
+
 	// WorkerMetricsAddr is the listen address for the worker's /metrics
 	// endpoint. Default ":8081"; set to empty string to disable. Worker
 	// emits its own LLM token / cost / cache hit metrics that are NOT
@@ -486,7 +502,7 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("parse RETRANSLATION_MIN_DRIFT_THRESHOLD: %w", err)
 	}
 
-	cfg.RetranslationMaxAttempts, err = getEnvInt("RETRANSLATION_MAX_ATTEMPTS", 10)
+	cfg.RetranslationMaxAttempts, err = getEnvInt("RETRANSLATION_MAX_ATTEMPTS", 30)
 	if err != nil {
 		return Config{}, fmt.Errorf("parse RETRANSLATION_MAX_ATTEMPTS: %w", err)
 	}
@@ -576,6 +592,10 @@ func Load() (Config, error) {
 	}
 	cfg.EnsembleModels = getEnvList("ENSEMBLE_MODELS", []string{"deepseek-chat", "qwen-plus"})
 	cfg.EnsembleJudgeModel = getEnv("ENSEMBLE_JUDGE_MODEL", "kimi-k2.5")
+	cfg.EnsembleMaxPerSegment, err = getEnvInt("ENSEMBLE_MAX_PER_SEGMENT", 2)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse ENSEMBLE_MAX_PER_SEGMENT: %w", err)
+	}
 	cfg.DubbingPlanEnabled, err = getEnvBool("DUBBING_PLAN_ENABLED", false)
 	if err != nil {
 		return Config{}, fmt.Errorf("parse DUBBING_PLAN_ENABLED: %w", err)

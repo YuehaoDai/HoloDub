@@ -436,6 +436,32 @@ func (c *Client) retranslateWithConstraintModel(
 			charDelta, currentLen, recommended, limit)
 	}
 
+	// OPT-204-followup-2 (P1): the system prompt previously stopped at
+	// "Add N characters" / "Remove N characters" which the LLM tended
+	// to interpret as "minimal edits". Chapter 2 of job 154 had a
+	// large cluster of segments reverberating around -25% drift
+	// because each retry was a faithful but TOO-LITERAL minor edit.
+	// The adaptation strategy block tells the LLM HOW to expand
+	// (concrete techniques) when severely under-running, and the
+	// user-message edit below loosens the "minimal edits" instruction
+	// once drift > 15%.
+	//
+	// We gate the adaptation block on direction == "under" because
+	// over-running segments have the opposite problem (need
+	// compression, already addressed by charTargetInstruction).
+	adaptationStrategy := ""
+	if direction == "under" {
+		adaptationStrategy = "\n[Adaptation strategy]\n" +
+			"Chinese typically renders 30-40% shorter than English source when translated " +
+			"compactly. If under-running by >15%, the previous translation was too terse. " +
+			"Apply ONE OR MORE of these expansions:\n" +
+			"  - Restore explicit subjects/pronouns omitted from compact phrasing.\n" +
+			"  - Use four-character idioms (成语) instead of two-character compounds.\n" +
+			"  - Expand abbreviations / acronyms into their full forms.\n" +
+			"  - Add a brief clarifying clause if the source implies one.\n" +
+			"You MAY paraphrase more aggressively (not minimal edits) when drift >15%.\n"
+	}
+
 	systemPrompt := fmt.Sprintf(
 		"You are a professional dubbing translator optimizing for audio-visual sync.\n\n"+
 			"[Duration constraint]\n"+
@@ -448,6 +474,7 @@ func (c *Client) retranslateWithConstraintModel(
 			"which is %.0f%% %s the %.1fs target — exceeds %.0f%% limit.\n"+
 			"This is attempt %d of %d.\n"+
 			"%s"+
+			"%s"+
 			"\nProvide a revised translation that:\n"+
 			"1. %s\n"+
 			"2. Faithfully conveys ALL key information from the source — do NOT omit, distort, or invent meaning.\n"+
@@ -459,6 +486,7 @@ func (c *Client) retranslateWithConstraintModel(
 		currentLen, actualSec, pctDiff, direction, targetSec, driftThresholdPct*100,
 		attempt, maxAttempts,
 		historyBlock,
+		adaptationStrategy,
 		charTargetInstruction, targetLanguage, targetSec,
 	)
 
@@ -485,16 +513,28 @@ func (c *Client) retranslateWithConstraintModel(
 		systemPrompt += contextSuffix.String()
 	}
 
+	// OPT-204-followup-2 (P1): severe under-runs (drift > 15%) get a
+	// loosened edit instruction. "Minimal edits" turned into a trap
+	// for chapter 2 long segments — the LLM kept producing a series
+	// of small variations all in the same too-short ballpark. Once
+	// drift is large we explicitly tell the model it MAY rewrite
+	// more freely.
+	userEditInstruction := "make minimal edits to THIS text, " +
+		"do NOT re-translate from scratch, do NOT revert to any previous version, "
+	if pctDiff > 15 && direction == "under" {
+		userEditInstruction = "you may rewrite the translation more freely (not just minimal edits) to reach the duration target, " +
+			"but do NOT revert to any previous version, "
+	}
+
 	requestPayload := chatCompletionRequest{
 		Model:       model,
 		Temperature: c.retranslationTemperature,
 		Messages: []chatMessage{
 			{Role: "system", Content: systemPrompt},
 			{Role: "user", Content: fmt.Sprintf(
-				"Source (%s):\n%s\n\nCurrent translation (%s) — make minimal edits to THIS text, "+
-					"do NOT re-translate from scratch, do NOT revert to any previous version, "+
+				"Source (%s):\n%s\n\nCurrent translation (%s) — %s"+
 					"and ensure the result faithfully conveys ALL key information from the source:\n%s",
-				sourceLanguage, srcText, targetLanguage, currentTrans)},
+				sourceLanguage, srcText, targetLanguage, userEditInstruction, currentTrans)},
 		},
 	}
 	if useThinking {

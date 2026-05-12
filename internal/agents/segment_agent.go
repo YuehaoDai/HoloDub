@@ -18,24 +18,33 @@ import (
 // pipeline/tts.AdaptiveMinDriftThreshold but are LOOSER — the latter
 // caps retranslation work, this one caps the VETO acceptance window.
 //
-// Bands (chosen empirically from OPT-002-followup-3 observe-only data):
+// Bands (tightened in OPT-002-followup-5 after chapter 2 of job 154
+// showed too many segments shipping with audible drift):
 //
-//	targetSec ≥ 20s → 10% (e.g. 2s on a 20s segment)
-//	5s ≤ targetSec <  20s → 6% (e.g. 0.6s on a 10s segment)
-//	targetSec <  5s → 3% (e.g. 0.09s on a 3s segment)
+//	targetSec ≥ 20s → 8% (was 10%, e.g. 1.6s on a 20s segment)
+//	5s ≤ targetSec <  20s → 5% (was 6%, e.g. 0.5s on a 10s segment)
+//	targetSec <  5s → 2.5% (was 3%, e.g. 0.075s on a 3s segment)
 //
-// Short segments stay strict because a 3% drift on a 2s clip is still
-// ≤ 60ms — well below what TTS+LLM can routinely hit; a perfect-score
-// 2s clip drifting 20% is almost certainly truncated audio, not just
-// a long translation.
+// Why tighten: the OPT-002-followup-3 observe-only baseline accepted
+// drift up to ~10% on long segments through the VETO branch even when
+// retries could plausibly converge. The new bands force more retries
+// (and, after PR-1 B2, more ensemble escalations) before falling back
+// to VETO acceptance. Short segments stay strict because a 2.5%
+// drift on a 2s clip is still ≤ 50ms — well below what TTS+LLM can
+// routinely hit; a perfect-score 2s clip drifting 20% is almost
+// certainly truncated audio, not just a long translation.
+//
+// The new abs-drift ensemble trigger in shouldUseEnsemble (PR-1 B2)
+// uses these SAME bands, so tightening here also makes ensemble
+// escalation more aggressive — by design.
 func AdaptiveMaxAcceptableDrift(targetSec float64) float64 {
 	switch {
 	case targetSec >= 20.0:
-		return targetSec * 0.10
+		return targetSec * 0.08
 	case targetSec >= 5.0:
-		return targetSec * 0.06
+		return targetSec * 0.05
 	default:
-		return targetSec * 0.03
+		return targetSec * 0.025
 	}
 }
 
@@ -141,6 +150,24 @@ func Decide(state State, obs Observation, cfg Config) Decision {
 	// under-run side (symmetrical).
 	if shouldVetoDriftRetry(obs, cfg) {
 		return Decision{Kind: DecisionAccept, Reason: "judge_veto_drift"}
+	}
+	// OPT-202-followup-1 (B3): over_short_gap deadlock escape.
+	//
+	// Root cause from segment 10186 of job 154: a long segment that
+	// can't borrow (GapAfterMs too small), fired ensemble once, the
+	// ensemble winner also over-ran, and now we're stuck retranslating
+	// over and over with no convergence. The retry loop would run all
+	// MaxAttempts iterations producing identical "still over-runs by
+	// 2-3 seconds" output, burning 14× the cost of a single segment.
+	//
+	// Heuristic: if AttemptsWithoutImprovement is high AND we're in
+	// the tail of the retry window, the agent has demonstrated it
+	// can't improve further — accept what we have (the merge stage
+	// will clip the overflow). The thresholds (AwI >= 4, Attempt >=
+	// MaxAttempts-3) are deliberately conservative so this only
+	// triggers AFTER the agent has had a fair chance to converge.
+	if state.AttemptsWithoutImprovement >= 4 && state.Attempt >= cfg.MaxAttempts-3 {
+		return Decision{Kind: DecisionAccept, Reason: "over_short_gap_stuck"}
 	}
 	d := Decision{
 		Kind:        DecisionRetranslate,
@@ -261,9 +288,15 @@ func shouldUseEnsemble(state State, obs Observation, cfg Config) bool {
 	if !cfg.EnsembleEnabled {
 		return false
 	}
+	// Cap default raised from 1 → 2 in OPT-202-followup-1 (B3). The
+	// chapter 2 incident showed segments that fire ensemble once,
+	// don't converge, then get stuck in over_short_gap retranslate
+	// loops because the cap blocked a second ensemble attempt. The
+	// over_short_gap_stuck escape in Decide() is the second safety
+	// net for the same problem; both work together.
 	cap := cfg.EnsembleMaxPerSegment
 	if cap <= 0 {
-		cap = 1
+		cap = 2
 	}
 	if state.EnsembleCallsThisSegment >= cap {
 		return false
@@ -283,6 +316,29 @@ func shouldUseEnsemble(state State, obs Observation, cfg Config) bool {
 		scoreCut = 0.7
 	}
 	if obs.JudgeVerdict != "" && obs.JudgeScore < scoreCut && state.Attempt >= 1 {
+		return true
+	}
+	// OPT-202-followup-1 (B2): abs-drift fallback trigger.
+	//
+	// Root cause from chapter 2 of job 154: long segments converge
+	// linearly (best_drift improves a little every retry) so the
+	// AttemptsWithoutImprovement counter stays at 0/1 and the existing
+	// non-convergence trigger never fires; the judge rarely scores
+	// below 0.7 either; nobody flags segments as Important. Net effect:
+	// `shouldUseEnsemble` returns false even when single-model
+	// retranslate has obviously plateaued well outside the acceptance
+	// band. This new trigger says: after we've already retranslated
+	// at least twice (state.Attempt >= 2) and the drift is STILL
+	// outside the adaptive acceptance band, the single model has
+	// demonstrated it can't close the gap on its own — escalate to
+	// the multi-model fan-out.
+	//
+	// The adaptive band reuses AdaptiveMaxAcceptableDrift because that
+	// is exactly the band beyond which we'd otherwise spend more
+	// retries; pulling the trigger at the same threshold makes the
+	// transition operator-comprehensible ("we tried 2x, still outside
+	// VETO band → ensemble").
+	if state.Attempt >= 2 && obs.AbsDrift > AdaptiveMaxAcceptableDrift(cfg.TargetSec) {
 		return true
 	}
 	return false

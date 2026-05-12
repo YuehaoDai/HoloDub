@@ -96,9 +96,14 @@ flowchart LR
 | OPT-402 | Pipeline 重构：episode-level stages + glossary_extract | P1 | done | 3d | OPT-401 |
 | OPT-403 | Chapterize 算法 + fan-out 多 chapter job | P1 | done | 5d | OPT-401, OPT-402 |
 | OPT-201 | SegmentAgent ReAct 重构 | P2 | code-complete (L2/L3/L4 pending) | 5d → ~6d 实际 | OPT-002 |
+| OPT-201-followup-1 | EnsembleMaxPerSegment 1→2 + over_short_gap_stuck 死循环退路 (chapter 2 漂移 PR-1 / B3) | P2 | code-complete (L2 chapter 2 rerun pending) | 0.5d 实际 | OPT-201, OPT-202 |
 | OPT-202 | Speculative ensemble + judge | P2 | code-complete (L2/L3/L4 pending) | 3d → ~5d 实际 | OPT-002, OPT-201 |
+| OPT-202-followup-1 | Ensemble abs-drift 触发条件（attempt≥2 && drift>adaptive band）(chapter 2 漂移 PR-1 / B2) | P2 | code-complete (L2 chapter 2 rerun pending) | 0.5d 实际 | OPT-202 |
 | OPT-203 | Streaming TTS + SSE 推送 | P2 | planned | 5d | - |
 | OPT-204 | 结构化情感/韵律输出 | P2 | code-complete (L3 50-段人评 pending) | 2d → ~4d 实际 | OPT-003 |
+| OPT-204-followup-1 | dubbing_plan JSON 引号约束 + tryRecoverDubbingPlanJSON recovery + recovered_parse_total metric (chapter 2 漂移 PR-1 / B1) | P2 | code-complete (L2 chapter 2 rerun pending) | 0.5d 实际 | OPT-204 |
+| OPT-204-followup-2 | Retranslate prompt 教 LLM 主动扩写（Chinese density hint + adaptation strategy + drift>15% paraphrase) (chapter 2 漂移 PR-2 / P1) | P2 | code-complete (L2 chapter 2 rerun pending) | 0.5d 实际 | OPT-204 |
+| OPT-002-followup-5 | AdaptiveMaxAcceptableDrift 收紧 10/6/3% → 8/5/2.5% + RETRANSLATION_MAX_ATTEMPTS 10→30 (chapter 2 漂移 PR-2 / T1+T2) | P1 | code-complete (L2 chapter 2 rerun pending) | 0.5d 实际 | OPT-002-followup-4 |
 | OPT-205 | Reasoning model 全场景化 | P2 | planned | 1d | - |
 | OPT-206 | Skills / Glossary 系统 | P2 | planned | 3d | - |
 | OPT-404 | Episode merge + 跨 chapter 一致性广播 | P2 | done | 3d | OPT-403 |
@@ -706,6 +711,133 @@ flowchart TD
   - ml-service: `ml_service/app/adapters/tts.py::_resolve_prosody_kwargs / _emo_vector_from_valence_arousal / _append_trailing_silence`；`ml_service/app/models.py::TTSRequest.dubbing_meta`
   - DB: migration `012_segment_dubbing_meta.sql` 是 comment-only marker（沿用 `segments.meta JSONB`，无 schema breaking）
 - **PRs**: 已落地 PR-12/13（plan `quality-mainline-q-plan` Phase 4）
+
+---
+
+#### OPT-201-followup-1 EnsembleMaxPerSegment 1→2 + over_short_gap_stuck 死循环退路
+
+- **Status**: code-complete (L2 chapter 2 rerun pending operator)
+- **Source**: Chapter 2 漂移根因合理优化 plan (`chapter2-drift-fix`) PR-1 / B3
+- **Estimate**: 0.5d 实际
+- **Depends on**: OPT-201, OPT-202
+- **背景**: Job 154 chapter 2 的 seg 10186 触发 ensemble 1 次后没收敛，cap=1 阻止第二次 ensemble，retranslate over_short_gap 死循环 14 次烧 14×单段成本仍没改善。
+- **Outcome**:
+  - `Config.EnsembleMaxPerSegment` 默认值从 1 → 2（`internal/agents/segment_agent.go::shouldUseEnsemble` 兜底默认 + `internal/agents/types.go` 文档），允许"ensemble 第一次没收敛再上一次"
+  - `Decide` 在 `over_short_gap` 分支前加 `AttemptsWithoutImprovement >= 4 && Attempt >= MaxAttempts-3` 兜底，命中时返回 `DecisionAccept{Reason: "over_short_gap_stuck"}`，让 merge stage clip 而不是继续重译
+  - 新 env `ENSEMBLE_MAX_PER_SEGMENT`（默认 2），允许运维不重编译就调；写入 `internal/config/config.go::Load` 并透传到 `internal/pipeline/stage_tts_agent.go`
+- **Verification**:
+  - 新增 `TestDecide_OverShortGapStuckEscape` 4-case table（escape 命中 / clip_overflow 短路 / AwI 不够 / attempt 太早）
+  - 既有 ensemble cap 测试 (`TestAgentRun_EnsembleCapBlocksSecondFanout`) 仍保持，验证 cap 行为本身没变（运维显式设 cap=1 时仍生效）
+  - L2: `agent_decision` 日志里 `over_short_gap_stuck` 计数 ≤ 5 per chapter，单段 ensemble 调用 ≤ 2
+- **Rollout**: feature flag `ENSEMBLE_MAX_PER_SEGMENT=2` 默认开（旧值 1 等价于 PR-1 之前的行为），可即时回滚
+- **Related rules**: [incremental-evolution.mdc#3](../../.cursor/rules/incremental-evolution.mdc) (env flag 默认值升级)
+- **关键改动点**:
+  - `internal/agents/segment_agent.go`: `shouldUseEnsemble` cap 默认 1→2 + `Decide` 加 over_short_gap_stuck 分支
+  - `internal/agents/types.go`: `EnsembleMaxPerSegment` 文档更新
+  - `internal/config/config.go`: 新增 `EnsembleMaxPerSegment int` + `getEnvInt("ENSEMBLE_MAX_PER_SEGMENT", 2)` 解析
+  - `internal/pipeline/stage_tts_agent.go`: `EnsembleMaxPerSegment: s.cfg.EnsembleMaxPerSegment`
+  - `.env` / `.env.example`: 新增 `ENSEMBLE_MAX_PER_SEGMENT=2` 默认值
+- **PRs**: PR-1 of `chapter2-drift-fix`
+
+---
+
+#### OPT-202-followup-1 Ensemble abs-drift 触发条件
+
+- **Status**: code-complete (L2 chapter 2 rerun pending operator)
+- **Source**: Chapter 2 漂移根因合理优化 plan (`chapter2-drift-fix`) PR-1 / B2
+- **Estimate**: 0.5d 实际
+- **Depends on**: OPT-202
+- **背景**: Job 154 chapter 2 长段每次重译都"微改善"（best_drift 慢线性下降），导致 `AttemptsWithoutImprovement` 永远停在 0/1，ensemble 的非收敛触发条件永远摸不到。judge 又给高分（segments are accurate, just long），所以低 judge 触发也摸不到。结果：5 段大 under-run 段全程没用过 ensemble，纯 retranslate 也搞不定。
+- **Outcome**:
+  - `shouldUseEnsemble` 末尾加第 4 个 trigger：`state.Attempt >= 2 && obs.AbsDrift > AdaptiveMaxAcceptableDrift(cfg.TargetSec)`
+  - 含义：重译 2 次后仍然超 adaptive band = 单模型已无能为力，自动升级到 ensemble
+  - 复用 `AdaptiveMaxAcceptableDrift` 让 trigger 和 VETO 接收带在同一阈值上动；T1 收紧到 8/5/2.5% 后 trigger 也跟着更积极
+- **Verification**:
+  - 新增 4 个测试: `TestShouldUseEnsemble_AbsDriftTriggerAfterTwoAttempts` / `AbsDriftBelowBandNoTrigger` / `AbsDriftRespectsCap` / `AbsDriftRequiresMinAttempts`
+  - L2: chapter 2 rerun 后 `holodub_segment_agent_decisions_total{use_ensemble="true"}` 触发率应明显上升（之前 ~0%）
+- **Rollout**: 受 `ENSEMBLE_RETRANSLATE_ENABLED` 总开关 + `ENSEMBLE_MAX_PER_SEGMENT` cap 兜底
+- **Related rules**: [agent-design.mdc](../../.cursor/rules/agent-design.mdc)（pure decision function 加 trigger）
+- **关键改动点**:
+  - `internal/agents/segment_agent.go::shouldUseEnsemble`: 新加 abs-drift trigger
+  - `internal/agents/segment_agent_ensemble_test.go`: +4 case
+- **PRs**: PR-1 of `chapter2-drift-fix`
+
+---
+
+#### OPT-204-followup-1 dubbing_plan JSON 引号约束 + tryRecoverDubbingPlanJSON recovery
+
+- **Status**: code-complete (L2 chapter 2 rerun pending operator)
+- **Source**: Chapter 2 漂移根因合理优化 plan (`chapter2-drift-fix`) PR-1 / B1
+- **Estimate**: 0.5d 实际
+- **Depends on**: OPT-204
+- **背景**: Job 154 chapter 2 多次出现 `emit_dubbing_plan: decode tool args: invalid character ...` 错误：LLM 在 translation field 里塞 ASCII `"`（如`他说"是的"`），把顶层 JSON 嵌套引号干崩，整个 dubbing_plan 调用失败 → 当前流水线降级到旧 translate 路径，吞掉了 prosody / emotion 元信息。
+- **Outcome**:
+  - `dubbingPlanSystemPrompt` 加 `[Critical JSON safety]` 段，明确禁止 translation field 内用 ASCII `"`，要求用中文引号「」/『』，并给反例
+  - 新增 `tryRecoverDubbingPlanJSON(raw)`: 用 non-greedy 正则定位 `"translation": "..."` field，对捕获的 value 内的 ASCII `"` 做交替 「 / 」 替换；strict sanity check 要求修复后的 JSON 必须保留 `emotion` (object) + `pacing` (string) 字段（防止正则贪婪吃掉下游字段而无声损坏数据）
+  - `TranslateWithDubbingPlan` 在 `json.Unmarshal` 失败后单次尝试 recovery，成功则记 `holodub_llm_recovered_parse_total{operation="dubbing_plan"}`，失败则抛原错误
+- **Verification**:
+  - 5 新测试覆盖 happy path (ASCII quotes 修复) / 无引号短路 / 缺 translation field 拒绝 / 截断中尾 sanity 失败 / end-to-end provider stub 集成
+  - L2 staging: `holodub_llm_recovered_parse_total` 应 ≤ 1 per chapter（prompt 防住 99%，recovery 兜剩下 1%）；若 > 5 说明 prompt 没起作用
+- **Rollout**: 自动生效（不在 feature flag 之后；strict tool 入口仍由 `DUBBING_PLAN_ENABLED` 控制）
+- **Related rules**: [llm-call-standards.mdc#1](../../.cursor/rules/llm-call-standards.mdc) (strict tool)、[lessons-learned.mdc](../../.cursor/rules/lessons-learned.mdc) (silent fallback 警惕)
+- **关键改动点**:
+  - `internal/llm/dubbing_plan.go`: prompt 加 [Critical JSON safety] + `tryRecoverDubbingPlanJSON` 辅助函数 + 单次 recovery 集成
+  - `internal/observability/metrics.go`: 新增 `holodub_llm_recovered_parse_total{operation}` counter + `IncLLMRecoveredParse` helper
+  - `internal/llm/dubbing_plan_test.go`: +5 测试 case
+- **PRs**: PR-1 of `chapter2-drift-fix`
+
+---
+
+#### OPT-204-followup-2 Retranslate prompt 教 LLM 主动扩写
+
+- **Status**: code-complete (L2 chapter 2 rerun pending operator)
+- **Source**: Chapter 2 漂移根因合理优化 plan (`chapter2-drift-fix`) PR-2 / P1
+- **Estimate**: 0.5d 实际
+- **Depends on**: OPT-204
+- **背景**: Job 154 chapter 2 长段反复 under-run 20-40%：retranslate prompt 只说"Add approximately N characters"，LLM 倾向"minimal edits"添几个字，never 真正改写。同样的"too literal"翻译再走 N 次也没有质的改善。
+- **Outcome**:
+  - `retranslateWithConstraintModel` 的 system prompt 在 `direction == "under"` 时插入 `[Adaptation strategy]` block：明示中文比英文短 30-40%、列出 4 个具体的扩写技巧（restore subjects / 四字成语 / expand abbreviations / clarifying clause）、给出"drift > 15% 时可以 PARAPHRASE 不必 minimal edits"的明确许可
+  - User message 在 `pctDiff > 15 && direction == "under"` 时把 `"make minimal edits to THIS text"` 换成 `"you may rewrite the translation more freely (not just minimal edits)"`
+  - over-run 路径不动（charTargetInstruction 已经处理压缩）；mild under-run (≤15%) 也保留 minimal edits 以保证收敛稳定性
+- **Verification**:
+  - 4 个 prompt builder 单测 (`TestRetranslatePrompt_UnderRunIncludesAdaptationStrategy` 等) 用 request-capturing stub 字节断言 prompt 内容
+  - L2: chapter 2 rerun 后长段平均 attempts/segment 应下降（从 3.3 → ≤2.5），within_threshold 接受率上升
+- **Rollout**: 自动生效（无 feature flag；prompt 改动安全程度等同 OPT-001-followup-1）；回滚 = git revert
+- **Related rules**: [llm-call-standards.mdc](../../.cursor/rules/llm-call-standards.mdc) (prompt 字节稳定 + 角色化)
+- **关键改动点**:
+  - `internal/llm/client.go::retranslateWithConstraintModel`: systemPrompt 加 `adaptationStrategy` 拼接 + userEditInstruction 条件化
+  - `internal/llm/client_test.go`: +`captureRetranslatePayload` helper + 4 case
+- **PRs**: PR-2 of `chapter2-drift-fix`
+
+---
+
+#### OPT-002-followup-5 AdaptiveMaxAcceptableDrift 收紧 + RETRANSLATION_MAX_ATTEMPTS 30
+
+- **Status**: code-complete (L2 chapter 2 rerun pending operator)
+- **Source**: Chapter 2 漂移根因合理优化 plan (`chapter2-drift-fix`) PR-2 / T1 + T2
+- **Estimate**: 0.5d 实际
+- **Depends on**: OPT-002-followup-4
+- **背景**:
+  - T1: VETO 接收带 10/6/3% 太宽，长段 8-10% drift 一律通过 VETO 接受，操作员主观判断已经能听出明显拖音。
+  - T2: UI 重跑按钮单段重译 cap=10 太低，操作员反馈手动 iterate 时频繁 hit 上限。
+- **Outcome**:
+  - `AdaptiveMaxAcceptableDrift` 三档收紧到 8/5/2.5%（≥20s / 5-20s / <5s）
+  - 副作用：B2 加的 abs-drift ensemble trigger 用同一函数 → ensemble 触发更激进，与 VETO 收窄协同
+  - `RETRANSLATION_MAX_ATTEMPTS` 默认 10 → 30，只影响 manual retry 路径（初始 pipeline 仍 `RETRANSLATION_INITIAL_MAX_ATTEMPTS=50`）
+- **Verification**:
+  - VETO 既有测试更新预期值（3 个 case + 新增 `tightened-band-rejects-10pct-on-long-segment` 回归 case）
+  - `TestAdaptiveMaxAcceptableDrift` 6-case 全部更新
+  - `TestAgentRun_VetoSkipsRetry` 调整 ActualDurationMs 23_500 (drift=1.5s ≈ 6.8% ≤ 新 8% cap)
+  - L2: chapter 2 rerun 后 `decision=accept reason=judge_veto_drift` 段数应下降（之前 ~49% 接受经 VETO；目标 ≤ 30%）
+- **Rollout**: AdaptiveMaxAcceptableDrift 是代码改动，回滚需 git revert；RETRANSLATION_MAX_ATTEMPTS 是 env，回滚改 `.env` 即可
+- **Related rules**: [observability-and-cost.mdc](../../.cursor/rules/observability-and-cost.mdc) (decision 标签 + cost trace)
+- **关键改动点**:
+  - `internal/agents/segment_agent.go::AdaptiveMaxAcceptableDrift`: 10/6/3 → 8/5/2.5
+  - `internal/config/config.go::Load`: `RETRANSLATION_MAX_ATTEMPTS` 默认 10 → 30
+  - `.env` / `.env.example` / `README.md` / `README_zh-CN.md`: 同步 30
+  - `internal/agents/segment_agent_test.go`: VETO test 预期值更新 + 1 个 tighten 回归 case
+  - `internal/agents/segment_agent_ensemble_test.go`: `AbsDriftBelowBandNoTrigger` 测试数据下调（4.0s → 3.0s）以避免与新 8% cap 撞边
+- **PRs**: PR-2 of `chapter2-drift-fix`
 
 ---
 

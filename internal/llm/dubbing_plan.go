@@ -23,7 +23,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
+
+	"holodub/internal/observability"
 )
 
 // DubbingPlan is the structured output the translator LLM emits when
@@ -159,6 +162,19 @@ func dubbingPlanSystemPrompt(targetLanguage string, rate float64, translationSum
 	sb.WriteString("- Skip when no word stands out.\n\n")
 	sb.WriteString("Pause guidance:\n")
 	sb.WriteString("- Use pause_after_ms for sentence breaks / breath. Default 0; rarely above 500.\n\n")
+	// OPT-204-followup-1 (B1): the strict tool returns the plan as a
+	// JSON string and any unescaped ASCII " inside the "translation"
+	// field instantly breaks the top-level parse. The fix in chapter 2
+	// drift analysis: tell the model to use Chinese typographic
+	// quotes ( 「」/『』 ) for inline quoted strings. This is
+	// reinforced by tryRecoverDubbingPlanJSON below, but a clean
+	// prompt is the cheaper of the two.
+	sb.WriteString("[Critical JSON safety]\n")
+	sb.WriteString("Inside the \"translation\" field, NEVER use ASCII double-quote (\") characters.\n")
+	sb.WriteString("For Chinese quoted strings, use Chinese typographic quotes 「」 or 『』.\n")
+	sb.WriteString("For English quoted strings inside Chinese text, use 「\" \"」 wrapping rather than bare ASCII \".\n")
+	sb.WriteString("Wrong: \"translation\": \"他说\"是的\"\"\n")
+	sb.WriteString("Right: \"translation\": \"他说『是的』\"\n\n")
 	if translationSummary != "" {
 		sb.WriteString("[Episode reference — terminology / style guide]\n")
 		sb.WriteString(translationSummary)
@@ -237,7 +253,24 @@ func (c *Client) TranslateWithDubbingPlan(
 	}
 	var plan DubbingPlan
 	if err := json.Unmarshal([]byte(rawArgs), &plan); err != nil {
-		return DubbingPlan{}, fmt.Errorf("emit_dubbing_plan: decode tool args: %w (raw=%q)", err, truncForLog(rawArgs, 200))
+		// OPT-204-followup-1 (B1): single-pass recovery. The most
+		// common failure mode (observed in chapter 2 of job 154)
+		// is the LLM emitting unescaped ASCII " inside the
+		// translation field. tryRecoverDubbingPlanJSON does a
+		// regex-bounded fix and we retry ONCE. If the second
+		// attempt still fails we surface the original error so
+		// the caller falls back to the plain-text translate
+		// path — recovery must never turn a structural failure
+		// into silent corruption.
+		if fixed, ok := tryRecoverDubbingPlanJSON(rawArgs); ok {
+			if err2 := json.Unmarshal([]byte(fixed), &plan); err2 == nil {
+				observability.IncLLMRecoveredParse("dubbing_plan")
+			} else {
+				return DubbingPlan{}, fmt.Errorf("emit_dubbing_plan: decode tool args: %w (raw=%q)", err, truncForLog(rawArgs, 200))
+			}
+		} else {
+			return DubbingPlan{}, fmt.Errorf("emit_dubbing_plan: decode tool args: %w (raw=%q)", err, truncForLog(rawArgs, 200))
+		}
 	}
 	if strings.TrimSpace(plan.Translation) == "" {
 		return DubbingPlan{}, errors.New("emit_dubbing_plan: provider returned empty translation field")
@@ -263,4 +296,94 @@ func truncForLog(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen] + "..."
+}
+
+// dubbingPlanTranslationFieldRE matches the "translation" field value
+// in the raw tool-call arguments. It greedy-matches up to the next
+// `","` or `"}` so that an unterminated translation field (the LLM
+// dropped a closing quote because of a nested ASCII ") still gets
+// captured and cleaned in one pass.
+//
+// Anchored with `(?s)` so the value can span newlines — JSON allows
+// `\n` inside strings but providers occasionally emit literal LF.
+var dubbingPlanTranslationFieldRE = regexp.MustCompile(`(?s)"translation"\s*:\s*"(.*?)"\s*([,}])`)
+
+// tryRecoverDubbingPlanJSON attempts to repair a single class of
+// failure: ASCII double-quotes inside the translation field that
+// break the top-level JSON parse. Returns (fixed, true) when a
+// substitution was made AND a sanity check on the result passes,
+// (raw, false) otherwise. Never returns silently-corrupted JSON.
+//
+// Strategy:
+//  1. Use a non-greedy regex to find the translation field value.
+//  2. If the captured value contains zero embedded `"`, no repair
+//     is needed (the failure must be elsewhere — surface the original
+//     error instead of pretending we fixed it).
+//  3. Otherwise replace every embedded `"` with the Chinese
+//     typographic quote pair 「 / 」 alternating. This matches the
+//     prompt instruction and is reversible at the audio layer
+//     (the TTS adapter speaks them as inline emphasis breaks).
+//  4. Sanity check: the rebuilt string must json.Unmarshal into a
+//     map[string]any with a non-empty "translation" string. If not,
+//     return false so the caller surfaces the original error.
+//
+// This is deliberately conservative: we only attempt to fix the ONE
+// failure mode we've actually observed in production. Any other
+// structural issue (missing emotion block, malformed pacing enum,
+// trailing comma) gets the original parser error.
+func tryRecoverDubbingPlanJSON(raw string) (string, bool) {
+	match := dubbingPlanTranslationFieldRE.FindStringSubmatchIndex(raw)
+	if match == nil {
+		return raw, false
+	}
+	// match indices: 0,1 full match; 2,3 captured value; 4,5 delimiter.
+	valStart, valEnd := match[2], match[3]
+	original := raw[valStart:valEnd]
+	if !strings.Contains(original, `"`) {
+		return raw, false
+	}
+	// Replace ASCII " with alternating typographic 「 / 」. We use a
+	// simple alternation so the recovered text reads naturally:
+	//   he said "yes"  →  he said 「yes」
+	var cleaned strings.Builder
+	cleaned.Grow(len(original))
+	open := true
+	for _, r := range original {
+		if r == '"' {
+			if open {
+				cleaned.WriteRune('「')
+			} else {
+				cleaned.WriteRune('」')
+			}
+			open = !open
+			continue
+		}
+		cleaned.WriteRune(r)
+	}
+	fixed := raw[:valStart] + cleaned.String() + raw[valEnd:]
+	// Sanity check: the result must parse to a map AND retain the
+	// non-translation structural fields. A simple "translation is a
+	// string" check is not enough — if the regex greedily swallowed
+	// the rest of the JSON document (translation field was truncated
+	// without a closing `"`), the result would parse as one giant
+	// translation string with the emotion/pacing blocks consumed.
+	// Requiring `emotion` (object) AND `pacing` (string) to survive
+	// guarantees the recovery only succeeds on the actual failure mode
+	// we care about (mid-translation ASCII quotes), not generic JSON
+	// garbage.
+	var probe map[string]any
+	if err := json.Unmarshal([]byte(fixed), &probe); err != nil {
+		return raw, false
+	}
+	t, _ := probe["translation"].(string)
+	if strings.TrimSpace(t) == "" {
+		return raw, false
+	}
+	if _, ok := probe["emotion"].(map[string]any); !ok {
+		return raw, false
+	}
+	if _, ok := probe["pacing"].(string); !ok {
+		return raw, false
+	}
+	return fixed, true
 }
