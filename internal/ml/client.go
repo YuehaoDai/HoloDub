@@ -95,6 +95,14 @@ type TTSRequest struct {
 	// Both are zero on the first attempt.
 	PrevActualSec float64 `json:"prev_actual_sec,omitempty"`
 	PrevTextChars int     `json:"prev_text_chars,omitempty"`
+
+	// DubbingMeta is the OPT-204 structured prosody plan emitted by the
+	// translator LLM (see internal/llm/dubbing_plan.go::DubbingPlan).
+	// When non-nil, the ml-service TTS adapter converts it into
+	// IndexTTS2 emo_vector / emphasis_words / pause_after_ms; when nil,
+	// the adapter falls back to the legacy use_emo_text boolean.
+	// Forwarded verbatim — the Go side does not interpret the contents.
+	DubbingMeta map[string]any `json:"dubbing_meta,omitempty"`
 }
 
 type TTSResponse struct {

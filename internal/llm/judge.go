@@ -117,7 +117,16 @@ func judgeSystemPrompt(srcLang, tgtLang string) string {
 // silently. Never panics; observe-only callers should ignore errors —
 // a judge failure must NOT cause the segment to fail.
 func (c *Client) JudgeFidelity(ctx context.Context, args JudgeArgs) (*JudgeResult, error) {
-	if c.judgeModel == "" {
+	return c.judgeFidelityWithModel(ctx, args, c.judgeModel)
+}
+
+// judgeFidelityWithModel is the model-parametric inner used by both
+// JudgeFidelity (segment-level OPT-002) and RetranslateEnsemble (OPT-202
+// pairwise scoring). The override lets the ensemble path use a thinking-
+// class judge (e.g. kimi-k2.5) without mutating c.judgeModel, which would
+// race with concurrent JudgeFidelity callers from the regular pipeline.
+func (c *Client) judgeFidelityWithModel(ctx context.Context, args JudgeArgs, judgeModel string) (*JudgeResult, error) {
+	if judgeModel == "" {
 		return nil, nil
 	}
 	if c.baseURL == "" || c.apiKey == "" {
@@ -146,7 +155,7 @@ func (c *Client) JudgeFidelity(ctx context.Context, args JudgeArgs) (*JudgeResul
 		args.SrcLang, args.SrcText, args.TgtLang, args.TgtText)
 
 	payload := chatCompletionRequest{
-		Model:       c.judgeModel,
+		Model:       judgeModel,
 		Temperature: 0.1, // judges should be near-deterministic
 		Messages: []chatMessage{
 			{Role: "system", Content: judgeSystemPrompt(args.SrcLang, args.TgtLang)},

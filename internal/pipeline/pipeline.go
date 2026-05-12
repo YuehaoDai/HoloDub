@@ -133,6 +133,17 @@ func (s *Service) StartJob(ctx context.Context, jobID uint, requestedBy string) 
 }
 
 func (s *Service) RetryJob(ctx context.Context, jobID uint, stage models.JobStage, segmentIDs []uint, requestedBy string) error {
+	return s.retryJobWithHint(ctx, jobID, stage, segmentIDs, requestedBy, nil)
+}
+
+// DispatchSegmentRework satisfies rework.RetryJobAPI. The hint is
+// carried verbatim into the queue payload; when nil the behaviour is
+// identical to RetryJob.
+func (s *Service) DispatchSegmentRework(ctx context.Context, jobID uint, stage models.JobStage, segmentIDs []uint, requestedBy string, hint *models.ReworkHint) error {
+	return s.retryJobWithHint(ctx, jobID, stage, segmentIDs, requestedBy, hint)
+}
+
+func (s *Service) retryJobWithHint(ctx context.Context, jobID uint, stage models.JobStage, segmentIDs []uint, requestedBy string, hint *models.ReworkHint) error {
 	if stage == "" {
 		job, err := s.store.GetJob(ctx, jobID)
 		if err != nil {
@@ -148,14 +159,19 @@ func (s *Service) RetryJob(ctx context.Context, jobID uint, stage models.JobStag
 	if err := s.store.UpdateJobState(ctx, jobID, models.JobStatusQueued, stage, "", true); err != nil {
 		return err
 	}
+	reason := "manual_retry"
+	if hint != nil {
+		reason = "rework_engine"
+	}
 	return s.queue.Enqueue(ctx, models.TaskPayload{
 		JobID:           jobID,
 		Stage:           stage,
 		Attempt:         0,
 		SegmentIDs:      store.UniqueUint(segmentIDs),
 		RequestedBy:     requestedBy,
-		Reason:          "manual_retry",
+		Reason:          reason,
 		SkipAutoAdvance: true,
+		ReworkHint:      hint,
 	})
 }
 
@@ -718,8 +734,58 @@ func (s *Service) runTranslate(ctx context.Context, task models.TaskPayload) err
 
 	// translateOne translates a single segment and updates segments[idx] in place.
 	// contextWindow is the slice of the last N successfully translated segments.
+	//
+	// OPT-204: when s.cfg.DubbingPlanEnabled is true, the call goes
+	// through the strict-tool TranslateWithDubbingPlan and the
+	// structured prosody output is persisted on seg.Meta["dubbing"]
+	// so the IndexTTS2 adapter (PR-13) can consume it. On any
+	// dubbing-plan failure we fall back to plain-text translate
+	// rather than fail the segment — OPT-204 is a quality-of-life
+	// improvement, never a correctness lever.
 	translateOne := func(idx int, contextWindow []llm.ContextSegment, summary string) error {
 		targetSec := float64(segments[idx].DurationMs()) / 1000.0
+		if s.cfg.DubbingPlanEnabled {
+			plan, err := s.llm.TranslateWithDubbingPlan(
+				ctx,
+				job.SourceLanguage,
+				job.TargetLanguage,
+				segments[idx].SourceText,
+				targetSec,
+				charsPerSecHint,
+				contextWindow,
+				summary,
+			)
+			if err == nil {
+				segments[idx].TargetText = plan.Translation
+				segments[idx].Status = models.SegmentStatusTranslated
+				if segments[idx].Meta == nil {
+					segments[idx].Meta = map[string]any{}
+				}
+				// Persist the full plan as a sub-key on seg.Meta so
+				// the TTS adapter can read it without depending on
+				// the llm package; using a JSON-marshallable map
+				// matches the datatypes.JSONMap semantics.
+				segments[idx].Meta["dubbing"] = map[string]any{
+					"emotion": map[string]any{
+						"valence": plan.Emotion.Valence,
+						"arousal": plan.Emotion.Arousal,
+						"label":   plan.Emotion.Label,
+					},
+					"pacing":         plan.Pacing,
+					"emphasis_words": plan.EmphasisWords,
+					"pause_after_ms": plan.PauseAfterMs,
+				}
+				return nil
+			}
+			// Dubbing-plan call failed — log + fall through to
+			// plain-text path. Logged at WARN because consistent
+			// failures indicate the provider does not support the
+			// strict tool call (or the schema is being rejected),
+			// which an operator should see in dashboards.
+			slog.Warn("translate: dubbing-plan call failed, falling back to plain text",
+				"job_id", job.ID, "segment_id", segments[idx].ID, "error", err,
+			)
+		}
 		translated, err := s.llm.TranslateTextWithDuration(
 			ctx,
 			job.SourceLanguage,

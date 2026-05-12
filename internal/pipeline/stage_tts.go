@@ -68,7 +68,7 @@ func (s *Service) runTTSDuration(ctx context.Context, task models.TaskPayload) e
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			if err := s.processOneTTSSegment(ctx, job, segments, idx, isInitial, effectiveSummary); err != nil {
+			if err := s.processOneTTSSegmentWithHint(ctx, job, segments, idx, isInitial, effectiveSummary, task.ReworkHint); err != nil {
 				errMu.Lock()
 				if firstErr == nil {
 					firstErr = err
@@ -140,7 +140,24 @@ func (s *Service) runTTSDuration(ctx context.Context, task models.TaskPayload) e
 // summary prepended with the episode glossary + reference card). It is
 // passed through to RetranslateWithConstraint verbatim so the LLM sees
 // canonical terminology even on a single isolated retry.
+//
+// OPT-201 dual-path: when cfg.SegmentAgentEnabled is true, the per-
+// segment loop is delegated to runSegmentAgentV2 (internal/agents.Agent).
+// The legacy inline loop below is preserved verbatim until the 2-week
+// soak after L4 default-on (PR-6 deletes it). The two paths produce
+// byte-identical outputs given the same tool sequences — verified in
+// PR-5 L2 staging.
 func (s *Service) processOneTTSSegment(ctx context.Context, job *models.Job, segments []models.Segment, idx int, isInitial bool, translationSummary string) error {
+	return s.processOneTTSSegmentWithHint(ctx, job, segments, idx, isInitial, translationSummary, nil)
+}
+
+// processOneTTSSegmentWithHint is the rework-aware variant; the
+// SegmentAgent path threads `hint` through to V2WithHint, and the
+// legacy path simply ignores it (hint is only honoured by the agent).
+func (s *Service) processOneTTSSegmentWithHint(ctx context.Context, job *models.Job, segments []models.Segment, idx int, isInitial bool, translationSummary string, hint *models.ReworkHint) error {
+	if s.cfg.SegmentAgentEnabled {
+		return s.runSegmentAgentV2WithHint(ctx, job, segments, idx, isInitial, translationSummary, hint)
+	}
 	seg := &segments[idx]
 	voiceConfig := map[string]any{}
 	profile, err := s.store.ResolveVoiceProfileForSegment(ctx, job.ID, *seg)
@@ -280,6 +297,7 @@ func (s *Service) processOneTTSSegment(ctx context.Context, job *models.Job, seg
 			OutputRelPath:     outputRelPath,
 			PrevActualSec:     prevActualSec,
 			PrevTextChars:     prevTextChars,
+			DubbingMeta:       extractDubbingMeta(seg),
 		})
 		if err != nil {
 			return fmt.Errorf("tts segment %d (attempt %d): %w", seg.ID, attempt, err)
@@ -465,6 +483,7 @@ func (s *Service) processOneTTSSegment(ctx context.Context, job *models.Job, seg
 				MaxAllowedSec:     maxAllowedSec,
 				VoiceConfig:       voiceConfig,
 				OutputRelPath:     outputRelPath,
+				DubbingMeta:       extractDubbingMeta(seg),
 			})
 			if bestErr == nil {
 				response = bestResp

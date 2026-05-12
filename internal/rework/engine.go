@@ -26,6 +26,13 @@ import (
 type RetryJobAPI interface {
 	RetryJob(ctx context.Context, jobID uint, stage models.JobStage, segmentIDs []uint, requestedBy string) error
 	EnqueueEpisodeStage(ctx context.Context, episodeID uint, stage models.EpisodeStage, requestedBy, reason string) error
+	// DispatchSegmentRework is the OPT-407-followup-2 / OPT-201
+	// rework-aware dispatch. Unlike RetryJob it carries a ReworkHint
+	// into the worker queue payload so the SegmentAgent can apply
+	// stricter drift thresholds + record that it's running under a
+	// rework verdict. Implementations MAY fall back to RetryJob's
+	// behaviour when hint is nil (no rework context available).
+	DispatchSegmentRework(ctx context.Context, jobID uint, stage models.JobStage, segmentIDs []uint, requestedBy string, hint *models.ReworkHint) error
 }
 
 // Engine wires Decide() with the persistence + dispatch side effects.
@@ -301,10 +308,21 @@ func (e *Engine) execute(ctx context.Context, action Action) error {
 	}
 	switch action.Type {
 	case ActionSegmentRetry, ActionEscalateToThinking:
-		// Single-segment retry on tts_duration.
-		// RetryJob already calls ResetSegmentsForRerun for stage=tts_duration.
-		return e.api.RetryJob(ctx, action.JobID,
-			models.JobStage(action.Stage), action.SegmentIDs, "rework_engine")
+		// Single-segment retry on tts_duration. RetryJob already
+		// calls ResetSegmentsForRerun for stage=tts_duration. We
+		// pass the rework hint so the worker's SegmentAgent (when
+		// enabled) applies the stricter drift threshold + records
+		// the rework provenance in agent_decision log lines.
+		hint := &models.ReworkHint{
+			PrevVerdict:        "retry",
+			PrevReason:         action.SkipReason,
+			DriftThresholdHint: action.DriftThresholdHint,
+		}
+		if action.Type == ActionEscalateToThinking {
+			hint.PrevVerdict = "retry_thinking"
+		}
+		return e.api.DispatchSegmentRework(ctx, action.JobID,
+			models.JobStage(action.Stage), action.SegmentIDs, "rework_engine", hint)
 
 	case ActionReviseWeakestSegments:
 		// Chapter-level: re-translate the listed segments. RetryJob does

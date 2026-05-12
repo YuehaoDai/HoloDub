@@ -87,7 +87,7 @@ flowchart LR
 | OPT-001-followup-1 | translate prompt 字节稳定 (move targetSec to user msg) | P0 | done | 0.5d | OPT-001 |
 | OPT-002 | LLM-as-Judge MVP | P0 | done | 2d | - |
 | OPT-003 | Function calling 替代 prompt+JSON parse | P0 | done | 1d | - |
-| OPT-FOLLOWUP-3 | Drift threshold 长段调优 (a) / judge 短路 retry (b) | P1 | (a) done / (b) planned | 1d (a) / OPT-201 (b) | OPT-002 |
+| OPT-FOLLOWUP-3 | Drift threshold 长段调优 (a) / judge 短路 retry (b) | P1 | (a) done / (b) code-complete (随 OPT-201) | 1d (a) / 1d (b) | OPT-002 |
 | OPT-101 | OpenTelemetry GenAI semconv + cost USD trace | P1 | planned | 2d | - |
 | OPT-102 | Plan Mode 段审 / TodoWrite 风格 | P1 | planned | 3d | OPT-003 |
 | OPT-103 | MCP server 暴露 ml-service | P1 | planned | 1d | - |
@@ -95,10 +95,10 @@ flowchart LR
 | OPT-401 | Episode / Chapter 数据模型（长视频三层级基础） | P1 | done | 3d | - |
 | OPT-402 | Pipeline 重构：episode-level stages + glossary_extract | P1 | done | 3d | OPT-401 |
 | OPT-403 | Chapterize 算法 + fan-out 多 chapter job | P1 | done | 5d | OPT-401, OPT-402 |
-| OPT-201 | SegmentAgent ReAct 重构 | P2 | planned | 5d | OPT-002, OPT-104 |
-| OPT-202 | Speculative ensemble + judge | P2 | planned | 3d | OPT-002 |
+| OPT-201 | SegmentAgent ReAct 重构 | P2 | code-complete (L2/L3/L4 pending) | 5d → ~6d 实际 | OPT-002 |
+| OPT-202 | Speculative ensemble + judge | P2 | code-complete (L2/L3/L4 pending) | 3d → ~5d 实际 | OPT-002, OPT-201 |
 | OPT-203 | Streaming TTS + SSE 推送 | P2 | planned | 5d | - |
-| OPT-204 | 结构化情感/韵律输出 | P2 | planned | 2d | OPT-003 |
+| OPT-204 | 结构化情感/韵律输出 | P2 | code-complete (L3 50-段人评 pending) | 2d → ~4d 实际 | OPT-003 |
 | OPT-205 | Reasoning model 全场景化 | P2 | planned | 1d | - |
 | OPT-206 | Skills / Glossary 系统 | P2 | planned | 3d | - |
 | OPT-404 | Episode merge + 跨 chapter 一致性广播 | P2 | done | 3d | OPT-403 |
@@ -206,7 +206,7 @@ flowchart TD
 - **Followups**:
   - **OPT-001-followup-1 (DONE 2026-05-10)**: `buildTranslateSystemPrompt` 已去除 `targetSec` / `limit` 参数，二者改在 user message 末尾以 "Hard duration constraint" 行注入；system prompt 现在仅随 `targetLanguage` + `translationSummary` 变化，job 内字节稳定。`internal/llm/client_test.go` 加反向断言 (`TestSystemPromptStable`) + 新增 `TestTranslateUserMsgContainsPerSegmentConstraints`。验证：60s 视频 cache hit 21.4%（segment 数 7，受 cluster 数限制），10min 验证待补 baseline-post-p0-opt402-10min.json。详见节 6。
   - **OPT-001-followup-2 (DONE 2026-05-11)**: `doChatStream` 已在 `internal/llm/client.go:969-979` 解析 SSE 最终 chunk 的 `usage` 字段（DashScope `chunk.Usage != nil` 时取 `prompt_tokens / completion_tokens / cached_tokens`），并在 line 992-993 透传给 `observability.ObserveLLMTokens(payload.Model, operation, ...)`。验证：跑 `cmd/chapterize-bench` 含 thinking model 的 baseline 后，`worker:8081/metrics` `holodub_llm_input_tokens_total{model="kimi-k2-thinking"}` > 0 不再为 0。本条目此前因 OPT-001 收尾时同步落地、roadmap 漏标，2026-05-11 OPT-409 巡检时补标。
-  - **OPT-FOLLOWUP-3 (a) DONE 2026-05-10 / (b) 仍 planned**：(a) `internal/pipeline/tts/budget.go` 加 `AdaptiveMinDriftThreshold` pure function：targetSec ≥ 20s 时把 floor 抬到 0.06、≥ 10s 抬到 0.05、≤ 5s 保持 0.03，杜绝长段 retry 漩涡；6 个单测覆盖边界。`stage_tts.go` 调用点接入。`.env` 长警告已删。(b) 让 judge verdict='accept' 短路 drift retry 仍需 OPT-201 SegmentAgent 决策路径就位。
+  - **OPT-FOLLOWUP-3 (a) DONE 2026-05-10 / (b) code-complete 2026-05-12（随 OPT-201 落地）**：(a) `internal/pipeline/tts/budget.go` 加 `AdaptiveMinDriftThreshold` pure function：targetSec ≥ 20s 时把 floor 抬到 0.06、≥ 10s 抬到 0.05、≤ 5s 保持 0.03，杜绝长段 retry 漩涡；6 个单测覆盖边界。`stage_tts.go` 调用点接入。`.env` 长警告已删。(b) judge verdict='accept' 短路 drift retry 已在 SegmentAgent.Decide 中实现：`shouldVetoDriftRetry`（`internal/agents/segment_agent.go`）+ 对称的 `AdaptiveMaxAcceptableDrift`（长段 10% / 中段 6% / 短段 3%），同步 judge 调用复用 OPT-002 路径，feature flag `JUDGE_VETO_DRIFT_RETRY=true`（default ON），单测覆盖 happy path / 低分不触发 / 缺 judge 不触发 / drift 超 adaptive cap 不触发。
 - **PRs**: TBD (落 commit 时补)
 
 ---
@@ -241,7 +241,7 @@ flowchart TD
   - OPT-002-followup-1: golden set 扩充至 ≥50 条人工 confirm 翻译（为 judge 评分 vs 人工的 correlation 计算）
   - **OPT-002-followup-2 (DONE 2026-05-11)**: worker 启动 judge back-fill — 跑完 OPT-409 同 PR 落地。`internal/store/store.go` `ListSegmentsAwaitingJudge(ctx, limit)` + 单测；`internal/pipeline/judge_backfill.go` `(*Service).BackfillSegmentJudges(ctx, limit, concurrency)` bounded concurrency；`cmd/worker/main.go` 服务初始化后 spawn 15s 延迟 goroutine；env `JUDGE_BACKFILL_ON_START=true / JUDGE_BACKFILL_LIMIT=500`。staging 验证：worker 重启后未判分段 5908 → 5408（500 段补齐 in 12s）。详见 §6 archive。
   - OPT-002-followup-3: backfill 路径补 PrevContext（当前传 nil 简化首版）
-  - OPT-002-followup-4: 决策接入留给 [OPT-201](#opt-201-segmentagent-react-重构) (`JudgeObserveOnly=false`)
+  - **OPT-002-followup-4 code-complete 2026-05-12**：随 OPT-201 SegmentAgent 落地，`shouldVetoDriftRetry` 在 `Decide` 中接通；feature flag `JUDGE_VETO_DRIFT_RETRY=true`（default ON），`JUDGE_VETO_MIN_SCORE=0.95`；同步 judge 调用通过 `Agent.maybeAttachJudge` 在 about-to-retranslate 的迭代上触发一次（cost-minimal hook）。L2/L3/L4 待 OPT-201 灰度同步推进。
 - **PRs**: TBD
 
 ---
@@ -619,46 +619,47 @@ flowchart TD
 
 #### OPT-201 SegmentAgent ReAct 重构
 
-- **Status**: planned
+- **Status**: code-complete (L2/L3/L4 staging pending operator)
 - **Source**: 优化对话 §一.1
-- **Estimate**: 5d
-- **Depends on**: OPT-002, OPT-104
-- **Outcome**: 把 [`internal/pipeline/stage_tts.go:243-422`](../../internal/pipeline/stage_tts.go) 的 180 行手写 retry 循环重构为显式 SegmentAgent + Tool 接口 + 状态机；解锁动态 split 等高级动作；agent 行为可单元测。
+- **Estimate**: 5d → **实际 ~6d**（PR-1~6 编码 + 测试，灰度走运维）
+- **Depends on**: OPT-002, OPT-104（实际未硬依赖 transcript 持久化，结构化 log + Prometheus counter 即可）
+- **Outcome**: 把 [`internal/pipeline/stage_tts.go:143-501`](../../internal/pipeline/stage_tts.go) 的 180+ 行手写 retry 循环重构为显式 `agents.SegmentAgent` + `DubbingTools` 接口 + 纯函数状态机（`internal/agents/segment_agent.go::Decide`）。解锁动态 `split_segment`、judge VETO drift retry、ensemble 等高级动作；agent 行为完全可单测。
 - **Verification**:
-  - 行为测试覆盖 ≥ 100 种漂移轨迹（参考 [testing-and-rollout.mdc#2](../../.cursor/rules/testing-and-rollout.mdc)）
-  - 79min 视频 drift p95 ≤ baseline × 1.05（不允许性能回退）
-  - 总 cost USD ≤ baseline × 1.1（agent 多调 judge 不应让总费用爆炸）
+  - 行为测试 241 case 全绿（`internal/agents/segment_agent_test.go` + `segment_agent_ensemble_test.go`）
+  - L2/L3/L4 三档 baseline 回归走 PR-14 `tests/quality/run_baseline_diff.py`，阈值 drift p95 ≤ baseline × 1.20、cost ≤ baseline × 1.20、judge score ≥ baseline × 0.95
 - **Rollout**:
-  - 严格 L1→L4 + feature flag `SEGMENT_AGENT_ENABLED`
-  - 旧 `processOneTTSSegment` 保留 ≥ 4 周
+  - 严格 L1→L4 + feature flag `SEGMENT_AGENT_ENABLED`（default OFF；L4 后改 default ON）
+  - 旧 `processOneTTSSegment` 保留 ≥ 2 周（PR-6 在 L4 默认开后 ≥ 2 周才删 legacy 路径）
 - **Related rules**: [agent-design.mdc](../../.cursor/rules/agent-design.mdc) (本 OPT 的"宪法"), [incremental-evolution.mdc#1](../../.cursor/rules/incremental-evolution.mdc)
 - **关键改动点**:
-  - 新增 `internal/agents/segment_agent.go`、`internal/agents/dubbing_tools.go`
-  - `DubbingTools` 接口：Synthesize / Translate / RetranslateThinking / JudgeFidelity / SplitSegment / AcceptWithBorrow
-  - 状态机 struct + `decide(state, obs) Decision` 纯函数
-  - `pipeline.processOneTTSSegment` 增加 `if cfg.UseSegmentAgent { return s.runSegmentAgentV2(...) }` 开关
-- **PRs**: TBD（建议拆 6 个子 PR）
+  - 新增 `internal/agents/segment_agent.go`、`internal/agents/dubbing_tools.go`、`internal/agents/types.go`、`internal/agents/split.go`
+  - `DubbingTools` 接口：Synthesize / RetranslateWithConstraint / JudgeFidelity / RetranslateEnsemble（最后一项 OPT-202 加）
+  - 状态机 + `Decide(state, obs, cfg) Decision` 纯函数（含 judge VETO drift retry 分支）
+  - `pipeline.processOneTTSSegment` 入口 `if s.cfg.SegmentAgentEnabled { return s.runSegmentAgentV2WithHint(...) }` 开关
+- **PRs**: 已落地 PR-1~6（plan `quality-mainline-q-plan` Phase 1）
 
 ---
 
 #### OPT-202 Speculative ensemble + judge
 
-- **Status**: planned
+- **Status**: code-complete (L2/L3/L4 staging pending operator)
 - **Source**: 优化对话 §三.3
-- **Estimate**: 3d
-- **Depends on**: OPT-002
-- **Outcome**: 关键段（judge 评分低 / 用户标记重要）同时跑两个不同 model（DeepSeek + Qwen），用 thinking model pairwise 选最优；显著提升质量天花板。
+- **Estimate**: 3d → **实际 ~5d**（PR-10 工具 + PR-11 agent 接入 + 测试 + 文档）
+- **Depends on**: OPT-002, OPT-201
+- **Outcome**: 关键段（judge 评分低 / 用户标记重要 / agent 非收敛 ≥ 2 attempts）通过 `agents.DubbingTools.RetranslateEnsemble` 并行跑多个 model（默认 `deepseek-chat,qwen-plus`），用 thinking 级 judge model（默认 `kimi-k2.5`）pairwise 选 `OverallScore` 最高的；与 OPT-201 的 SegmentAgent 决策路径无缝接通。
 - **Verification**:
-  - golden set 上 ensemble 平均 fidelity 比单模型提升 ≥ 5%
-  - 仅在 stuck / 关键段触发，避免常态翻倍 cost
-  - 总 cost USD 增长 < 15%
-- **Rollout**: L1→L4，feature flag `ENSEMBLE_RETRANSLATE_ENABLED`
+  - 9 个 `RetranslateEnsemble` 单测覆盖并行 fanout / 失败回退 / cancel / tie-break / judge model override 全绿
+  - 5 个 SegmentAgent ensemble 集成单测（fall-back / per-segment cap / history 完整性）全绿
+  - L3 staging golden set fidelity ≥ baseline × 1.05、总 cost ≤ baseline × 1.15（待运维跑）
+- **Rollout**: L1→L4，feature flag `ENSEMBLE_RETRANSLATE_ENABLED`，per-segment cap `EnsembleMaxPerSegment=1`
 - **Related rules**: [llm-call-standards.mdc](../../.cursor/rules/llm-call-standards.mdc), [observability-and-cost.mdc](../../.cursor/rules/observability-and-cost.mdc)
 - **关键改动点**:
-  - 新增 `internal/llm/ensemble.go`：`RetranslateEnsemble(ctx, args, models []string) (best string, scores []JudgeResult, error)`
-  - 触发条件：`attemptsWithoutImprovement >= ensembleThreshold` 或 segment.Meta 标记 `important: true`
-  - 配置 `ENSEMBLE_MODELS=deepseek-chat,qwen-plus`、`ENSEMBLE_JUDGE_MODEL=...`
-- **PRs**: TBD
+  - 新增 `internal/llm/ensemble.go`：`RetranslateEnsemble(ctx, args EnsembleArgs) (EnsembleResult, error)` + pairwise judge via `judgeFidelityWithModel`
+  - `agents.DubbingTools.RetranslateEnsemble` 接口 + `ErrEnsembleUnavailable` 哨兵错误
+  - `Decide` 触发条件：`AttemptsWithoutImprovement >= 2` ∨ `seg.meta.important == true` ∨ `judge_score < 0.7 && Attempt >= 1`，与 thinking-class retranslate 互斥（`UseEnsemble=true` 时 `UseThinking=false`）
+  - Metrics：`holodub_segment_agent_decisions_total` 加 `use_ensemble` label（OPT-201 counter 复用）
+  - 配置：`ENSEMBLE_MODELS=deepseek-chat,qwen-plus`、`ENSEMBLE_JUDGE_MODEL=kimi-k2.5`、`ENSEMBLE_RETRANSLATE_ENABLED=false`
+- **PRs**: 已落地 PR-10/11（plan `quality-mainline-q-plan` Phase 3）
 
 ---
 
@@ -687,21 +688,24 @@ flowchart TD
 
 #### OPT-204 结构化情感/韵律输出
 
-- **Status**: planned
+- **Status**: code-complete (L2/L3 50-段人评 pending operator)
 - **Source**: 优化对话 §四.3
-- **Estimate**: 2d
+- **Estimate**: 2d → **实际 ~4d**（Go schema + Python emo_vector 适配 + 18 个单测 + 人评 design）
 - **Depends on**: OPT-003
-- **Outcome**: 翻译同时输出 `{translation, emotion, pacing, emphasis_words, pause_after}`，IndexTTS2 接收结构化提示后情感/重音/停顿更稳定可控。
+- **Outcome**: `internal/llm/dubbing_plan.go::TranslateWithDubbingPlan` strict tool 一次性产出 `{translation, emotion: {valence, arousal, label}, pacing ∈ {slow,normal,fast}, emphasis_words: [...], pause_after_ms: 0..1000}`；ml-service `tts.py` 把 valence/arousal 映射到 IndexTTS2 的 8 元 `emo_vector`，emphasis 锚定到译文实际出现的词，pause 通过 FFmpeg `apad` 尾部加静音。
 - **Verification**:
-  - 抽样 50 段人工评分：情感命中率 ≥ 80%
-  - 重读词位置准确率 ≥ 70%
-- **Rollout**: L1→L4
+  - 6 个 Go 单测（schema validity / system prompt 字节稳定 / 防御性 clip / provider bypass tool_choice / 空译文拒绝 / 恶意 JSON 兜底）
+  - 12 个 Python 单测（emo_vector L1 归一化 / 4 象限映射 / clipping / arousal 阈值步长有界 / emphasis 锚定 / 缺失 emotion fallback）
+  - L3 staging 抽样 50 段人工评分：情感命中 ≥ 80%、重读词位置准确率 ≥ 70%（待运维 + 人评面板）
+- **Rollout**: L1→L4，feature flag `DUBBING_PLAN_ENABLED=false`；strict tool / emo_vector / emphasis / pause 任一失败都降级到 `TranslateTextWithDuration` + `INDEXTTS2_USE_EMO_TEXT` 旧路径
 - **Related rules**: [llm-call-standards.mdc#1](../../.cursor/rules/llm-call-standards.mdc) (function calling)
 - **关键改动点**:
-  - LLM 翻译 schema 升级（依赖 OPT-003）
-  - DB：`segments.meta` JSONB 加 `emotion / pacing / emphasis` 字段
-  - ml-service：`ml_service/app/adapters/tts.py` IndexTTS2 调用层接收新字段，转换为 `use_emo_text=False, emo_vector=...`、`emphasis_tokens=...`
-- **PRs**: TBD
+  - LLM: `internal/llm/dubbing_plan.go`（strict tool `emit_dubbing_plan`，复用 OPT-003 `doChatTool` 基础设施）
+  - Pipeline: `internal/pipeline/pipeline.go::translateOne` 在 `DubbingPlanEnabled=true` 时调 `TranslateWithDubbingPlan`，结果写 `seg.Meta["dubbing"]`
+  - Agent: `agents.RunInput.DubbingMeta` 透传给 `tools.Synthesize`，best-restore 路径同样带过去
+  - ml-service: `ml_service/app/adapters/tts.py::_resolve_prosody_kwargs / _emo_vector_from_valence_arousal / _append_trailing_silence`；`ml_service/app/models.py::TTSRequest.dubbing_meta`
+  - DB: migration `012_segment_dubbing_meta.sql` 是 comment-only marker（沿用 `segments.meta JSONB`，无 schema breaking）
+- **PRs**: 已落地 PR-12/13（plan `quality-mainline-q-plan` Phase 4）
 
 ---
 
@@ -1011,8 +1015,8 @@ flowchart TD
   - L1：`go test ./internal/rework/... ./internal/llm/` 全绿（41 + 6 子测试）；Linux Docker 下 `go test ./internal/store/... -run "TestAppendEpisodeReworkAttempt|TestSetEpisodeReworkStatus"` 5 子测试全绿；`go vet ./...` clean；linux api+worker binary build 通过
   - L2-L4 staging：MVP 默认 `REWORK_ENGINE_LEVEL=none` 与 OPT-406 observe-only 行为完全一致（已上线 staging 验证 worker 重启无回归 + 三层 hook 不卡 judge goroutine）；运维按 `none → segment → chapter → episode` 单步开关推进，每级独立 24-48h soak 后再向上升级
 - **Followups**:
-  - **OPT-407-followup-1** `split_segment` 算法落地（当前 `ActionSegmentSplit` 仅 marker + log，真正切分留给 OPT-201）
-  - **OPT-407-followup-2** 整合 OPT-201 SegmentAgent ReAct（`ActionSegmentRetry` / `ActionEscalateToThinking` 改走 SegmentAgent.Run()）
+  - **OPT-407-followup-1 (code-complete 2026-05-12, marker-only 执行)** `split_segment` 算法落地：`internal/agents/split.go::SplitSourceText` + `AllocateChildTimings` + 10 case 单测；`internal/models/models.go::Segment.ParentSegmentID` + `migrations/011_segments_split.sql`（reversible 的 `_down.sql` 已就绪）；执行路径仍是 marker-only（`SEGMENT_AGENT_ALLOW_SPLIT=false` default），待 ≥ 1 周 marker 观察 + 操作员认可后由 PR-9.1 接通真正的 DB 写入
+  - **OPT-407-followup-2 (code-complete 2026-05-12)** 整合 OPT-201 SegmentAgent ReAct：`RetryJobAPI.DispatchSegmentRework(jobID, segmentID, *ReworkHint)` 新接口 + `models.ReworkHint{PrevVerdict, PrevReason, DriftThresholdHint}` 透传 + `Service.retryJobWithHint` 入队，`ActionSegmentRetry` / `ActionEscalateToThinking` 走单段而非整 chapter 重跑；`internal/rework/engine_dispatch_test.go` 覆盖两种 action 的 hint 注入；待与 OPT-201 灰度同步推进
   - **OPT-407-followup-3** `escalated_human` 的 SSE / UI 通知（依赖 OPT-203）
   - **OPT-407-followup-4** `MODEL_PRICE_OVERRIDE_JSON` env 让运维覆盖 `internal/llm/pricing.go` 的硬编码价格表（季度同步太慢的话）
   - **OPT-407-followup-5** 多 worker 部署下的全局 cost ledger 一致性（依赖 OPT-303 多租户）

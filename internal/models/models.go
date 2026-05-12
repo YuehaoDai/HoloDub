@@ -230,6 +230,11 @@ type Segment struct {
 	// JudgeMeta carries the full structured verdict (issues, sub-scores).
 	JudgeScore         *float64          `json:"judge_score,omitempty" gorm:"type:numeric"`
 	JudgeMeta          datatypes.JSON    `json:"judge_meta,omitempty" gorm:"type:jsonb"`
+	// ParentSegmentID is the OPT-407-followup-1 split provenance link.
+	// Non-nil when this row was produced by splitting another segment.
+	// Used by the SegmentAgent's split_segment decision to record
+	// parent/child relationships for audit + future re-merge logic.
+	ParentSegmentID    *uint             `json:"parent_segment_id,omitempty" gorm:"index"`
 	CreatedAt          time.Time         `json:"created_at"`
 	UpdatedAt          time.Time         `json:"updated_at"`
 }
@@ -303,6 +308,37 @@ type TaskPayload struct {
 	// rejects payloads that set both.
 	EpisodeID    uint         `json:"episode_id,omitempty"`
 	EpisodeStage EpisodeStage `json:"episode_stage,omitempty"`
+
+	// ReworkHint: OPT-407-followup-2 / OPT-201 inline rework hint.
+	// When set (non-zero) the worker forwards these signals into the
+	// SegmentAgent's Config so the rework attempt uses stricter drift
+	// thresholds + records that it's running under a rework verdict.
+	// Empty / nil = ordinary first-time run (no hint).
+	ReworkHint *ReworkHint `json:"rework_hint,omitempty"`
+}
+
+// ReworkHint carries OPT-407 closed-loop rework signals from the
+// engine into the worker that re-runs tts_duration on a single segment.
+// All fields are optional; absent values fall back to the agent's
+// normal configuration.
+type ReworkHint struct {
+	// PrevVerdict is the LLM judge verdict that triggered this rework
+	// (typically "retry"). Used by the agent as a slog field and as a
+	// gate for stricter drift thresholds.
+	PrevVerdict string `json:"prev_verdict,omitempty"`
+
+	// PrevReason is the human-readable rework reason (e.g.
+	// "drift_override (orig_verdict=accept drift_sec=+0.50 ...)"). Plumbed
+	// to logs so operators can trace back from an agent_decision log
+	// line to the rework that triggered it.
+	PrevReason string `json:"prev_reason,omitempty"`
+
+	// DriftThresholdHint overrides the agent's drift threshold for
+	// this rework. Set by rework.Decide (DriftThresholdHint: 0.05) so
+	// the rework agent aims for a tighter target than the first-pass
+	// attempt — the previous attempt already passed the looser bar.
+	// 0 = no override.
+	DriftThresholdHint float64 `json:"drift_threshold_hint,omitempty"`
 }
 
 type SegmentDraft struct {

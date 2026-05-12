@@ -285,6 +285,96 @@ type Config struct {
 	// TTSConcurrency: max parallel TTS requests per job (1=sequential, 2+=parallel).
 	TTSConcurrency int
 
+	// JudgeVetoDriftRetry: OPT-002-followup-4 / OPT-FOLLOWUP-3(b).
+	// true = the SegmentAgent calls the judge synchronously when it
+	// would otherwise retranslate due to drift, and skips the retry
+	// if the judge gave verdict=accept + score ≥ JudgeVetoMinScore AND
+	// |drift| ≤ AdaptiveMaxAcceptableDrift(targetSec). false = legacy
+	// drift-only behaviour (segment is retranslated regardless of
+	// what the judge said).
+	//
+	// Defaults to true; only effective when JudgeModel is also set
+	// (otherwise the agent has no judge to consult).
+	//
+	// Why default true: the followup has been observed-only since
+	// OPT-002-followup-3 (CHANGELOG v1.4.x); production telemetry
+	// supports the flip. Operators can disable per-job via env
+	// JUDGE_VETO_DRIFT_RETRY=false.
+	JudgeVetoDriftRetry bool
+
+	// JudgeVetoMinScore: minimum judge score required to honour a VETO.
+	// Default 0.95.
+	JudgeVetoMinScore float64
+
+	// SegmentAgentAllowSplit: OPT-407-followup-1 / OPT-201 feature flag.
+	// true = the SegmentAgent's split_segment decision actually splits
+	// the segment (writes new rows + reassigns ordinals + marks parent
+	// status=split). false = decision is logged as a marker only — the
+	// MVP rollout stays in observe-only mode until the operator confirms
+	// the split heuristics behave on real episodes. Default false.
+	SegmentAgentAllowSplit bool
+
+	// SegmentAgentEnabled: OPT-201 feature flag. true = the per-segment
+	// TTS retry loop runs through internal/agents.Agent.Run (ReAct
+	// state machine + pure Decide function). false = the legacy 180-line
+	// for-loop in processOneTTSSegment runs unchanged. Default false
+	// during rollout; flipped to true at L4 once the 79min episode
+	// baseline shows drift p95 ≤ legacy × 1.05 and cost ≤ legacy × 1.10
+	// (see docs/roadmap/optimization-roadmap.md OPT-201 verification).
+	//
+	// Env: SEGMENT_AGENT_ENABLED (true/false, case-insensitive).
+	//
+	// Why a boolean (not a percentage rollout): the agent and legacy
+	// paths produce byte-identical outputs in our parity tests (L2),
+	// so flipping the flag is the cleanest signal. Per-job overrides
+	// (for a single canary episode) live on Job.config in the future
+	// PR — out of scope here.
+	SegmentAgentEnabled bool
+
+	// EnsembleRetranslateEnabled: OPT-202 feature flag. true = when the
+	// SegmentAgent decides a single-model retranslate is unlikely to
+	// converge (attempts_without_improvement ≥ 2 OR seg.meta.important
+	// OR judge_score < 0.7), it fans out to internal/llm.RetranslateEnsemble
+	// across EnsembleModels and picks the best by judge OverallScore.
+	// false = legacy single-model retranslate path only. Default false
+	// during rollout; flipped to true after the L3 golden-set fidelity
+	// regression confirms +5% mean fidelity at < 15% cost increase.
+	//
+	// Env: ENSEMBLE_RETRANSLATE_ENABLED.
+	EnsembleRetranslateEnabled bool
+
+	// EnsembleModels is the comma-separated list of models that
+	// RetranslateEnsemble fans out to. Order matters because tie-breaks
+	// favour the lower index (deterministic output across reruns).
+	// Default: "deepseek-chat,qwen-plus" — both share OPT-001 prompt
+	// caching so the per-call cost is bounded; thinking-class models
+	// (kimi-k2.5) are intentionally NOT in the default list to keep
+	// the fanout cost predictable.
+	//
+	// Env: ENSEMBLE_MODELS.
+	EnsembleModels []string
+
+	// DubbingPlanEnabled (OPT-204) flips the translate-stage call from
+	// the plain-text TranslateTextWithDuration to the strict-tool
+	// TranslateWithDubbingPlan, which emits translation + emotion +
+	// pacing + emphasis_words + pause_after_ms in one go. The
+	// structured output is persisted on seg.Meta["dubbing"] for the
+	// IndexTTS2 adapter (PR-13) to consume. Default false during
+	// rollout; the plain-text translate path stays fully functional
+	// and is what the SegmentAgent's retranslate loops continue to
+	// use until OPT-204 / IndexTTS2 adapter ships.
+	//
+	// Env: DUBBING_PLAN_ENABLED.
+	DubbingPlanEnabled bool
+
+	// EnsembleJudgeModel is the model used to score ensemble candidates
+	// pairwise. Defaults to "kimi-k2.5" (thinking-class) because the
+	// candidates are typically close in quality and a weak judge cannot
+	// reliably rank them. Empty string falls back to JudgeModel.
+	//
+	// Env: ENSEMBLE_JUDGE_MODEL.
+	EnsembleJudgeModel string
+
 	// WorkerMetricsAddr is the listen address for the worker's /metrics
 	// endpoint. Default ":8081"; set to empty string to disable. Worker
 	// emits its own LLM token / cost / cache hit metrics that are NOT
@@ -463,6 +553,32 @@ func Load() (Config, error) {
 	cfg.SegmentReviewUseTools, err = getEnvBool("SEGMENT_REVIEW_USE_TOOLS", false)
 	if err != nil {
 		return Config{}, fmt.Errorf("parse SEGMENT_REVIEW_USE_TOOLS: %w", err)
+	}
+	cfg.SegmentAgentEnabled, err = getEnvBool("SEGMENT_AGENT_ENABLED", false)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse SEGMENT_AGENT_ENABLED: %w", err)
+	}
+	cfg.JudgeVetoDriftRetry, err = getEnvBool("JUDGE_VETO_DRIFT_RETRY", true)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse JUDGE_VETO_DRIFT_RETRY: %w", err)
+	}
+	cfg.JudgeVetoMinScore, err = getEnvFloat("JUDGE_VETO_MIN_SCORE", 0.95)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse JUDGE_VETO_MIN_SCORE: %w", err)
+	}
+	cfg.SegmentAgentAllowSplit, err = getEnvBool("SEGMENT_AGENT_ALLOW_SPLIT", false)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse SEGMENT_AGENT_ALLOW_SPLIT: %w", err)
+	}
+	cfg.EnsembleRetranslateEnabled, err = getEnvBool("ENSEMBLE_RETRANSLATE_ENABLED", false)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse ENSEMBLE_RETRANSLATE_ENABLED: %w", err)
+	}
+	cfg.EnsembleModels = getEnvList("ENSEMBLE_MODELS", []string{"deepseek-chat", "qwen-plus"})
+	cfg.EnsembleJudgeModel = getEnv("ENSEMBLE_JUDGE_MODEL", "kimi-k2.5")
+	cfg.DubbingPlanEnabled, err = getEnvBool("DUBBING_PLAN_ENABLED", false)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse DUBBING_PLAN_ENABLED: %w", err)
 	}
 
 	cfg.JudgeModel = getEnv("JUDGE_MODEL", "")

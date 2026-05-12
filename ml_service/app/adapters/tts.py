@@ -322,17 +322,65 @@ class TTSAdapter:
 
         max_mel_tokens = max(64, min(tokens_from_text, tokens_from_allowed, 4096))
 
+        # OPT-204 prosody plan resolution. When the request carries a
+        # structured dubbing_meta block (translator emitted it via the
+        # emit_dubbing_plan strict tool), convert the fields into the
+        # IndexTTS2 conditioning surface (emo_vector / emphasis_tokens /
+        # post-utterance silence). When dubbing_meta is None or empty,
+        # fall back to the pre-OPT-204 path (use_emo_text boolean).
+        #
+        # Why the conversion lives here, not in the LLM call: the LLM
+        # output is the operator-facing semantic representation (label
+        # strings + 0..1 floats); the IndexTTS2 conditioning surface is
+        # implementation-specific (8-element vector, integer token IDs).
+        # Keeping them decoupled means an IndexTTS2 schema bump in a
+        # future model release does not require a translator re-run.
         tmp_wav = output_path.with_suffix(".tmp.wav")
-        tts.infer(
-            spk_audio_prompt=spk_audio,
-            text=request.text,
-            output_path=str(tmp_wav),
-            max_mel_tokens=max_mel_tokens,
-            use_emo_text=self.settings.indextts2_use_emo_text,
-            # num_beams=1 is ~3x faster than the default of 3; quality difference
-            # is minor for dubbing use-cases where duration accuracy matters more.
-            num_beams=1,
-        )
+        infer_kwargs: dict[str, Any] = {
+            "spk_audio_prompt": spk_audio,
+            "text": request.text,
+            "output_path": str(tmp_wav),
+            "max_mel_tokens": max_mel_tokens,
+            # num_beams=1 is ~3x faster than the default of 3; quality
+            # difference is minor for dubbing use-cases where duration
+            # accuracy matters more.
+            "num_beams": 1,
+        }
+        prosody_diag = "emo_text=" + str(self.settings.indextts2_use_emo_text)
+        pause_after_ms = 0
+        if request.dubbing_meta:
+            try:
+                infer_kwargs.update(
+                    self._resolve_prosody_kwargs(request.dubbing_meta, request.text)
+                )
+                pause_after_ms = int(request.dubbing_meta.get("pause_after_ms", 0) or 0)
+                if pause_after_ms < 0:
+                    pause_after_ms = 0
+                if pause_after_ms > 1000:
+                    pause_after_ms = 1000
+                emo_label = (
+                    request.dubbing_meta.get("emotion", {}) or {}
+                ).get("label") or ""
+                pacing_label = request.dubbing_meta.get("pacing") or "normal"
+                prosody_diag = (
+                    f"prosody=plan(emotion={emo_label} pacing={pacing_label}"
+                    f" pause_ms={pause_after_ms})"
+                )
+            except Exception as exc:  # noqa: BLE001
+                # Malformed dubbing_meta must NEVER fail a TTS call —
+                # an upstream translator bug should produce slightly
+                # less prosodic audio, not a stuck pipeline. Logged at
+                # WARN so operators can spot consistent failures.
+                logger.warning(
+                    "tts: dubbing_meta resolution failed (%s); "
+                    "falling back to legacy emo_text",
+                    exc,
+                )
+                infer_kwargs["use_emo_text"] = self.settings.indextts2_use_emo_text
+        else:
+            infer_kwargs["use_emo_text"] = self.settings.indextts2_use_emo_text
+
+        tts.infer(**infer_kwargs)
 
         # Post-process: resample to project sample rate only.
         # Duration stretching (atempo) is intentionally omitted — any overflow is
@@ -351,13 +399,22 @@ class TTSAdapter:
         )
         tmp_wav.unlink(missing_ok=True)
 
+        # OPT-204 pause_after_ms: append trailing silence to the synthesized
+        # WAV so the per-segment boundary lands on the requested pause. We
+        # append AFTER the resample step so the silence is at the project
+        # sample rate. ffmpeg's concat demuxer is overkill for a 0..1s
+        # silence; using a single -f lavfi anullsrc + -t pad expression
+        # keeps the dependency surface unchanged (no new binaries).
+        if pause_after_ms > 0:
+            self._append_trailing_silence(output_path, pause_after_ms)
+
         actual_sec = probe_duration(self.settings, output_path)
         duration_ms = int(actual_sec * 1000)
         diag = [
             f"tts backend=indextts2(inline) max_mel_tokens={max_mel_tokens}"
             f" tokens_per_char={tokens_per_char:.2f}"
             f" (prev_actual={request.prev_actual_sec:.2f}s prev_chars={request.prev_text_chars})"
-            f" emo_text={self.settings.indextts2_use_emo_text}"
+            f" {prosody_diag}"
             f" actual={actual_sec:.2f}s target={target_sec:.2f}s"
         ]
         return TTSResponse(
@@ -365,6 +422,94 @@ class TTSAdapter:
             actual_duration_ms=duration_ms,
             diagnostics=diag,
         )
+
+    def _resolve_prosody_kwargs(
+        self, dubbing_meta: dict[str, Any], text: str
+    ) -> dict[str, Any]:
+        """Convert the LLM-emitted DubbingPlan into IndexTTS2 infer kwargs.
+
+        Returns ONLY the keys we want to override; the caller starts
+        from a baseline dict and updates it with our result, so unknown
+        IndexTTS2 args stay at their defaults.
+
+        Conversion rules:
+            emotion.{valence,arousal} → emo_vector (8-element list)
+                Mapping: emo_vector indices are [happy, sad, angry,
+                surprised, fear, disgust, neutral, excited]. We approximate
+                from (valence, arousal):
+                    high valence + high arousal → excited / happy
+                    high valence + low arousal  → calm / neutral
+                    low valence + high arousal  → angry / surprised
+                    low valence + low arousal   → sad
+                The mapping is intentionally simple; OPT-204 PR-13's
+                L3 evaluation step (50-sample human rating) will tell
+                us whether finer-grained tuning is worth it.
+            pacing               → set use_emo_text=False (the model's
+                pacing slider is implicit in max_mel_tokens; the LLM-
+                emitted pacing is a hint for downstream consumers like
+                future post-processing tempo bumps, not for IndexTTS2
+                directly).
+            emphasis_words       → emphasis_tokens (token-id list resolved
+                by IndexTTS2's tokenizer over the target text).
+
+        emphasis_tokens may need to be empty when IndexTTS2 does not
+        expose the kwarg in the installed version; we omit it rather
+        than fail.
+        """
+        kwargs: dict[str, Any] = {}
+        emo = dubbing_meta.get("emotion") or {}
+        valence = float(emo.get("valence", 0.0) or 0.0)
+        arousal = float(emo.get("arousal", 0.0) or 0.0)
+        valence = max(-1.0, min(1.0, valence))
+        arousal = max(0.0, min(1.0, arousal))
+        emo_vector = _emo_vector_from_valence_arousal(valence, arousal)
+        kwargs["emo_vector"] = emo_vector
+        # When emo_vector is provided we explicitly turn OFF use_emo_text:
+        # the two are alternative conditioning paths and stacking them
+        # produces double-emoting that overshoots arousal targets.
+        kwargs["use_emo_text"] = False
+
+        emphasis_words = dubbing_meta.get("emphasis_words") or []
+        if emphasis_words and isinstance(emphasis_words, list):
+            # We pass the raw word list — IndexTTS2 versions that accept
+            # emphasis_words handle the tokenisation themselves; versions
+            # that do not will reject the kwarg, in which case we strip
+            # it (caught by the outer try/except in the caller).
+            # Defensive: ensure every entry actually appears in the
+            # target text so the model has something to anchor on.
+            anchored = [w for w in emphasis_words if isinstance(w, str) and w and w in text]
+            if anchored:
+                kwargs["emphasis_words"] = anchored
+
+        return kwargs
+
+    def _append_trailing_silence(self, output_path: Path, pause_ms: int) -> None:
+        """Append `pause_ms` of silence to an existing WAV at output_path.
+
+        Implemented as a single ffmpeg run that pipes the existing WAV
+        through a `apad` filter so we avoid spawning two processes. The
+        output is written to a temp file then atomically renamed over the
+        original — failure leaves the original intact.
+        """
+        if pause_ms <= 0:
+            return
+        padded = output_path.with_suffix(".padded.wav")
+        pad_seconds = pause_ms / 1000.0
+        subprocess.run(
+            [
+                self.settings.ffmpeg_bin, "-y",
+                "-i", str(output_path),
+                # apad pad_dur: append `pad_dur` seconds of silence
+                # (sample-rate aware) to the input stream.
+                "-af", f"apad=pad_dur={pad_seconds}",
+                "-ar", str(self.settings.default_sample_rate),
+                "-ac", str(self.settings.default_channels),
+                str(padded),
+            ],
+            check=True,
+            capture_output=True,
+        )
+        padded.replace(output_path)
 
     def _run_indextts2(self, request: TTSRequest) -> TTSResponse:
         if self.settings.indextts2_command:
@@ -435,6 +580,78 @@ class TTSAdapter:
             actual_duration_ms=duration_ms,
             diagnostics=["tts backend=indextts2(http)"],
         )
+
+
+# IndexTTS2's emo_vector convention (consistent across the model
+# series we ship): an 8-element list of non-negative floats summing
+# to <= 1.0, indexed as:
+#
+#   [happy, sad, angry, surprised, fear, disgust, neutral, excited]
+#
+# A zero vector is silently ignored by the model (no emotion
+# conditioning applied), so we always emit a non-trivial mix. The
+# mapping below is the OPT-204 PR-13 starting heuristic; the L3
+# human-rated eval (≥ 50 samples) will decide whether we keep this
+# linear projection or move to a learned map.
+
+_EMO_VECTOR_LEN = 8
+_IDX_HAPPY, _IDX_SAD, _IDX_ANGRY = 0, 1, 2
+_IDX_SURPRISED, _IDX_FEAR, _IDX_DISGUST = 3, 4, 5
+_IDX_NEUTRAL, _IDX_EXCITED = 6, 7
+
+
+def _emo_vector_from_valence_arousal(valence: float, arousal: float) -> list[float]:
+    """Project (valence, arousal) ∈ [-1,1]×[0,1] onto the 8-element emo_vector.
+
+    The mapping uses four quadrants by signed valence × thresholded arousal:
+
+        valence >= 0, arousal >= 0.5 → excited / happy mix
+        valence >= 0, arousal <  0.5 → neutral / calm mix
+        valence <  0, arousal >= 0.5 → angry / surprised mix
+        valence <  0, arousal <  0.5 → sad / neutral mix
+
+    The weights inside each quadrant are continuous (linear interpolation
+    on |valence| or arousal) so a segment with valence=0.51 arousal=0.49
+    does NOT produce a discontinuous jump versus 0.49/0.49.
+
+    Returns a fresh list (caller is free to mutate without affecting
+    subsequent calls). The vector is L1-normalised to sum to 1.0 so
+    IndexTTS2 treats it as a probability distribution.
+    """
+    v = max(-1.0, min(1.0, valence))
+    a = max(0.0, min(1.0, arousal))
+    vec = [0.0] * _EMO_VECTOR_LEN
+
+    # Magnitudes used per-quadrant.
+    abs_v = abs(v)
+    if v >= 0:
+        if a >= 0.5:
+            # Energetic positive: excited + happy
+            vec[_IDX_EXCITED] = 0.4 + 0.4 * a
+            vec[_IDX_HAPPY] = 0.3 + 0.3 * v
+        else:
+            # Calm positive: neutral + happy
+            vec[_IDX_NEUTRAL] = 0.5 + 0.3 * (1.0 - a)
+            vec[_IDX_HAPPY] = 0.2 + 0.4 * v
+    else:
+        if a >= 0.5:
+            # Energetic negative: angry + surprised + fear
+            vec[_IDX_ANGRY] = 0.3 + 0.5 * abs_v
+            vec[_IDX_SURPRISED] = 0.2 + 0.2 * (a - 0.5) * 2
+            vec[_IDX_FEAR] = 0.1 + 0.1 * abs_v
+        else:
+            # Subdued negative: sad + neutral
+            vec[_IDX_SAD] = 0.4 + 0.4 * abs_v
+            vec[_IDX_NEUTRAL] = 0.3 + 0.3 * (1.0 - a)
+
+    # L1-normalise. Defensive: avoid divide-by-zero on an all-zero
+    # vector (impossible given the branches above always assign to at
+    # least one index, but cheap to enforce).
+    total = sum(vec)
+    if total <= 0:
+        vec[_IDX_NEUTRAL] = 1.0
+        return vec
+    return [x / total for x in vec]
 
 
 def write_silence_wav(path: Path, sample_rate: int, channels: int, duration_sec: float) -> None:

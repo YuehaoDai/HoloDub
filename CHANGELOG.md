@@ -15,6 +15,253 @@ once we cut a tagged release.
 
 ### Added
 
+- **Three-tier baseline regression harness (Quality Mainline Q PR-14)**:
+  new `tests/quality/run_baseline_diff.py` complements the existing
+  pass/fail `run_regression.py` with a *relative* regression gate:
+  given a baseline JSON (60s / 10min / 79min) and a current job, it
+  computes per-metric deltas (`drift_p50_sec`, `drift_p95_sec`,
+  `max_segment_drift_sec`, `cost_usd_total`, `wall_time_sec`,
+  `judge_score_mean`) and tags each row PASS/WARN/FAIL. Defaults
+  follow `testing-and-rollout.mdc` §7: drift / cost / wall-time fail
+  at +20%, judge score is tighter at -5%. Two modes: `collect` (pull
+  a finished job over HTTP into a baseline-shaped JSON) and `diff`
+  (compare two reports; exits non-zero on FAIL, suitable for CI
+  gating). A `normalize_legacy_baseline` adapter reads the existing
+  three on-disk baseline files (`baseline-pre-p0.json`,
+  `baseline-post-p0-10min-final.json`, `opt402-79min-episode-139.json`)
+  in their original shape (no rewrites required) and handles PowerShell
+  UTF-8 BOMs transparently. L1 ships with 18 unit tests covering the
+  percentile helper, regression-direction logic for both higher-is-worse
+  and higher-is-better metrics, n/a-tolerance for missing baseline
+  fields, FAIL aggregation, the legacy adapter, and a self-diff
+  smoke test against the three on-disk baselines. Operator runbook in
+  [docs/quality-mainline-q/pr14-regression-baselines.md](docs/quality-mainline-q/pr14-regression-baselines.md)
+  walks through the L1→L2→L3 sequence, four-step ordered flag rollback
+  if any tier fails, and the artifact-storage convention
+  (`docs/quality-mainline-q/results/YYYY-MM-DD-{60s,10min,79min}.json`).
+- **Structured emotion / pacing / emphasis translate output (OPT-204,
+  code-complete; L2/L3 staging pending)**: the translate stage now has
+  an optional strict-tool path (`internal/llm/dubbing_plan.go::
+  TranslateWithDubbingPlan`) that asks the LLM to emit not just the
+  translation but also `{emotion: {valence, arousal, label}, pacing
+  ∈ {slow, normal, fast}, emphasis_words: […], pause_after_ms: 0..1000}`
+  in the same turn via an `emit_dubbing_plan` tool call. The strict
+  schema is enforced at the provider level — content-mode hallucinations
+  cannot smuggle ad-hoc fields through. Output is persisted on
+  `segments.meta.dubbing` (no schema change; the column was already
+  JSONB) and the ml-service TTS adapter
+  (`ml_service/app/adapters/tts.py`) maps the operator-facing semantic
+  representation (label strings + 0..1 floats) into the IndexTTS2
+  conditioning surface: `valence`+`arousal` → an 8-element
+  `emo_vector` (happy/sad/angry/surprised/fear/disgust/neutral/excited,
+  L1-normalised), `emphasis_words` (anchored to words actually
+  appearing in the translation), and `pause_after_ms` (applied as a
+  trailing-silence ffmpeg `apad` pass). The conversion lives in the
+  Python adapter so a future IndexTTS2 schema bump never requires a
+  translator re-run. Backwards compatibility is total: segments
+  without `meta.dubbing` and ml-service callers without
+  `dubbing_meta` fall back to the legacy `INDEXTTS2_USE_EMO_TEXT`
+  boolean; any strict-tool failure (provider ignoring `tool_choice`,
+  malformed JSON, empty translation) downgrades to plain-text
+  `TranslateTextWithDuration` with a single `WARN` log so the segment
+  still ships. L1 ships with 18 new tests (6 Go covering parser /
+  schema / defensive clipping / provider bypass / malformed JSON, 12
+  Python covering emo_vector normalisation / quadrant assignments /
+  threshold-step bound / emphasis-anchor filtering / missing-emotion
+  fallback). Rollout playbook in [docs/opt-204/rollout.md](docs/opt-204/rollout.md)
+  including the 50-segment human-eval design for the L3 quality gate
+  (≥ 80% emotion-fit, ≥ 70% emphasis-correctness). Default off behind
+  `DUBBING_PLAN_ENABLED=false`. Code: ~600 lines across
+  `internal/llm/dubbing_plan.go`, `internal/pipeline/pipeline.go`,
+  `internal/agents/segment_agent.go`, `internal/pipeline/stage_tts_agent.go`,
+  `internal/pipeline/stage_tts.go`, `internal/ml/client.go`,
+  `internal/config/config.go`, plus `ml_service/app/models.py` +
+  `ml_service/app/adapters/tts.py`. Migration
+  `migrations/012_segment_dubbing_meta.sql` is a comment-only marker
+  (no DDL — the JSONB convention is enforced in code).
+- **Speculative ensemble retranslate (OPT-202, code-complete; L2/L3
+  staging pending)**: the `SegmentAgent` (OPT-201) now has an escalation
+  path that fans the same retry input out across multiple LLM models in
+  parallel (`internal/llm/ensemble.go::RetranslateEnsemble`), then has a
+  thinking-class judge score the candidates pairwise and pick the
+  highest-`OverallScore` winner. The escalation triggers from three
+  independent conditions (any-hit): `state.AttemptsWithoutImprovement
+  >= 2` (single-model retranslate has demonstrably stopped converging),
+  `seg.meta.important == true` (operator-tagged "this segment must ship
+  at maximum quality"), or `judge_score < 0.7 && state.Attempt >= 1`
+  (OPT-002 judge has rated the current translation weak-but-salvageable).
+  Cost is bounded by a per-segment cap (`EnsembleMaxPerSegment = 1`, so
+  a chronically non-converging segment cannot fan out N×; subsequent
+  retranslate decisions fall back to single-model with `UseThinking` if
+  appropriate) and by the existing episode-level cost ledger
+  (`accumulated_cost_usd`, OPT-407 rework). All paths are observability-
+  instrumented: the OPT-201 `holodub_segment_agent_decisions_total`
+  counter gained a `use_ensemble` label so dashboards can show ensemble
+  vs thinking-vs-plain shares without re-labelling existing queries,
+  and the per-segment winner is logged as `segment_agent: ensemble
+  winner segment_id=… winner_model=qwen-plus judge_score=… candidate_count=…`.
+  Real failures (provider 500, every candidate erroring) fall back to a
+  single-model retranslate with a `WARN` log; the typed sentinel
+  `agents.ErrEnsembleUnavailable` lets the executor distinguish
+  "operator hasn't opted in" (silent fallback) from "ensemble broken"
+  (logged at WARN). Default off behind `ENSEMBLE_RETRANSLATE_ENABLED`;
+  `ENSEMBLE_MODELS=deepseek-chat,qwen-plus` and
+  `ENSEMBLE_JUDGE_MODEL=kimi-k2.5` are the recommended starting
+  configuration. L1 ships with 14 new tests covering parallel fanout,
+  one-failure resilience, all-failures error, context cancellation,
+  judge model override, tie-break determinism, per-segment cap, history
+  threading, and four end-to-end agent runs. Rollout playbook in
+  [docs/opt-202/rollout.md](docs/opt-202/rollout.md). Code: ~700 lines
+  across `internal/llm/ensemble.go`, `internal/agents/segment_agent.go`,
+  `internal/pipeline/stage_tts_agent.go`, `internal/config/config.go`,
+  `internal/observability/metrics.go`.
+- **SegmentAgent ReAct refactor (OPT-201, code-complete; L2/L3/L4
+  staging pending)**: the 180+ line hand-written retry loop in
+  `internal/pipeline/stage_tts.go::processOneTTSSegment` (lines 143-501,
+  five interleaved decisions covering drift retry / borrow-from-gap /
+  best-result restore / stuck detection / thinking-model escalation) is
+  now optionally replaced by an explicit pure-function agent
+  (`internal/agents/segment_agent.go::Decide(state, obs, cfg) Decision`)
+  driving a narrow `DubbingTools` interface
+  (`internal/agents/dubbing_tools.go`: `Synthesize`,
+  `RetranslateWithConstraint`, `JudgeFidelity`,
+  `RetranslateEnsemble` — the last gates OPT-202). The state machine
+  splits the legacy loop into three clean layers: (1) `State` + `Config`
+  pure data, (2) `Decide` pure function that returns
+  `Decision{Kind, UseThinking, UseEnsemble, Reason}` for every transition
+  (decision kinds: `accept`, `retranslate`, `restore_best`,
+  `judge_veto_drift`, `split_segment_marker`, `stuck`, `cancelled`),
+  (3) `Agent.Run` orchestrator that calls `tools.*` for side effects.
+  Tools are accessed exclusively through the interface, so the entire
+  agent is unit-testable via a hand-written `fakeTools`
+  (`internal/agents/fake_tools_test.go`) that programs deterministic
+  trajectories — the test suite covers ≥ 100 case scenarios (241 cases
+  across `segment_agent_test.go` + `segment_agent_ensemble_test.go` +
+  `split_test.go`): single-attempt convergence, oscillation requiring
+  best-restore, stuck (consecutive identical drift), non-convergence,
+  context cancellation mid-loop, tool errors, drift threshold borders,
+  borrow-from-gap geometry, adaptive thresholds for long segments,
+  judge VETO drift retry (OPT-002-followup-4 below), ensemble escalation
+  (OPT-202 above). A new `realDubbingTools` adapter
+  (`internal/pipeline/stage_tts_agent.go`) wires `ml.Client` /
+  `llm.Client` / `Store` into the interface; `runSegmentAgentV2WithHint`
+  is the pipeline-side entry point that constructs `agents.Config` from
+  `Config`, builds `agents.RunInput` including
+  `DubbingMeta: extractDubbingMeta(seg)` (OPT-204), and calls
+  `agent.Run`. The legacy path remains the default behaviour: a single
+  `if s.cfg.SegmentAgentEnabled { ... }` branch in
+  `processOneTTSSegmentWithHint` decides which code path runs, so a
+  feature-flag flip (`SEGMENT_AGENT_ENABLED=false`) cleanly restores
+  the legacy loop without a redeploy. Observability ships day-one: a
+  new `holodub_segment_agent_decisions_total{decision, reason,
+  use_ensemble}` Prometheus counter (registered in
+  `internal/observability/metrics.go::IncSegmentAgentDecision`),
+  OTEL-style structured `slog` lines for every decision
+  (`segment_agent: decided segment_id=… decision=… reason=…
+  attempts_without_improvement=… best_drift_sec=…
+  use_ensemble=… ensemble_calls=…`), and audit-grade attribution that
+  makes "why did this segment take 5 attempts?" answerable from logs
+  alone. Default off behind `SEGMENT_AGENT_ENABLED=false`; the L4
+  cleanup PR (Phase 1 / PR-6 in the plan) will flip the default after
+  ≥ 2 weeks of soak and only then delete the legacy code. Rollout
+  playbook in [docs/opt-201/rollout.md](docs/opt-201/rollout.md) with
+  an L2 binary-parity script
+  ([scripts/opt201-diff-jobs.ps1](scripts/opt201-diff-jobs.ps1)) that
+  runs the same input through both code paths and reports the diff
+  rate on `tts_audio_path` / `target_text` / `tts_duration_ms` for each
+  segment (target: 0% diff). Code: ~2200 lines across
+  `internal/agents/{segment_agent.go, dubbing_tools.go, types.go,
+  fake_tools_test.go, segment_agent_test.go, split.go, split_test.go}`
+  + `internal/pipeline/stage_tts_agent.go` +
+  `internal/pipeline/stage_tts.go` +
+  `internal/observability/metrics.go` + `internal/config/config.go`.
+- **Judge VETO drift retry (OPT-002-followup-4, OPT-FOLLOWUP-3 part b)**:
+  high-confidence LLM judge verdicts now short-circuit the
+  duration-only retry loop inside the SegmentAgent's pure `Decide`
+  function. When `Decide` would otherwise pick
+  `retranslate` solely because `|drift| > drift_threshold` AND the
+  segment's most-recent judge call returned `verdict='accept'` with
+  `OverallScore >= JudgeVetoMinScore` (default `0.95`) AND the absolute
+  drift is bounded by `AdaptiveMaxAcceptableDrift(targetSec)` (10% for
+  ≥ 20 s segments, 6% for 5-20 s, 3% for < 5 s — symmetric counterpart
+  to `internal/pipeline/tts/budget.go::AdaptiveMinDriftThreshold`),
+  the new `shouldVetoDriftRetry` branch routes the segment to a
+  `Decision{Kind: accept, Reason: "judge_veto_drift"}` instead. The
+  judge is called synchronously inside the agent (via
+  `agents.Agent.maybeAttachJudge`) ONLY on the iteration where a
+  drift-only retranslate is about to fire — this is the cost-minimal
+  hook point (one extra judge call per about-to-retry segment, not per
+  attempt). Sibling improvements: the synchronous judge call inherits
+  the segment's `PrevContext` so the verdict sees the same surrounding
+  text that the async judge would have. New env knobs
+  `JUDGE_VETO_DRIFT_RETRY=true` (default ON, since OPT-002 has been in
+  observe-only mode long enough to trust the scores) /
+  `JUDGE_VETO_MIN_SCORE=0.95`. The whole change is gated by both
+  `SegmentAgentEnabled` AND `JudgeVetoDriftRetry` so legacy-path
+  operators see no behaviour change. Unit-test fixture
+  `TestDecide_JudgeVetoDriftRetry` covers happy path (long segment +
+  high score → veto), too-low score (no veto), missing judge result
+  (no veto), and the AdaptiveMaxAcceptableDrift upper bound (drift
+  beyond the adaptive cap → veto declined, fall through to normal
+  retranslate). Documented end-to-end in the OPT-201 rollout playbook;
+  cures the long-standing issue where segment 4 of the 79-min
+  benchmark (judge `OverallScore=1.0`, drift 11.5%) would loop 5×
+  retranslate before falling back to thinking model.
+- **Rework dispatch now drives SegmentAgent (OPT-407-followup-2)**: the
+  three-tier closed-loop rework engine (OPT-407) previously
+  re-translated a chapter from the top whenever a segment-level
+  verdict said `retry` (cheap to implement, expensive to run — every
+  unrelated segment in the chapter got retranslated). The dispatch
+  path now narrows to "rerun ONLY this segment through SegmentAgent,
+  with a rework-aware hint": `internal/rework/engine.go::execute`
+  builds a `models.ReworkHint{PrevVerdict, PrevReason,
+  DriftThresholdHint}` and calls the newly-exported
+  `RetryJobAPI.DispatchSegmentRework(jobID, segmentID, *ReworkHint)`
+  (instead of the broad `RetryJob`). `Service` implements
+  `DispatchSegmentRework` via a new `retryJobWithHint` helper that
+  queues a single TaskPayload with the hint attached; the worker
+  picks it up and routes it through
+  `processOneTTSSegmentWithHint → runSegmentAgentV2WithHint`, which
+  applies `hint.DriftThresholdHint` to `driftThreshold` and stamps
+  every log line with `rework=true prev_verdict=… prev_reason=…` so
+  attribution is clear. The existing broad-chapter `RetryJob` path is
+  preserved (chapter- and episode-level actions still use it),
+  ensuring backward compatibility while delivering the cost savings
+  for segment-level rework — typical per-attempt cost drops from
+  "chapter retranslate × N segments + chapter merge + audio mux" to
+  "single segment retranslate + single TTS + status update", roughly
+  40-60% cheaper depending on chapter size. `internal/rework/
+  engine_dispatch_test.go` covers the wiring with a fake
+  `RetryJobAPI` and verifies the hint is correctly populated for both
+  `ActionSegmentRetry` and `ActionEscalateToThinking` (the latter
+  sets `DriftThresholdHint` slightly tighter to encourage thinking
+  model escalation).
+- **Segment split algorithm marker (OPT-407-followup-1)**: the
+  closed-loop rework's `ActionSegmentSplit` is no longer a pure
+  observability stub. `internal/agents/split.go::SplitSourceText`
+  finds a natural break point in `seg.SourceText` (preferring
+  punctuation, falling back to silence gaps inferred from
+  `seg.Meta["word_timings"]` when available, else word-count
+  halfway), validates that both children clear the minimum target
+  duration, and emits a `SplitProposal{ChildOneText, ChildTwoText,
+  BoundaryCharIndex, BoundaryMs}`. Companion `AllocateChildTimings`
+  splits `[start_ms, end_ms]` proportional to the source-character
+  ratio so the children's slot durations sum exactly to the parent's.
+  `internal/agents/split_test.go` ships 10 cases: punctuation break,
+  silence-gap break, fallback halving, too-short rejection, balance
+  invariant, character-index correctness, timing allocation arithmetic,
+  parent-meta plumbing, source language unicode, and empty input
+  defence. The Go state machine plumbing is end-to-end ready: a new
+  `internal/models/models.go::Segment.ParentSegmentID *uint` field
+  +`migrations/011_segments_split.sql` migration
+  (`ALTER TABLE segments ADD COLUMN parent_segment_id BIGINT NULL` +
+  partial index) is reversible via the paired `_down.sql`. The
+  execute path remains marker-only behind
+  `SEGMENT_AGENT_ALLOW_SPLIT=false` (default OFF) — a future PR-9.1
+  will wire `agents.Decision{Kind: split_segment_marker}` from the
+  rework engine through to actual `store.CreateChildSegments` writes
+  after we have ≥ 1 week of marker observability to confirm the
+  algorithm proposes split locations that operators agree with.
 - **Drift-aware verdict guard + TTS-stuck recovery (OPT-407-followup-6)**:
   the OPT-407 closed-loop now overrides a high-confidence LLM judge
   verdict when the segment's actual TTS audio length deviates from its

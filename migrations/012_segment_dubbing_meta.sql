@@ -1,0 +1,34 @@
+-- OPT-204 structured emotion / prosody output (PR-12).
+--
+-- This migration is INTENTIONALLY a comment-only file: OPT-204 stores the
+-- structured DubbingPlan output (emotion / pacing / emphasis_words /
+-- pause_after_ms) as a JSON sub-key on segments.meta rather than as a new
+-- column.
+--
+-- Rationale (see incremental-evolution.mdc §2):
+--   1. segments.meta is already JSONB (datatypes.JSONMap), so adding a new
+--      sub-key is a one-line code change with ZERO schema impact — no
+--      ALTER TABLE, no lock, no downtime, no need for a corresponding
+--      down migration.
+--   2. The shape is still evolving (OPT-204 PR-13 will add IndexTTS2
+--      emo_vector / emphasis_tokens fields populated from the same data).
+--      Keeping it in JSONB lets us add fields without coordinating Go +
+--      SQL releases.
+--   3. Backwards compatibility: existing segments without `meta.dubbing`
+--      continue to work — the IndexTTS2 adapter falls back to the legacy
+--      `use_emo_text` boolean (or no emotion at all) when the sub-key is
+--      missing.
+--
+-- Convention (enforced in code, not DB):
+--   segments.meta -> 'dubbing' -> {
+--     'emotion': { 'valence': float, 'arousal': float, 'label': string },
+--     'pacing': 'slow' | 'normal' | 'fast',
+--     'emphasis_words': [string, ...],
+--     'pause_after_ms': int (0..1000)
+--   }
+--
+-- This file exists in the migrations directory so the rollout sequence
+-- stays auditable (every OPT-XXX touches at least one numbered migration,
+-- even when the change is column-less). No actual DDL is executed.
+
+SELECT 1 AS opt_204_pr12_marker;

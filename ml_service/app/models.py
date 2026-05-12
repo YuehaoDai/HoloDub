@@ -94,6 +94,19 @@ class TTSRequest(BaseModel):
     # Both zero on the first attempt.
     prev_actual_sec: float = 0.0
     prev_text_chars: int = 0
+    # OPT-204 structured prosody / emotion plan.
+    # Optional dict mirroring internal/llm/dubbing_plan.go DubbingPlan shape:
+    #   {
+    #     "emotion": {"valence": -1..1, "arousal": 0..1, "label": "calm|excited|..."},
+    #     "pacing":          "slow" | "normal" | "fast",
+    #     "emphasis_words":  [str, ...],
+    #     "pause_after_ms":  int 0..1000,
+    #   }
+    # When None or empty, the IndexTTS2 inline adapter falls back to the
+    # legacy use_emo_text boolean / no prosody (the pre-OPT-204 default).
+    # Backwards compatibility: existing callers that do not pass this
+    # field continue to work without code changes.
+    dubbing_meta: dict[str, Any] | None = None
 
 
 class TTSResponse(BaseModel):

@@ -216,14 +216,51 @@ func (c *Client) RetranslateWithConstraint(
 	nextSrcText string,
 	translationSummary string,
 ) (string, error) {
+	return c.retranslateWithConstraintModel(
+		ctx, "",
+		sourceLanguage, targetLanguage, srcText, currentTrans,
+		targetSec, actualSec,
+		attempt, maxAttempts,
+		driftThresholdPct,
+		history,
+		useThinking,
+		observedCharsPerSec,
+		contextBefore,
+		nextSrcText,
+		translationSummary,
+	)
+}
+
+// retranslateWithConstraintModel is the parameter-rich internal that
+// both RetranslateWithConstraint and OPT-202 RetranslateEnsemble call.
+// modelOverride, when non-empty, takes precedence over the configured
+// c.retranslationModel / c.thinkingModel selection; the ensemble path
+// uses this to fan out across multiple models in parallel.
+func (c *Client) retranslateWithConstraintModel(
+	ctx context.Context,
+	modelOverride string,
+	sourceLanguage, targetLanguage, srcText, currentTrans string,
+	targetSec, actualSec float64,
+	attempt, maxAttempts int,
+	driftThresholdPct float64,
+	history []RetranslationAttempt,
+	useThinking bool,
+	observedCharsPerSec float64,
+	contextBefore []ContextSegment,
+	nextSrcText string,
+	translationSummary string,
+) (string, error) {
 	if c.baseURL == "" || c.apiKey == "" {
 		return "", errors.New("OPENAI_BASE_URL and OPENAI_API_KEY are required for retranslation")
 	}
-	model := c.retranslationModel
+	model := modelOverride
+	if model == "" {
+		model = c.retranslationModel
+	}
 	if model == "" {
 		model = c.model
 	}
-	if useThinking && c.thinkingModel != "" {
+	if useThinking && modelOverride == "" && c.thinkingModel != "" {
 		model = c.thinkingModel
 	}
 	limit := maxChars(targetLanguage, targetSec)

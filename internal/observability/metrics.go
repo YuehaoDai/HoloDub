@@ -95,6 +95,27 @@ var (
 		Name: "holodub_rework_actions_total",
 		Help: "Count of OPT-407 rework engine decisions by level, action type, and whether dispatched.",
 	}, []string{"level", "action", "dispatched"})
+
+	// OPT-201: count of SegmentAgent decisions broken down by decision
+	// kind (accept / retranslate), reason (within_threshold / borrow_from_gap /
+	// over_short_gap / under_run_drift / no_more_attempts / clip_overflow /
+	// retranslation_disabled / retranslate_failed), and whether the
+	// reasoning model was selected.
+	//
+	// Label cardinality is bounded: 2 kinds × ~8 reasons × 2 thinking
+	// values = 32 series. The "use_thinking" label distinguishes when
+	// the agent escalated to the slower reasoning model so dashboards
+	// can alert on "thinking-mode escalation rate" without joining
+	// against the decision string itself.
+	//
+	// Label naming follows the OTEL gen_ai convention as closely as
+	// possible (lowercase snake_case, low cardinality) so OPT-101's
+	// OpenTelemetry exporter can re-label these to gen_ai.* without
+	// duplicating the series — see observability-and-cost.mdc §1.
+	segmentAgentDecisionsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "holodub_segment_agent_decisions_total",
+		Help: "Count of OPT-201 SegmentAgent decisions by kind, reason, thinking-mode escalation, and ensemble escalation.",
+	}, []string{"decision", "reason", "use_thinking", "use_ensemble"})
 )
 
 // ObserveExternalCall records the outcome of an outbound HTTP call to a
@@ -197,6 +218,38 @@ func IncReworkAction(level, action, dispatched string) {
 		dispatched = "false"
 	}
 	reworkActionsTotal.WithLabelValues(level, action, dispatched).Inc()
+}
+
+// IncSegmentAgentDecision records one OPT-201 SegmentAgent decision.
+// kind is "accept" or "retranslate"; reason is the low-cardinality
+// reason string from Decision.Reason (within_threshold, borrow_from_gap,
+// over_short_gap, under_run_drift, no_more_attempts, clip_overflow,
+// retranslation_disabled, retranslate_failed, judge_veto_drift);
+// useThinking is "true" when the agent escalated to the reasoning model;
+// useEnsemble (OPT-202) is "true" when the retranslate fanned out to
+// multiple models. The two escalations are mutually exclusive in
+// practice (the agent drops thinking when ensemble fires) but kept
+// as independent labels so the dashboard can show "ensemble vs
+// thinking" share without rewriting queries when the policy changes.
+//
+// Defensive defaulting on empty strings prevents an accidental
+// "" label value (which Prometheus accepts but is hard to query).
+func IncSegmentAgentDecision(kind, reason string, useThinking, useEnsemble bool) {
+	if kind == "" {
+		kind = "unknown"
+	}
+	if reason == "" {
+		reason = "unknown"
+	}
+	thinkingLabel := "false"
+	if useThinking {
+		thinkingLabel = "true"
+	}
+	ensembleLabel := "false"
+	if useEnsemble {
+		ensembleLabel = "true"
+	}
+	segmentAgentDecisionsTotal.WithLabelValues(kind, reason, thinkingLabel, ensembleLabel).Inc()
 }
 
 func MetricsHandler() http.Handler {
