@@ -1,0 +1,146 @@
+# HoloDub Project Roadmap (迁移自 optimization-roadmap.md)
+
+## 项目背景
+HoloDub（幻读）是一个自托管视频翻译与 AI 配音工具箱。
+- 仓库：F:\HoloDub，GitHub: YuehaoDai/HoloDub
+- 技术栈：Go (Gin+GORM) + Python (FastAPI+PyTorch) + Vue 3 + PostgreSQL + Redis + Docker
+- 核心能力：智能语义切分 + IndexTTS2 时长感知配音 + 说话人→音色映射
+- 流水线 7 阶段：media → separate → asr_smart → segment_review → translate → tts_duration → merge
+- 长视频三层级：Episode → Chapter → Segment
+
+## 已完成项（done，仅作上下文参考，不需创建 task）
+- OPT-001 Prompt caching + 可观测基础 (done)
+- OPT-002 LLM-as-Judge MVP (done)
+- OPT-003 Function calling 替代 prompt+JSON (done)
+- OPT-401~409 长视频三层级全套（Episode/Chapter 数据模型、Pipeline重构、Chapterize、Merge、LLM切分、Judge、闭环Rework）(done)
+- OPT-405.1 Multi-Model Chapterize Benchmark (done)
+
+## 待完成任务
+
+### P1：关键能力补齐
+
+1. OPT-101 OpenTelemetry GenAI semconv + cost USD trace
+   - 接入 LangFuse/Phoenix 观测后端，每个 LLM 调用有 token+cost 自动聚合
+   - 解决"为什么账单翻倍"的归因
+   - 工期：2d
+   - 依赖：无
+
+2. OPT-102 Plan Mode 段审 / TodoWrite 风格
+   - 将"merge 建议列表"升级为有序整改计划
+   - 段审效率从 ~15min 降至 ~5min
+   - 工期：3d
+   - 依赖：OPT-003 (已完成)
+
+3. OPT-103 MCP server 暴露 ml-service
+   - ml-service 的 ASR/TTS/VAD 能力通过 MCP 暴露给外部工具
+   - 工期：1d
+   - 依赖：无
+
+4. OPT-104 Agent transcript 持久化
+   - 每条 LLM/ML 调用 input/output 落库（zstd压缩）
+   - 回答"segment 38 为什么重译了 7 次"
+   - 工期：1.5d
+   - 依赖：OPT-101
+
+### P2：中长期重构（code-complete，需运维验证）
+
+5. OPT-201 SegmentAgent ReAct 重构
+   - 把 180+ 行手写 retry 循环重构为 SegmentAgent + DubbingTools
+   - 状态：code-complete，L2/L3/L4 staging pending operator
+   - 工期：已完成编码，运维验证 ~1d
+   - 依赖：OPT-002 (已完成)
+
+6. OPT-202 Speculative ensemble + judge
+   - 关键段并行多模型 fan-out + pairwise judge 选最优
+   - 状态：code-complete，L2/L3/L4 pending
+   - 工期：已完成编码，运维验证 ~0.5d
+   - 依赖：OPT-201
+
+7. OPT-204 结构化情感/韵律输出
+   - DubbingPlan: 一次 tool call 产出 translation + emotion + pacing + emphasis + pause
+   - 状态：code-complete，L3 50-段人评 pending
+   - 工期：已完成编码，人评 ~1d
+   - 依赖：OPT-003 (已完成)
+
+8. OPT-201/202/204 followups (漂移修复 bundle)
+   - 包括: ensemble cap 1→2, hard drift cap 0.7/0.3s, abs-drift ensemble trigger, dubbing_plan JSON recovery, retranslate adaptation strategy
+   - 状态：code-complete，L2 chapter 2 rerun pending
+   - 工期：已完成编码，重跑验证 ~0.5d
+   - 依赖：OPT-201, OPT-202, OPT-204
+
+### P2：中长期重构（planned）
+
+9. OPT-203 Streaming TTS + SSE 推送
+   - 前端实时听到合成进度，减少 polling 压力 80%
+   - 工期：5d
+   - 依赖：无
+
+10. OPT-205 Reasoning model 全场景化
+    - thinking model 从 stuck-only 扩展到 segment_review、final_summary 等
+    - 工期：1d
+    - 依赖：无
+
+11. OPT-206 Skills / Glossary 系统
+    - 术语表和风格作为可挂载知识，进 stable prompt prefix
+    - 工期：3d
+    - 依赖：无
+
+12. OPT-408 Multi-episode 调度 + GPU 公平性
+    - Worker 从 FIFO 升级为 episode 公平调度
+    - 多 episode 同时跑时不会第一个全占完
+    - 工期：3d
+    - 依赖：OPT-403 (已完成)
+
+### ML 底层能力（未在 OPT 系统中）
+
+13. Demucs 人声分离
+    - 当前用 ffmpeg_stub，需要接入真实 Demucs 模型
+    - 工期：2d
+    - 依赖：无
+
+14. Pyannote 说话人分离
+    - 需要 HF token，完成真实 speaker diarization
+    - 工期：1.5d
+    - 依赖：无
+
+15. 中文参考音频韵律优化
+    - 中文 TTS 的自然度提升
+    - 工期：2d
+    - 依赖：无
+
+### P3：探索/锦上添花
+
+16. OPT-301 DSPy 自动 prompt 优化
+    - 用 DSPy/TextGrad 自动迭代 prompt
+    - 工期：5d
+    - 依赖：OPT-002 (已完成), golden set ≥200条
+
+17. OPT-302 多模态 ASR backend
+    - Gemini 2.0 Flash / GPT-4o transcribe 选项
+    - 工期：5d
+    - 依赖：无
+
+18. OPT-303 多租户权限 + tenant_key 强制
+    - JWT + tenant 隔离 + 存储前缀隔离 + 配额
+    - 工期：5d
+    - 依赖：无
+
+19. OPT-304 Settings TOML + profile
+    - .env 220行难维护 → holodub.toml + profile
+    - 工期：3d
+    - 依赖：无
+
+20. OPT-305 CLI 工具
+    - holodub CLI (job submit/retry/list, voice clone, eval)
+    - 工期：3d
+    - 依赖：无
+
+21. OPT-306 Hot reload prompts in DB
+    - 改 prompt 无需重编重启
+    - 工期：2d
+    - 依赖：OPT-304
+
+22. OPT-307 Batch API 选项
+    - job 提交 priority:batch → 24h 半价
+    - 工期：2d
+    - 依赖：OPT-001 (已完成)

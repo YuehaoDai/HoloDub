@@ -1,0 +1,317 @@
+{
+  "master": {
+    "tasks": [
+      {
+        "id": 1,
+        "title": "P1: OPT-101 — OpenTelemetry GenAI semconv + cost USD trace",
+        "description": "接入 LangFuse/Phoenix 观测后端，每个 LLM 调用有 token+cost 自动聚合。Go: internal/observability/ 新增 otel.go，初始化 tracer/meter。新增 pricing.go 成本计算。Python: ml_service/app/observability.py 加 opentelemetry-instrumentation-fastapi。",
+        "status": "pending",
+        "dependencies": [],
+        "priority": "high",
+        "details": "Estimate: 2d\nFiles: internal/observability/otel.go (new), internal/observability/cost.go (new), ml_service/app/observability.py (modify)\nOutcome: 每日 cost 聚合曲线与 provider 后台账单偏差 < 5%\nRollout: L1 单测 → L2 staging LangFuse → L3 生产 read-only → L4 告警",
+        "subtasks": [],
+        "metadata": {
+          "opt_id": "OPT-101",
+          "estimate": "2d",
+          "category": "observability"
+        }
+      },
+      {
+        "id": 2,
+        "title": "P1: OPT-102 — Plan Mode 段审 / TodoWrite 风格",
+        "description": "将当前 merge 建议列表升级为有序整改计划（merge/split/manual_review 混合），用户可一键应用全部 auto。UI 新增 AI 整改清单面板 + 一键 accept all auto 按钮。",
+        "status": "pending",
+        "dependencies": [],
+        "priority": "high",
+        "details": "Estimate: 3d\nDepends on: OPT-003 (done)\nFiles: internal/llm/client.go (modify review output schema), ui/src/components/SegmentReview.vue (modify)\nOutcome: 段审平均完成时间 15min → 5min",
+        "subtasks": [],
+        "metadata": {
+          "opt_id": "OPT-102",
+          "estimate": "3d",
+          "category": "ux"
+        }
+      },
+      {
+        "id": 3,
+        "title": "P1: OPT-103 — MCP server 暴露 ml-service",
+        "description": "ml-service 的 ASR/TTS/VAD 能力通过 MCP 暴露给 Cursor/Claude Desktop 等外部工具。用 mcp Python SDK，复用现有 services。Voice profiles 暴露为 MCP Resources。",
+        "status": "pending",
+        "dependencies": [],
+        "priority": "medium",
+        "details": "Estimate: 1d\nFiles: ml_service/app/mcp_server.py (new), ml_service/pyproject.toml (modify deps)\nOutcome: Claude Desktop 能 list_tools 看到 transcribe_window / run_tts",
+        "subtasks": [],
+        "metadata": {
+          "opt_id": "OPT-103",
+          "estimate": "1d",
+          "category": "integration"
+        }
+      },
+      {
+        "id": 4,
+        "title": "P1: OPT-104 — Agent transcript 持久化",
+        "description": "每条 LLM/ML 调用 input/output 落库（zstd 压缩）。SQL 查表回答 segment 38 为什么重译了 7 次。",
+        "status": "pending",
+        "dependencies": [
+          1
+        ],
+        "priority": "medium",
+        "details": "Estimate: 1.5d\nDepends on: OPT-101\nFiles: migrations/ (new table agent_transcripts), internal/store/transcripts.go (new)\nOutcome: 79min 视频 transcript 表 < 50MB，任意 segment 决策链 < 1s 查出",
+        "subtasks": [],
+        "metadata": {
+          "opt_id": "OPT-104",
+          "estimate": "1.5d",
+          "category": "observability"
+        }
+      },
+      {
+        "id": 5,
+        "title": "P2: OPT-201/202/204 — SegmentAgent 运维验证（L2/L3/L4 staging）",
+        "description": "OPT-201 (SegmentAgent ReAct), OPT-202 (Ensemble), OPT-204 (DubbingPlan) 三个 code-complete 项的运维验证。跑 L2 staging 重跑 chapter 2、L3 50段人评、L4 全开灰度。需运行 PR-14 regression harness。",
+        "status": "pending",
+        "dependencies": [],
+        "priority": "high",
+        "details": "Estimate: 1.5d (运维操作，非编码)\nCode-complete items: OPT-201/202/204\nVerification: PR-14 baseline diff 全绿，drift p95 ≤ baseline × 1.20\nRollout: L2 → L3 → L4, feature flag SEGMENT_AGENT_ENABLED 逐步开启",
+        "subtasks": [],
+        "metadata": {
+          "opt_id": "OPT-201/202/204-validation",
+          "estimate": "1.5d",
+          "category": "validation"
+        }
+      },
+      {
+        "id": 6,
+        "title": "P2: Chapter 2 Drift Fix — L2 重跑验证",
+        "description": "OPT-201/202/204 followups (漂移修复 bundle) 的 L2 staging 验证。对 job 154 chapter 2 重跑，验证 hard cap + ensemble trigger + dubbing_plan recovery 全部生效。目标: hard_cap_exceeded 日志 = 0 段。",
+        "status": "pending",
+        "dependencies": [
+          5
+        ],
+        "priority": "high",
+        "details": "Estimate: 0.5d (重跑 + 验数)\nPRs: chapter2-drift-fix PR-1+PR-2+PR-3\nVerification: chapter 2 rerun 后 hard_cap_exceeded=true = 0，holodub_hard_drift_cap_violations_total = 0",
+        "subtasks": [],
+        "metadata": {
+          "opt_id": "chapter2-drift-validation",
+          "estimate": "0.5d",
+          "category": "validation"
+        }
+      },
+      {
+        "id": 7,
+        "title": "P2: OPT-203 — Streaming TTS + SSE 推送",
+        "description": "前端实时听到合成进度（30/626 段已生成），UX 接近 ChatGPT Voice。Go: GET /jobs/:id/events SSE endpoint。Python: POST /tts/stream chunk 流式。前端: useEventStream.ts composable。",
+        "status": "pending",
+        "dependencies": [],
+        "priority": "medium",
+        "details": "Estimate: 5d\nFiles: internal/http/router.go (new SSE), ml_service/app/routes/tts.py (new stream), ui/src/composables/useEventStream.ts (new)\nOutcome: SSE 稳定 ≥ 60min，单段到达延迟 < 300ms，polling 降 80%",
+        "subtasks": [],
+        "metadata": {
+          "opt_id": "OPT-203",
+          "estimate": "5d",
+          "category": "ux"
+        }
+      },
+      {
+        "id": 8,
+        "title": "P2: OPT-205 — Reasoning model 全场景化",
+        "description": "thinking model 从当前 stuck/non-convergence 触发扩展到 segment_review、final_summary 等高价值低频场景。",
+        "status": "pending",
+        "dependencies": [],
+        "priority": "medium",
+        "details": "Estimate: 1d\nFiles: internal/llm/client.go (加 useThinking 分支), internal/config/config.go (新增 env flags)\nOutcome: 段审 confidence ≥ 0.8 占比提升",
+        "subtasks": [],
+        "metadata": {
+          "opt_id": "OPT-205",
+          "estimate": "1d",
+          "category": "llm"
+        }
+      },
+      {
+        "id": 9,
+        "title": "P2: OPT-206 — Skills / Glossary 系统",
+        "description": "术语表和风格作为可挂载知识，job 可挂多个。与 OPT-001 (prompt cache) 协同让 glossary 进 stable prefix，零额外成本。",
+        "status": "pending",
+        "dependencies": [],
+        "priority": "medium",
+        "details": "Estimate: 3d\nFiles: migrations/ (new skills + job_skills tables), internal/store/skills.go (new), ui/src/components/JobDetail.vue (加挂载面板)\nOutcome: 挂载 100 词术语表后术语一致性 100%",
+        "subtasks": [],
+        "metadata": {
+          "opt_id": "OPT-206",
+          "estimate": "3d",
+          "category": "feature"
+        }
+      },
+      {
+        "id": 10,
+        "title": "P2: OPT-408 — Multi-episode 调度 + GPU 公平性",
+        "description": "Worker 从 FIFO 升级为 episode 公平调度：从每个 active episode 取下一个 ready chapter。GPU 抢占透明暴露给 UI。",
+        "status": "pending",
+        "dependencies": [],
+        "priority": "medium",
+        "details": "Estimate: 3d\nDepends on: OPT-403 (done)\nFiles: internal/scheduler/ (new fair scheduler), internal/store/queue.go (modify)\nOutcome: 3 episode × 3 chapter 同时提交 → 调度顺序 ep1.c1, ep2.c1, ep3.c1 而非 ep1 全占完",
+        "subtasks": [],
+        "metadata": {
+          "opt_id": "OPT-408",
+          "estimate": "3d",
+          "category": "infrastructure"
+        }
+      },
+      {
+        "id": 11,
+        "title": "ML: Demucs 人声分离 — 替换 ffmpeg_stub",
+        "description": "当前 separate stage 用 ffmpeg stub。接入真实 Demucs 模型做 vocals/BGM 分离。使用 htdemucs 或 demucs Python 库。",
+        "status": "pending",
+        "dependencies": [],
+        "priority": "high",
+        "details": "Estimate: 2d\nFiles: ml_service/app/adapters/demucs.py (new), ml_service/app/routes/media.py (modify), internal/pipeline/stage_separate.go (modify)\nOutcome: 真实分离 vocals+BGM，非 stub",
+        "subtasks": [],
+        "metadata": {
+          "opt_id": "ML-demucs",
+          "estimate": "2d",
+          "category": "ml"
+        }
+      },
+      {
+        "id": 12,
+        "title": "ML: Pyannote 说话人分离 — 替换 stub",
+        "description": "当前 speaker diarization 未真实接入 Pyannote。需要 HF token，完成真实说话人聚类和标注。",
+        "status": "pending",
+        "dependencies": [],
+        "priority": "high",
+        "details": "Estimate: 1.5d\nFiles: ml_service/app/adapters/vad.py (modify), ml_service/app/routes/asr.py (modify)\nPrerequisites: HuggingFace token (HF_TOKEN)\nOutcome: 真实 speaker diarization，非 stub",
+        "subtasks": [],
+        "metadata": {
+          "opt_id": "ML-pyannote",
+          "estimate": "1.5d",
+          "category": "ml"
+        }
+      },
+      {
+        "id": 13,
+        "title": "ML: 中文参考音频韵律优化",
+        "description": "当前中文 TTS 自然度有提升空间。优化参考音频选择 + 韵律参数调优。可能需要收集/筛选中文参考音频集。",
+        "status": "pending",
+        "dependencies": [],
+        "priority": "medium",
+        "details": "Estimate: 2d\nFiles: ml_service/app/adapters/tts.py (modify prosody params), data/ (add reference audio)\nOutcome: 中文输出自然度明显提升",
+        "subtasks": [],
+        "metadata": {
+          "opt_id": "ML-chinese-prosody",
+          "estimate": "2d",
+          "category": "ml"
+        }
+      },
+      {
+        "id": 14,
+        "title": "P3: OPT-301 — DSPy 自动 prompt 优化",
+        "description": "用 DSPy/TextGrad 自动迭代 TranslateTextWithDuration 的 system prompt。CI 上 prompt 改动自动跑 regression。",
+        "status": "pending",
+        "dependencies": [],
+        "priority": "low",
+        "details": "Estimate: 5d\nDepends on: OPT-002 (done), golden set ≥200条\nFiles: tests/quality/dspy_optimize.py (new)\nOutcome: BLEU/COMET/judge_score 提升 ≥ 3%",
+        "subtasks": [],
+        "metadata": {
+          "opt_id": "OPT-301",
+          "estimate": "5d",
+          "category": "research"
+        }
+      },
+      {
+        "id": 15,
+        "title": "P3: OPT-302 — 多模态 ASR backend",
+        "description": "加入 Gemini 2.0 Flash / GPT-4o transcribe / ElevenLabs Scribe 选项。对带 PPT 的讲座视频专有名词命中率提升。",
+        "status": "pending",
+        "dependencies": [],
+        "priority": "low",
+        "details": "Estimate: 5d\nFiles: ml_service/app/adapters/asr_multimodal.py (new), ml_service/app/config.py (modify)\nOutcome: 讲座视频专有名词 WER 8% → 2%",
+        "subtasks": [],
+        "metadata": {
+          "opt_id": "OPT-302",
+          "estimate": "5d",
+          "category": "ml"
+        }
+      },
+      {
+        "id": 16,
+        "title": "P3: OPT-303 — 多租户权限 + tenant_key 强制",
+        "description": "JWT + tenant 隔离 + 存储前缀隔离 + 配额。商业化前提。",
+        "status": "pending",
+        "dependencies": [],
+        "priority": "low",
+        "details": "Estimate: 5d\nFiles: JWT 中间件 (new), internal/store/ (加 WHERE tenant_key scope), migrations/ (tenant_key NOT NULL)\nOutcome: 不同 tenant 互相看不到对方 job",
+        "subtasks": [],
+        "metadata": {
+          "opt_id": "OPT-303",
+          "estimate": "5d",
+          "category": "infrastructure"
+        }
+      },
+      {
+        "id": 17,
+        "title": "P3: OPT-304 — Settings TOML + profile",
+        "description": ".env.example 已 220 行难维护。改用 holodub.toml + profile (dev/staging/prod)，env var 仍可 override。",
+        "status": "pending",
+        "dependencies": [],
+        "priority": "low",
+        "details": "Estimate: 3d\nFiles: holodub.toml.example (new), internal/config/config.go (refactor to viper/koanf)\nOutcome: 新旧配置加载 100% 等价",
+        "subtasks": [],
+        "metadata": {
+          "opt_id": "OPT-304",
+          "estimate": "3d",
+          "category": "infrastructure"
+        }
+      },
+      {
+        "id": 18,
+        "title": "P3: OPT-305 — CLI 工具",
+        "description": "holodub CLI 复用 internal/。命令：job submit/retry/list、voice clone、eval run。脚本化/CI集成刚需。",
+        "status": "pending",
+        "dependencies": [],
+        "priority": "low",
+        "details": "Estimate: 3d\nFiles: cmd/cli/main.go (new, cobra), .goreleaser.yaml (modify)\nOutcome: curl 调用 100% 可被 CLI 覆盖",
+        "subtasks": [],
+        "metadata": {
+          "opt_id": "OPT-305",
+          "estimate": "3d",
+          "category": "tooling"
+        }
+      },
+      {
+        "id": 19,
+        "title": "P3: OPT-306 — Hot reload prompts in DB",
+        "description": "改 prompt/漂移阈值/retry 次数无需重编重启。admin UI 可改、SIGHUP 重载。",
+        "status": "pending",
+        "dependencies": [
+          17
+        ],
+        "priority": "low",
+        "details": "Estimate: 2d\nDepends on: OPT-304\nFiles: migrations/ (new runtime_configs table), internal/config/ (加 RuntimeConfig.Reload)\nOutcome: 改 prompt 后 < 30s 生效，错误 prompt 可回滚",
+        "subtasks": [],
+        "metadata": {
+          "opt_id": "OPT-306",
+          "estimate": "2d",
+          "category": "infrastructure"
+        }
+      },
+      {
+        "id": 20,
+        "title": "P3: OPT-307 — Batch API 选项",
+        "description": "job 提交时多一档 priority:batch，所有 segment 初翻丢 OpenAI/Anthropic Batch endpoint，24h 内完成、半价。",
+        "status": "pending",
+        "dependencies": [],
+        "priority": "low",
+        "details": "Estimate: 2d\nDepends on: OPT-001 (done)\nFiles: internal/llm/client.go (加 submitBatch/pollBatch), internal/pipeline/ (加 translate_batch_wait stage)\nOutcome: batch 模式 cost = realtime × 0.5 ± 5%",
+        "subtasks": [],
+        "metadata": {
+          "opt_id": "OPT-307",
+          "estimate": "2d",
+          "category": "cost"
+        }
+      }
+    ],
+    "metadata": {
+      "created": "2026-06-14T05:54:37.034Z",
+      "updated": "2026-06-14T05:54:37.034Z",
+      "description": "Tasks for master context"
+    }
+  }
+}

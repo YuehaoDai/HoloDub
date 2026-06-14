@@ -1,4 +1,8 @@
-# Changelog
+# Changelog（已归档）
+
+> ⚠️ **本文档已于 2026-06-14 停止维护。** 项目管理已迁移至 [TaskMaster](https://github.com/eyaltoledano/claude-task-master)（`.taskmaster/tasks/tasks.json`）。
+>
+> 本文档保留为历史发布记录（只读）。未来 release notes 将由 specworkflow 的 `log_implementation` 自动生成。
 
 All notable changes to HoloDub are documented in this file.
 
@@ -14,6 +18,73 @@ once we cut a tagged release.
 > each entry below should reference its `(OPT-XXX)` ID when applicable.
 
 ### Added
+
+- **Chapter 2 drift fix — PR-3 absolute drift cap
+  (OPT-201-followup-2; code-complete, L2 pending)**: hardens the
+  SegmentAgent acceptance gate with an absolute-seconds ceiling on
+  top of the existing percentage-based thresholds, because the
+  PR-2 rerun of job 154 chapter 2 still shipped 23/45 segments
+  outside the operator's drift window (10 over > 0.3 s including
+  one 3.5 s outlier, 13 under > 0.7 s including one 3.8 s outlier).
+  Root cause: every acceptance path (`within_threshold`,
+  `borrow_from_gap`, `judge_veto_drift`) compared against percentages
+  of `target_sec`, so a 25 s segment could legitimately ship 1.5 s
+  of drift "inside threshold". Changes:
+  - **Two new env vars** (defaults `HARD_MAX_UNDER_DRIFT_SEC=0.7`,
+    `HARD_MAX_OVER_DRIFT_SEC=0.3`, asymmetric because trailing
+    silence is less audible than clipped tails; either set to 0
+    disables that direction's cap and falls back to pre-followup
+    behaviour). Parsed by `internal/config/config.go` into
+    `cfg.HardMaxUnderDriftSec` / `cfg.HardMaxOverDriftSec`.
+  - **agents.Config** grows two matching fields documented as a
+    cap that "participates in every acceptance branch — once
+    exceeded the agent forces another retranslate; only the
+    explicit escape branches (`no_more_attempts`, `clip_overflow`,
+    `over_short_gap_stuck`, `retranslation_disabled`,
+    `retranslate_failed`) bypass the cap and mark the decision
+    via `Decision.HardCapExceeded` / `HardCapDirection`."
+  - **Decide()** now calls a new pure helper
+    `evalHardCap(obs, cfg)` once at the top and routes:
+    - `within_threshold` / `borrow_from_gap` / `judge_veto_drift`
+      → refuse the accept under cap violation, fall through to
+      retranslate so the loop keeps trying.
+    - `no_more_attempts` / `clip_overflow` / `over_short_gap_stuck`
+      / `retranslation_disabled` → still accept but pass through
+      a `markHardCap()` helper that stamps
+      `Decision.HardCapExceeded = true` and `HardCapDirection =
+      over|under` so emit() and the observer can report it.
+  - **emit()** writes `hard_cap_exceeded` and `hard_cap_direction`
+    to every `agent_decision` log line (so operators can grep
+    `hard_cap_exceeded=true` directly) and
+    `DefaultObservabilityObserver` calls
+    `observability.IncHardDriftCapViolation(direction, reason)` to
+    feed the new Prometheus counter.
+  - **New metric** `holodub_hard_drift_cap_violations_total
+    {direction, reason}` exposed from
+    `internal/observability/metrics.go` with a 0-cardinality labelset
+    (≤ 2 direction × ≤ 6 reason = ≤ 12 series). A growing counter
+    is the canary that the percentage gate + retry budget can't
+    satisfy the cap; operators decide whether to raise
+    `RETRANSLATION_MAX_ATTEMPTS`, loosen the cap, or escalate.
+  - **`internal/pipeline/stage_tts_agent.go`** threads the two
+    config fields into `agents.Config` next to the ensemble wiring;
+    no other callsite needs to change.
+  - **Tests**: seven new unit cases in
+    `internal/agents/segment_agent_test.go` cover under-run
+    rejecting `within_threshold`, over-run rejecting `borrow_from_gap`,
+    cap rejecting both under and over VETOs, cap-disabled
+    back-compat (legacy VETO accept still fires), last-attempt
+    accept + cap mark, `over_short_gap_stuck` escape + cap mark,
+    and an asymmetric same-`|drift|` case proving 0.6 s ships as
+    under-run but not as over-run. All existing tests stay green
+    because `defaultCfg()` leaves the new fields at zero.
+  - **Operator runbook**: grep the worker log for
+    `hard_cap_exceeded=true` (a per-segment "we shipped over cap"
+    flag) and scrape
+    `holodub_hard_drift_cap_violations_total{direction,reason}`
+    for aggregate counts. The expected steady state is zero —
+    the agent should converge inside the cap given enough
+    `RETRANSLATION_MAX_ATTEMPTS=30` and the chapter-2 fix bundle.
 
 - **Chapter 2 drift fix — PR-1 bug bundle (OPT-201-followup-1,
   OPT-202-followup-1, OPT-204-followup-1; code-complete, L2 pending)**:

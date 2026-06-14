@@ -1,4 +1,9 @@
-# HoloDub 优化路线图
+# HoloDub 优化路线图（已归档）
+
+> ⚠️ **本文档已于 2026-06-14 停止维护。** 所有 OPT 任务已迁移至 [TaskMaster](https://github.com/eyaltoledano/claude-task-master)，任务数据位于 `.taskmaster/tasks/tasks.json`。
+>
+> 本文档保留为历史参考（只读），不再新增或修改任何内容。
+> 查看当前任务状态：`npx task-master-ai list` 或通过 Hermes MCP `taskmaster` 工具集查询。
 
 > 本文档是 HoloDub 所有长期优化项的 **single source of truth**。
 > 与 [`CHANGELOG.md`](../../CHANGELOG.md) 配合：roadmap 跟踪 *规划与进度*，CHANGELOG 只记录 *已 ship 事实*。
@@ -97,6 +102,7 @@ flowchart LR
 | OPT-403 | Chapterize 算法 + fan-out 多 chapter job | P1 | done | 5d | OPT-401, OPT-402 |
 | OPT-201 | SegmentAgent ReAct 重构 | P2 | code-complete (L2/L3/L4 pending) | 5d → ~6d 实际 | OPT-002 |
 | OPT-201-followup-1 | EnsembleMaxPerSegment 1→2 + over_short_gap_stuck 死循环退路 (chapter 2 漂移 PR-1 / B3) | P2 | code-complete (L2 chapter 2 rerun pending) | 0.5d 实际 | OPT-201, OPT-202 |
+| OPT-201-followup-2 | HardMaxUnderDriftSec/HardMaxOverDriftSec 绝对硬 cap（chapter 2 漂移 PR-3：操作员目标 ≤0.7s under / ≤0.3s over） | P1 | code-complete (L2 chapter 2 rerun pending) | 1d 实际 | OPT-201, OPT-002-followup-4, OPT-002-followup-5 |
 | OPT-202 | Speculative ensemble + judge | P2 | code-complete (L2/L3/L4 pending) | 3d → ~5d 实际 | OPT-002, OPT-201 |
 | OPT-202-followup-1 | Ensemble abs-drift 触发条件（attempt≥2 && drift>adaptive band）(chapter 2 漂移 PR-1 / B2) | P2 | code-complete (L2 chapter 2 rerun pending) | 0.5d 实际 | OPT-202 |
 | OPT-203 | Streaming TTS + SSE 推送 | P2 | planned | 5d | - |
@@ -738,6 +744,38 @@ flowchart TD
   - `internal/pipeline/stage_tts_agent.go`: `EnsembleMaxPerSegment: s.cfg.EnsembleMaxPerSegment`
   - `.env` / `.env.example`: 新增 `ENSEMBLE_MAX_PER_SEGMENT=2` 默认值
 - **PRs**: PR-1 of `chapter2-drift-fix`
+
+---
+
+#### OPT-201-followup-2 HardMaxUnderDriftSec / HardMaxOverDriftSec 绝对漂移硬 cap
+
+- **Status**: code-complete (L2 chapter 2 rerun pending operator)
+- **Source**: 操作员漂移目标 (`under ≤ 0.7s` / `over ≤ 0.3s`)，PR-2 rerun 后仍有 23/45 段超目标
+- **Estimate**: 1d 实际
+- **Depends on**: OPT-201, OPT-002-followup-4, OPT-002-followup-5
+- **背景**: PR-2 收紧 `AdaptiveMaxAcceptableDrift` + 提高 `RETRANSLATION_MAX_ATTEMPTS=30` 后，chapter 2 的 acceptance 仍然全部走百分比阈值。长段（≥ 20s）的 6% drift = 1.5s — 在 `within_threshold` 内但绝对值远超操作员 0.7s 的 under cap；VETO 路径的 8% drift = 2s 同理。over-run 方向上更糟，`borrow_from_gap` 容忍 12% 的 over-drift（25s 段 = 3s），`judge_veto_drift` 在 over-run 路径上也允许 8% 漂移 → seg 10307 接受了 3.5s 的 over-run。
+- **Outcome**:
+  - `Config.HardMaxUnderDriftSec` / `HardMaxOverDriftSec` 两个新绝对秒数 cap，叠加在百分比阈值之上
+  - 不对称默认 (0.7 / 0.3)：反映"trailing silence 比 clipped tail 宽容"的运营约束
+  - `Decide` 重构：每个 acceptance branch 之前都过一次 `evalHardCap` —— `within_threshold` / `borrow_from_gap` / `judge_veto_drift`（under + over 双向）超 cap → 强制再 retranslate；逃生路径 (`no_more_attempts` / `clip_overflow` / `over_short_gap_stuck` / `retranslation_disabled`) 仍 accept 但 `Decision.HardCapExceeded=true` + `HardCapDirection=over|under` 让 metric/log 可见
+  - 新 Prometheus counter `holodub_hard_drift_cap_violations_total{direction, reason}`，每次"逃生路径接受超 cap 音频"加 1 — 运维稳态期望 0，持续增长则需要排查是 prompt / cap / max_attempts 的问题
+  - `emit()` 每条 `agent_decision` 日志都带 `hard_cap_exceeded` 和 `hard_cap_direction` 字段（false/空时默认存在，方便 grep `hard_cap_exceeded=true` 一行命中所有违规段）
+  - `DefaultObservabilityObserver` 自动 fire metric（生产路径默认接入）
+- **Verification**:
+  - 7 个新单测覆盖：under 超 cap 拒 `within_threshold` / over 超 cap 拒 `borrow_from_gap` / VETO 双向都受 cap 约束 / cap=0 后向兼容 / last_attempt 仍 accept 但 mark / `over_short_gap_stuck` mark / 不对称 cap（同 |drift| 0.6s 时 under accept，over retranslate）
+  - 现有所有测试保持绿色（`defaultCfg()` 留空两个 cap = 零值 = 关闭）
+  - L2: chapter 2 rerun 后 `hard_cap_exceeded=true` 日志条数应 = 0 段 (或接近 0)；`holodub_hard_drift_cap_violations_total` 各 label 应为 0
+- **Rollout**: 受 `HARD_MAX_UNDER_DRIFT_SEC` / `HARD_MAX_OVER_DRIFT_SEC` env 控制，任一设为 0 → 关闭该方向 cap → 行为回到 PR-2；同时设 0 → 100% 兼容老行为
+- **Related rules**: [agent-design.mdc](../../.cursor/rules/agent-design.mdc)（pure decision function 增加 cap gate）, [observability-and-cost.mdc#3](../../.cursor/rules/observability-and-cost.mdc) (低基数 label：direction × reason ≤ 12 series)
+- **关键改动点**:
+  - `internal/agents/segment_agent.go`: 加 `evalHardCap` / `markHardCap` helper，`Decide` 在 acceptance branch 前 gate，`emit` 写 `hard_cap_exceeded` + `hard_cap_direction`，`DefaultObservabilityObserver` 调 `IncHardDriftCapViolation`
+  - `internal/agents/types.go`: `Config` 加两个 cap 字段，`Decision` 加 `HardCapExceeded` + `HardCapDirection`
+  - `internal/observability/metrics.go`: 新增 `hardDriftCapViolations CounterVec` + `IncHardDriftCapViolation()` 函数
+  - `internal/config/config.go`: 解析 `HARD_MAX_UNDER_DRIFT_SEC` / `HARD_MAX_OVER_DRIFT_SEC` (默认 0.7 / 0.3)
+  - `internal/pipeline/stage_tts_agent.go`: 透传两个 cap 到 `agents.Config`
+  - `.env` / `.env.example`: 新增两个 env 默认值
+  - `internal/agents/segment_agent_test.go`: 7 个新 case
+- **PRs**: PR-3 of `chapter2-drift-fix`
 
 ---
 
