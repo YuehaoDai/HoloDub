@@ -141,6 +141,15 @@ func (s *Service) RetryJob(ctx context.Context, jobID uint, stage models.JobStag
 	return s.retryJobWithHint(ctx, jobID, stage, segmentIDs, requestedBy, nil)
 }
 
+// RetryJobWithAdvance is RetryJob with explicit control over whether the
+// pipeline may auto-advance to the next stage after the retried stage
+// succeeds. advance=false is the historical behaviour (task carries
+// SkipAutoAdvance); advance=true lets a tts retry flow straight into merge
+// so operators do not have to enqueue the merge stage by hand.
+func (s *Service) RetryJobWithAdvance(ctx context.Context, jobID uint, stage models.JobStage, segmentIDs []uint, requestedBy string, advance bool) error {
+	return s.retryJobWithHintAdvance(ctx, jobID, stage, segmentIDs, requestedBy, nil, advance)
+}
+
 // DispatchSegmentRework satisfies rework.RetryJobAPI. The hint is
 // carried verbatim into the queue payload; when nil the behaviour is
 // identical to RetryJob.
@@ -149,6 +158,10 @@ func (s *Service) DispatchSegmentRework(ctx context.Context, jobID uint, stage m
 }
 
 func (s *Service) retryJobWithHint(ctx context.Context, jobID uint, stage models.JobStage, segmentIDs []uint, requestedBy string, hint *models.ReworkHint) error {
+	return s.retryJobWithHintAdvance(ctx, jobID, stage, segmentIDs, requestedBy, hint, false)
+}
+
+func (s *Service) retryJobWithHintAdvance(ctx context.Context, jobID uint, stage models.JobStage, segmentIDs []uint, requestedBy string, hint *models.ReworkHint, advance bool) error {
 	if stage == "" {
 		job, err := s.store.GetJob(ctx, jobID)
 		if err != nil {
@@ -175,7 +188,7 @@ func (s *Service) retryJobWithHint(ctx context.Context, jobID uint, stage models
 		SegmentIDs:      store.UniqueUint(segmentIDs),
 		RequestedBy:     requestedBy,
 		Reason:          reason,
-		SkipAutoAdvance: true,
+		SkipAutoAdvance: !advance,
 		ReworkHint:      hint,
 	})
 }

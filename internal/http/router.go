@@ -56,6 +56,11 @@ type createJobRequest struct {
 type retryJobRequest struct {
 	Stage      string `json:"stage"`
 	SegmentIDs []uint `json:"segment_ids"`
+	// Advance, when true, lets the pipeline continue to the next stage (e.g.
+	// merge) after the retried stage succeeds, instead of stopping at the
+	// retried stage. Default false keeps the historical skip-auto-advance
+	// behaviour so existing callers are unaffected.
+	Advance bool `json:"advance,omitempty"`
 }
 
 type voiceProfileRequest struct {
@@ -458,7 +463,7 @@ func (s *Server) retryJob(c *gin.Context) {
 	if request.Stage != "" {
 		stage = models.JobStage(request.Stage)
 	}
-	if err := s.pipeline.RetryJob(c.Request.Context(), job.ID, stage, request.SegmentIDs, "api"); err != nil {
+	if err := s.pipeline.RetryJobWithAdvance(c.Request.Context(), job.ID, stage, request.SegmentIDs, "api", request.Advance); err != nil {
 		respondError(c, stdhttp.StatusInternalServerError, "retry_job_failed", err.Error())
 		return
 	}
