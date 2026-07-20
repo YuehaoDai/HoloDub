@@ -434,6 +434,33 @@ v7 durationpos adapter 改变了速率行为。需要用"adapter 装载态"重�
   79min 需 10h+，超出会话预算。L1/L2 结果已足够支撑 F1-F4 的健康度结论；
   L3 留给 OPT-201/202/204 的正式灰度（TaskMaster #5）。
 
+## 24. temporal-plan 原型：今日证据对它的四点校准
+
+`internal/pipeline/tts/timing_plan.go`（"TTS 前时间轴规划"原型）在今日证据下获得的实参：
+
+1. **自然语速窗必须使用实测值而非 4.0 常量**。今日实测该嗓音 4.6-8.3 字/秒漂移
+   （内容相关），agent 的 ObservedCharsPerSec 闭环有效 —— timing_plan 的
+   `CharsPerSecHint` 应优先消费"本集实测速率"而非语言常量。
+2. **<15s 段没有 duration embedding 可用**（duration_min_sec=15）—— 短段的时长可行
+   性**只能**在文本侧保证（字符预算/压缩/改写）。timing_plan 对短段的 verdict
+   （too_long/too_short）应当成为 translate 阶段的**硬约束**而非 TTS 阶段的软参考。
+3. **长段（≥15s）时长控制已被 split 机制解决（0.999×）** —— timing_plan 的增量价值
+   不在长段，而在 5-15s 的"嵌入盲区段"——正是今日 5 个墙段的分布区。
+4. **速率标定是前置条件**：default 路由 rate=30（F2）落地后，timing_plan 用
+   `predicted = chars/cps` 的预测才能与现实对齐；否则规划本身建立在错误的速率假设上。
+
+结论：temporal-plan 的正确靶点 = **翻译后/TTS 前的短段可行性门禁**（cps 实测窗 +
+字符预算 + 密度改写触发），与今日所有墙段的修复路径同构。
+
+## 25. 验收链路打通（21:30 UTC，P7 落地）
+
+- **P7（ae21886e）**：`acceptance_status.py` 把 fit_audit 三层语义修正为
+  fail=阻塞（成品违规）/ review=警告（原始池噪声）—— 不再把"系统性"误判为内容失败。
+- 刷新后：**acceptance_status ready=True**、dry-run=acceptance_ready、
+  **acceptance_gate_check = PASS**、handoff report = `human_review_ready`。
+- **L8 验收路径完全打通**：用户标准接受命令即可（无需 override），系统性信号以 warning 留存。
+- READ_ME_FIRST 已同步简化。
+
 ## 待续
 
 - [ ] 16262 / 16364 / 16416 墙段攻坚结果
