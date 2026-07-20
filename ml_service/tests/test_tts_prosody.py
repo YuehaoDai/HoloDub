@@ -26,6 +26,7 @@ from app.adapters.tts import (
     _IDX_SAD,
     _IDX_SURPRISED,
     _LoraCandidatePolicy,
+    _blend_tokens_per_char,
     _emo_vector_from_valence_arousal,
     _find_loud_reference_start,
     _find_stable_reference_candidate,
@@ -302,6 +303,44 @@ def test_duration_control_piecewise_token_rate_matches_lora_pilot():
     assert _indextts2_duration_token_rate(settings, 20.46) == 30.0
     assert _indextts2_duration_token_rate(settings, 26.35) == 32.5
     assert _indextts2_duration_tokens(settings, 20.46) == 614
+
+
+# ── tokens-per-char blend floor (2026-07-21 ep183 ratchet fix) ──────────
+#
+# The text token budget blends the observed rate from the previous attempt
+# with the prior. Before the floor, one truncated observation (audio cut by
+# the mel-token cap) fed a tiny observed rate back into the budget, capping
+# the next attempt even harder and pinning output near zero — the ratchet
+# that stalled ep183's short dense segments (16364 family).
+
+
+def test_blend_tokens_per_char_returns_prior_without_observation():
+    assert _blend_tokens_per_char(None, 13.5) == 13.5
+    assert _blend_tokens_per_char(0.0, 13.5) == 13.5
+    assert _blend_tokens_per_char(-2.0, 13.5) == 13.5
+
+
+def test_blend_tokens_per_char_blends_normal_observation():
+    # 0.6 * 10.0 + 0.4 * 13.5 = 11.4 — comfortably above the floor.
+    assert math.isclose(_blend_tokens_per_char(10.0, 13.5), 11.4)
+
+
+def test_blend_tokens_per_char_floor_stops_ratchet():
+    # Poisoned observation (e.g. 46 chars truncated to 3.633s -> 3.95 t/s):
+    # raw blend = 0.6*3.95 + 0.4*13.5 = 7.77; a still-worse observation of
+    # 1.0 would give 6.0 without the floor. Floor binds at 0.5*13.5 = 6.75.
+    poisoned = 1.0
+    blended = _blend_tokens_per_char(poisoned, 13.5)
+    assert math.isclose(blended, 6.75)
+    # Budget for a 46-char text must stay >= 46 * 6.75 = 310 tokens, i.e.
+    # the next attempt is never starved below half the prior budget.
+    assert blended * 46 >= 46 * 0.5 * 13.5
+
+
+def test_blend_tokens_per_char_respects_high_observation():
+    # Fast speech should still tighten the budget (that is Scheme 2's
+    # purpose); the floor only stops collapse, not adaptation.
+    assert math.isclose(_blend_tokens_per_char(20.0, 13.5), 0.6 * 20.0 + 0.4 * 13.5)
 
 
 def test_duration_control_generation_meta_overrides_global_default():

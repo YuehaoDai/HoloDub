@@ -242,6 +242,37 @@ def _indextts2_duration_control_mode(
     return "off"
 
 
+# Lower bound for the adaptive tokens-per-char blend used by the text token
+# budget. Without it, a single truncated or over-rushed observation (e.g. a
+# generation that was cut by the mel-token cap) feeds a tiny observed rate
+# back into the next attempt's budget, which caps the next generation even
+# harder — a ratchet that can pin a segment's output far below target
+# regardless of the text. Observed rates below half the prior are treated as
+# poisoned calibration rather than signal; the blend may never sink below
+# floor_ratio * prior. See docs/mit6824-research-journal-2026-07-21.md (R1).
+TOKENS_PER_CHAR_FLOOR_RATIO: float = 0.5
+
+
+def _blend_tokens_per_char(
+    observed: float | None,
+    prior: float,
+    *,
+    observed_weight: float = 0.6,
+    floor_ratio: float = TOKENS_PER_CHAR_FLOOR_RATIO,
+) -> float:
+    """Blend an observed tokens-per-char rate with the prior, floored.
+
+    observed=None (or non-positive) returns the prior untouched. Otherwise
+    returns observed_weight*observed + (1-observed_weight)*prior, but never
+    less than floor_ratio*prior so a poisoned observation cannot collapse the
+    text token budget across retries.
+    """
+    if observed is None or observed <= 0 or prior <= 0:
+        return prior
+    blended = observed_weight * observed + (1.0 - observed_weight) * prior
+    return max(blended, floor_ratio * prior)
+
+
 def _indextts2_constant_duration_token_rate(
     settings: Any,
     generation_meta: dict[str, Any] | None = None,
@@ -266,8 +297,7 @@ def _indextts2_constant_duration_token_rate(
 
 def _indextts2_duration_token_rate(
     settings: Any,
-    target_sec: float | None = None,
-    generation_meta: dict[str, Any] | None = None,
+    target_sec: float | None = None,    generation_meta: dict[str, Any] | None = None,
 ) -> float:
     constant_rate = _indextts2_constant_duration_token_rate(settings, generation_meta)
     policy = str(
@@ -887,11 +917,14 @@ class TTSAdapter:
                 duration_mode = "off"
         text_chars = max(1, len([c for c in request.text if not c.isspace()]))
 
-        # Scheme 2: blend observed tokens_per_char with prior if feedback exists.
-        tokens_per_char = PRIOR_TOKENS_PER_CHAR
+        # Scheme 2: blend observed tokens_per_char with prior if feedback
+        # exists. Floored via _blend_tokens_per_char so a truncated or
+        # over-rushed observation cannot ratchet the budget downward across
+        # retries (the 2026-07-21 ep183 short-segment under-production bug).
+        observed_tokens_per_char: float | None = None
         if request.prev_actual_sec > 0 and request.prev_text_chars > 0:
-            observed = (request.prev_actual_sec * TOKENS_PER_SEC) / request.prev_text_chars
-            tokens_per_char = 0.6 * observed + 0.4 * PRIOR_TOKENS_PER_CHAR
+            observed_tokens_per_char = (request.prev_actual_sec * TOKENS_PER_SEC) / request.prev_text_chars
+        tokens_per_char = _blend_tokens_per_char(observed_tokens_per_char, PRIOR_TOKENS_PER_CHAR)
 
         # Scheme 1: text-based budget — primary constraint.
         tokens_from_text = int(text_chars * tokens_per_char * HEADROOM)
