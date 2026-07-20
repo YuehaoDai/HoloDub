@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HoloDub 分支状态全景 · 2026-07-21（工作树清零后）</title>
+<style>
+  :root { --bg:#0d1117; --card:#161b22; --border:#30363d; --text:#e6edf3; --muted:#8b949e;
+    --purple:#a371f7; --orange:#d29922; --green:#3fb950; --gray:#6e7681; --blue:#58a6ff; --red:#f85149; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background:var(--bg); color:var(--text); font-family:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif; padding:32px; line-height:1.6; }
+  .container { max-width:1080px; margin:0 auto; }
+  h1 { font-size:26px; margin-bottom:6px; }
+  h2 { font-size:18px; margin:36px 0 16px; padding-bottom:8px; border-bottom:1px solid var(--border); }
+  .subtitle { color:var(--muted); font-size:14px; margin-bottom:24px; }
+  .tldr { background:linear-gradient(135deg,#1c2333,#161b22); border:1px solid var(--border); border-left:4px solid var(--green); border-radius:8px; padding:16px 20px; margin-bottom:24px; font-size:15px; }
+  .stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin-bottom:8px; }
+  .stat { background:var(--card); border:1px solid var(--border); border-radius:8px; padding:14px 16px; }
+  .stat .num { font-size:26px; font-weight:700; }
+  .stat .label { font-size:12px; color:var(--muted); margin-top:2px; }
+  .num.orange{color:var(--orange)} .num.green{color:var(--green)} .num.gray{color:var(--gray)} .num.blue{color:var(--blue)}
+  .timeline { position:relative; margin:24px 0 8px 10px; padding-left:34px; }
+  .timeline::before { content:""; position:absolute; left:10px; top:8px; bottom:8px; width:2px; background:var(--border); }
+  .node { position:relative; margin-bottom:14px; }
+  .node .dot { position:absolute; left:-30px; top:6px; width:14px; height:14px; border-radius:50%; border:3px solid var(--bg); }
+  .dot.orange{background:var(--orange);box-shadow:0 0 8px rgba(210,153,34,.55)} .dot.green{background:var(--green)} .dot.gray{background:var(--gray)}
+  .node .card { background:var(--card); border:1px solid var(--border); border-radius:8px; padding:10px 14px; }
+  .node.current .card { border-color:var(--orange); }
+  .hash { font-family:Consolas,monospace; color:var(--blue); font-size:13px; }
+  .msg { font-size:14px; margin:2px 0 6px; }
+  .date { color:var(--muted); font-size:12px; }
+  .pill { display:inline-block; font-size:11.5px; font-family:Consolas,monospace; padding:1px 9px; border-radius:999px; margin:2px 4px 2px 0; border:1px solid; }
+  .pill.head{color:#fff;background:var(--orange);border-color:var(--orange);font-weight:700}
+  .pill.local{color:var(--orange);border-color:var(--orange)} .pill.remote{color:var(--green);border-color:var(--green)} .pill.merged{color:var(--gray);border-color:var(--gray)}
+  .zone { font-size:11px; font-weight:700; letter-spacing:2px; text-transform:uppercase; margin:18px 0 10px 4px; }
+  .zone.o{color:var(--orange)} .zone.g{color:var(--green)} .zone.gr{color:var(--gray)}
+  table { width:100%; border-collapse:collapse; font-size:13.5px; background:var(--card); border-radius:8px; overflow:hidden; }
+  th,td { text-align:left; padding:9px 12px; border-bottom:1px solid var(--border); }
+  th { background:#1c2333; font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; }
+  tr:last-child td { border-bottom:none; }
+  .mono{font-family:Consolas,monospace;font-size:12.5px}
+  .badge{font-size:12px;padding:2px 8px;border-radius:4px;white-space:nowrap}
+  .badge.ok{background:rgba(63,185,80,.15);color:var(--green)} .badge.warn{background:rgba(210,153,34,.15);color:var(--orange)} .badge.del{background:rgba(110,118,129,.2);color:var(--muted)}
+  .footer{margin-top:40px;color:var(--gray);font-size:12px;text-align:center}
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>🌿 HoloDub 分支状态全景</h1>
+  <div class="subtitle">2026-07-21 · 工作树有序提交后的新状态（替代当日早些时候版本）</div>
+
+  <div class="tldr">
+    <b>当前状态：</b>工作树已清零 ✅ —— 160 个在途文件已按主题拆成 <b>6 个 commit</b> 落进 <code>dev-win</code>。
+    现在唯一的待办是：<code>dev-win</code> 领先 <code>origin/main</code> <b>9 个 commit</b> 待推送（3 个项目管理 + 6 个今日新提交），
+    以及 3 个已合并的历史 feature 分支可清理。
+  </div>
+
+  <div class="stats">
+    <div class="stat"><div class="num green">0</div><div class="label">未提交文件（工作树已清零）</div></div>
+    <div class="stat"><div class="num orange">9</div><div class="label">dev-win 领先 origin/main</div></div>
+    <div class="stat"><div class="num blue">6</div><div class="label">今日主题化 commit</div></div>
+    <div class="stat"><div class="num gray">3</div><div class="label">已合并 feature 分支（可删）</div></div>
+  </div>
+
+  <h2>📊 分支时间线（新 → 旧）</h2>
+  <div class="timeline">
+    <div class="zone o">● dev-win · 今日 6 个主题 commit（未推送）</div>
+    <div class="node current"><div class="dot orange"></div><div class="card">
+      <span class="hash">9543cdf</span> <span class="pill head">HEAD</span><span class="pill local">dev-win</span>
+      <div class="msg">docs: bilingual README refresh + configuration &amp; UI guides</div>
+      <div class="date">2026-07-21</div></div></div>
+    <div class="node"><div class="dot orange"></div><div class="card">
+      <span class="hash">689c65c</span>
+      <div class="msg">feat(ui): LoRA console pages + zh/en i18n + workbench refinements</div>
+      <div class="date">39 文件 · LoRA 两个新页面 · 全界面中英切换 · bundle 重建</div></div></div>
+    <div class="node"><div class="dot orange"></div><div class="card">
+      <span class="hash">1ac486a</span>
+      <div class="msg">feat(tts-quality): fit audit + provenance + non-speech guard + agent refinements</div>
+      <div class="date">54 文件 · SegmentAgent 决策矩阵扩展 · ml-service 适配器加固</div></div></div>
+    <div class="node"><div class="dot orange"></div><div class="card">
+      <span class="hash">dd4afc4</span>
+      <div class="msg">feat(temporal-plan): pre-TTS timing plan prototype (flag-gated)</div>
+      <div class="date">9 文件 · 原 codex 分支主题，TEMPORAL_PLAN_* 门控</div></div></div>
+    <div class="node"><div class="dot orange"></div><div class="card">
+      <span class="hash">31b5c18</span>
+      <div class="msg">feat(lora): IndexTTS2 LoRA adapter training closed-loop</div>
+      <div class="date">120 文件 +53970 行 · 全栈闭环 + tools/ 工具链 + SOP 文档</div></div></div>
+    <div class="node"><div class="dot orange"></div><div class="card">
+      <span class="hash">eb16376</span>
+      <div class="msg">chore(runtime): plug gitignore holes + host-mounted torch cache</div>
+      <div class="date">2026-07-21 · 防数据/产物目录误入库</div></div></div>
+
+    <div class="zone o">● 此前未推送的 3 个项目管理 commit</div>
+    <div class="node"><div class="dot orange"></div><div class="card">
+      <span class="hash">7a14b6b · dcc18e7 · d4cdb5b</span>
+      <div class="msg">SpecWorkflow steering · task board dashboard · TaskMaster 迁移</div>
+      <div class="date">2026-06-14 · codex/temporal-planning-prototype 分支已删除（完全合并）</div></div></div>
+
+    <div class="zone g">● 已推送 · origin/main</div>
+    <div class="node"><div class="dot green"></div><div class="card">
+      <span class="hash">c154444</span> <span class="pill remote">origin/main</span>
+      <div class="msg">fix(chapter2-drift): PR-1+PR-2 bundle to crush chapter 2 long-segment drift</div>
+      <div class="date">2026-05-12 · 远端主干（落后 9）</div></div></div>
+    <div class="node"><div class="dot green"></div><div class="card">
+      <span class="hash">065cbda</span>
+      <div class="msg">feat(quality-mainline-q): OPT-201 SegmentAgent + OPT-202 ensemble + OPT-204 prosody + PR-14</div>
+      <div class="date">质量主线 + OPT-407 rework + 三级 Judge + 章节化（约 55 commit，3→5 月）</div></div></div>
+
+    <div class="zone gr">● 历史 · 已全部合并（可清理）</div>
+    <div class="node"><div class="dot gray"></div><div class="card">
+      <span class="hash">c00c5c6</span> <span class="pill merged">feature/voice-switching</span>
+      <div class="date">2026-03-30 · 已合并 · 可 git branch -d</div></div></div>
+    <div class="node"><div class="dot gray"></div><div class="card">
+      <span class="hash">ce58f9f</span> <span class="pill merged">feature/ui-segment-phase2</span> <span class="pill merged">origin/dev-win 残留</span>
+      <div class="date">2026-03-21 · 已合并 · 远端残留可删</div></div></div>
+    <div class="node"><div class="dot gray"></div><div class="card">
+      <span class="hash">1be5ebb</span> <span class="pill merged">feature/ui-segment-review</span>
+      <div class="date">2026-03-15 · 已合并 · 可 git branch -d</div></div></div>
+  </div>
+
+  <h2>🗂 分支明细表</h2>
+  <table>
+    <tr><th>分支</th><th>tip</th><th>状态 / 建议</th></tr>
+    <tr><td class="mono">dev-win <b>(HEAD)</b></td><td class="mono">9543cdf</td><td><span class="badge warn">领先 origin/main 9</span> 待你发话后 push（dev-win:main）</td></tr>
+    <tr><td class="mono">origin/main</td><td class="mono">c154444</td><td><span class="badge ok">远端主干</span></td></tr>
+    <tr><td class="mono">codex/temporal-planning-prototype</td><td class="mono">—</td><td><span class="badge ok">已删除</span> 内容全部并入 dev-win</td></tr>
+    <tr><td class="mono">feature/voice-switching</td><td class="mono">c00c5c6</td><td><span class="badge del">已合并 · 可删</span></td></tr>
+    <tr><td class="mono">feature/ui-segment-phase2</td><td class="mono">ce58f9f</td><td><span class="badge del">已合并 · 可删</span>（upstream gone）</td></tr>
+    <tr><td class="mono">feature/ui-segment-review</td><td class="mono">1be5ebb</td><td><span class="badge del">已合并 · 可删</span></td></tr>
+    <tr><td class="mono">origin/dev-win</td><td class="mono">ce58f9f</td><td><span class="badge del">远端残留 · 可删</span></td></tr>
+    <tr><td class="mono">dependabot/* × 8</td><td class="mono">—</td><td><span class="badge warn">待处理</span> golang 1.26 / cuda 13.2.1 / 各依赖组</td></tr>
+  </table>
+
+  <div class="footer">HoloDub branch status · 工作树清零版 · 2026-07-21</div>
+</div>
+</body>
+</html>

@@ -1,0 +1,260 @@
+# MIT 6.824 量产恢复与 LoRA 研究日志 · 2026-07-21
+
+> **会话状态快照（19:00 UTC / 03:00 本地，供上下文压缩后恢复）**
+> - 环境：Docker/WSL 已修复，三服务跑 6-25 最终代码，GPU 健康
+> - ep183：ch1(358)✅merge完 / ch2(359)✅(6月) / ch3(360)✅tts完（merge已入队）/ ch4(361)✅tts完（merge已入队）/ ch5(362) 卡 16416
+> - 墙段：16262✅(0.86%) 16364✅(1.7%) 16395✅(1ms) 16413✅(0.08%) 均带 final_implied_fit_delta < 5%
+> - 16416（12.46s，最后一个）：2 轮循环失败（棘轮+乱码事故），干净 73 字种子已就位，
+>   队列中 segment_patch 单段任务会以该种子开新循环
+> - 下一步：16416 攻克 → 362 merge → 全集 merge 自动触发 → 终结器
+>   `python tools/mit6824_finalize_lecture.py --lecture 8 --episode-id 183 --refresh-tracker --execute`
+> - 终结器产物齐 → PushNotification 叫用户听审
+> - 关键教训：中文 PATCH 必须 --data-binary @file；MSYS_NO_PATHCONV=1 用于容器内路径
+
+> 本会话（~10h 自主运行）的连续记录：环境恢复、L8 量产推进、微调决策研究。
+> 策略层结论见 `docs/lora-finetune-when-and-what-data.md`；本文件按时间记录实证。
+
+## 01. 环境恢复（01:10–01:45）
+
+- 症状：Docker Desktop 500 / docker-desktop WSL distro `MountDisk/HCS/E_ACCESSDENIED`。
+- 根因：F: 盘上两个 VHDX 的陈旧挂载态（6-29 非正常停机遗留）。Ubuntu distro 正常 → WSL 核心健康。
+- 修复：`ext4.vhdx` 与 `docker_data.vhdx`(133GB) 各自重命名+复制刷新文件身份（**仅重命名无效，必须复制**）。
+  已写入长期记忆，数据盘旧文件 `docker_data.vhdx.old` 待验证后删除。
+- 栈恢复后确认：ml-service 镜像 06-25 03:39 UTC（源码最终态），全真实后端（faster-whisper large-v3 /
+  demucs mdx_q / pyannote / IndexTTS2），GPU RTX 5080 12.7/16.3GB。
+
+## 02. ep183 断点诊断（01:45–02:00）
+
+- L8 共 5 章：ch2 (job359) 6-26 已完成；ch1/3/4/5 (358/360/361/362) 6-26 凌晨全部 failed 于 tts_duration。
+- 失败归因（job.error_message + 段密度分析）：
+  | 段 | 章 | 目标 | 字数 | 密度 | 失败原因 |
+  |---|---|---|---|---|---|
+  | 16262 | ch1 | 24.84s | 168 | 6.8 cps | fit 18.4%（超 5% 上限） |
+  | 16364 | ch3 | 6.72s | 67 | **10.0 cps** | fit 45.9%（极端密度） |
+  | 16395 | ch4 | 44.26s | 205 | 4.6 cps | LLM 重译超时（瞬时） |
+  | 16416 | ch5 | 12.46s | 85 | 6.8 cps | fit 48.1% |
+- 关键发现：二进制是 6-22 构建，但源码修到 6-25 —— **最后三天的主流程修复从未部署**。
+  已按热更新规则重建双 binary（HEAD = 6-25 最终代码）并重启 api/worker。
+
+## 03. 四章重跑（02:00– 进行中）
+
+- 每章仅剩 1-2 段墙段（其余段 6 月已合成），重跑=攻坚 4-5 段。
+- **16262（ch1）验证点**：重译 168→**87 字**（压到 3.5cps 预算内）→ 但实测音频 16.6s/24.84s
+  （欠 33%）→ attempt 2 升级 **OPT-202 ensemble 重译**。
+  - 机制观察：`RetranslateArgs.ObservedCharsPerSec` 会把实测语速（87字/16.6s=5.24cps）反馈给
+    重译 LLM 计算字符上限 —— 6-25 代码的闭环按设计工作。
+- **16262 深化（attempt 2，重要修正）**：日志揭示同段双路由时长分裂 ——
+  `fallback_actual_sec=16.648`（default 欠 33%）vs `candidate_actual_sec=32.56`（LoRA 候选超 31%），
+  目标 24.84s。agent 日志 `using lora candidate text-compression timing`：候选规划器证明当前文本
+  对候选路由过密 → 发出 compressionHint → ensemble 重译 87→**72 字**（面向候选路由优化）。
+  - **修正我先前的假设**：ensemble fidelity judge 选短文本并非"对抗时长目标"，而是
+    compressionHint 分支显式要求"不要扩写、继续压缩"后的正确选择。设计逻辑自洽：
+    default 路由的欠时长是干扰信号，候选路由才是生产目标。
+  - 待验证：72 字 × 候选速率(2.67字/s)≈27s，fit 仍可能 >5%（需 ≤26.1s），预期再压一轮到 ~68 字。
+  - **发现的潜在改进点**：ensemble 的 JudgeFidelity 评分不含时长维度 —— 当无 compressionHint
+    且重译原因是 under_run 时，judge 可能偏好忠实但过短的候选，与时长目标对抗。
+    建议：时长感知评分（把 predicted fit 纳入 OverallScore 或先按预测时长窗过滤再评 fidelity）。
+    记入改进清单。
+- 终结器注意：`mit6824_finalize_lecture.py` 的选集逻辑优先"最新 completed 集"，
+  今早把 ep180（旧失败集）finalize 了一遍（fit_audit 正确报 fail，无危害）。
+  **ep183 完成后需重跑终结器覆盖这些产物**。
+
+## 04. 墙段攻坚实时记录
+
+### 16262（ch1）✅ 已攻克（attempt 7 accept）
+- 轨迹：16.65s(87字) → 19.05s → 23.55s → 25.26s → **24.63s / 138字 / 漂移 0.86%**。
+- 7 次尝试内收敛：retranslate + 2 次 ensemble + 观测速率反馈 + compressionHint 协作。
+- **6 月 fit 18.4% 的死段，在新代码下以 0.86% 漂移通过** —— 6-25 代码有效性获生产级验证。
+
+### 16395（ch4）✅ 一次通过（attempt 0 accept）
+- **LoRA 候选路由对 44.26s 超长段首发命中：实测 44.261s，漂移 1ms**。
+- 6 月因 LLM 超时失败的段，split 候选路径直接过门 —— 候选机制生产级验证。
+
+### 16364（ch3）🔧 人工改写修复（文档记载的正式修复路径）
+- 自动循环震荡：3.63s(抢读)↔7.78s(超时)，8 次尝试不收敛，fit 15.7% 被门拒 → job 360 failed。
+- PATCH 改写为 ~33 字（"对，ZooKeeper 正是一个典型的类 Raft 分布式协调服务。"）+ rerun。
+- 语义保留核心（ZK≈类Raft协调服务），舍弃对话性填充（"最新这个词用得准确"）。
+
+### 16413/16416（ch5）⚔️ 双路由夹击震荡
+- **根因新发现（系统性）**：default 路由抢读（~10cps，欠 40%+）与 LoRA 候选路由自然/偏慢
+  （3.3-5.5cps，超 8-60%）把目标夹在中间 —— 文本扩写则候选爆，压缩则 default 崩 → 震荡。
+- 16416 八次尝试耗尽（accept 25.5% 欠幅，将被门禁拒绝）；16413 thinking 模型循环中。
+- 候选速率本身不稳（同段 3.3-5.5cps 波动）→ 文本甜点只能逼近距离，剩余靠门禁+重抽。
+- 修复计划：362 任务结束后 PATCH 两段到计算甜点（16413≈53字、16416≈46字）+ 单段重跑。
+
+### 发现的重要机制行为
+- `retry` API 默认 `skip_auto_advance=true`：tts 完成后不自动续 merge → 需手工补 merge 任务
+  （358 的 merge 已补队）。**改进项 P2 已记录**。
+- ensemble winner 全部由 qwen-plus 拿下（judge_score 0.6-0.95），deepseek-chat 候选全败 ——
+  后续可观察是否模型阵容需要调整。
+
+## 05. 改进提案（生产实证驱动）
+
+### P1: ensemble 候选选择的时长盲区（代码级验证）
+- 现象（16262 attempt 2）：重译目标是扩写到 ~130 字，ensemble 却选了 72 字胜者。
+- 根因（`internal/llm/ensemble.go` + `judge.go` 实证）：ensemble 用 JudgeFidelity 选胜者，
+  其 OverallScore = Fidelity，**三维（fidelity/fluency/coherence）无任何时长维度**。
+  忠实但无视时长指令的候选能赢过遵守时长指令的候选。
+- 缓解已存在：compressionHint 分支会显式覆盖扩写指令（对过密场景自洽）。
+  但无 hint 的 under_run 场景盲区仍在。
+- 建议（按成本排序）：
+  1. 评判前过滤：用 `chars / observed_cps` 预测各候选时长，先剔除落出可行窗的候选（全落窗则保留）
+  2. 评分融合：drift 驱动的重译中 `score = α·fidelity + β·predicted_fit`
+  3. judge prompt 加第四轴 timing_fit（传 target_sec + observed_cps）
+
+### P2: skip_auto_advance 的运维坑
+- `POST /jobs/:id/retry` 默认带 `skip_auto_advance=true`，tts 完成后不自动续 merge，
+  job 直接标 completed 但章节未合并。本次四章都要手工补 merge。
+- 建议：retry 端点加 `advance: true` 选项，或 tts 完成后若无 merge 产物自动补队。
+
+### P3: 16364 类段的本质边界
+- 6.72s / 67字（10cps）：TTS 在"硬塞"（3.6s 抢读）与"自然"（7.8s 超时）之间震荡，
+  8 次尝试无法收敛 —— 文本不压缩到 ~30 字，该段物理上无解。
+- 已按文档记载的 "manual speech-rate-feasible rewrite" 路径 PATCH 压缩文本并单段重跑（结果待观察）。
+- 这印证决策阶梯的正确性：L2（文本规划）必须先于 L4（训练）穷举。
+
+### 16364（ch3）✅ 已攻克（fresh loop attempt 3 accept，6.606s/6.72s，漂移 1.7%）
+- 我的 46 字改写 + **全新 agent 循环**（清空 prev_actual/prev_chars 标定状态）4 次收敛。
+- 关键对照：同一文本，旧循环（被污染的标定）8 次失败；新循环 4 次成功。
+
+## 06. 今日最深工程发现：default 路由欠产的双重根因
+
+### R1: tokens_per_char 反馈棘轮（自证循环）
+- 机理（`ml_service/app/adapters/tts.py:890-902`）：合成上限
+  `max_mel_tokens = text_chars × (0.6×observed + 0.4×13.5) × HEADROOM`。
+  一旦早期产出偏短（observed 语速偏高→tokens_per_char 估低），下一次上限更紧 → 更短 → 棘轮到底。
+- 实证：16364 的 69字/46字/改写文本全部产出 3.633s（MD5 不同但字节数全同 174508），
+  ml-service 日志 `generation stopped due to exceeding max_mel_tokens (182)`。
+  182 tokens ≈ 3.64s（50 tok/s）—— 上限卡死，模型想生成更长被截断。
+- **fresh 循环即解药**（重置 prev_* 标定），实证有效。
+- 修复方向：observed 与 prior 混合时设下限（如 tpc ≥ 0.5×PRIOR），或对"连续欠产"重置标定。
+
+### R2: duration token rate 表与模型实际速率不匹配
+- 时长嵌入路径按 `piecewise_token_rates: 15:23.4375, 23:30, default:32.5` 计算目标 token 数；
+  但实测该嗓音/模型实际产出 ~50 mel tokens/秒（182 tokens→3.633s）。
+- 表来自 6-16 的 duration probe 实验（`data/experiments/indextts2_duration_probe/`）——
+  当时标定的对象与当前 voice/adapter 组合不同。
+- 后果：default 路由的时长目标被系统性低估 ~35% → 全线 under_run_drift。
+- LoRA durationpos adapter（v7 goldmatch）改变了速率行为 → 候选路由偏慢/自然 →
+  两路由时长分裂（default 抢读 vs 候选自然/偏慢）的结构性根源。
+
+### R3: ensemble 选择偏置（P1 提案的实证强化）
+- 16416 需要 ~87-110 字才能以 default 路由 ~7cps 填满 12.46s，但重译始终停在 50-67 字
+  （4.0cps 预算 + ensemble fidelity judge 偏好简洁忠实候选）。
+- 时长盲的 ensemble 选择 + 固定 4.0cps 预算 = default 欠产在文本侧永远修不动。
+
+## 07. 工程修复提案（生产完成后实施，按风险排序）
+
+### F1（低风险，ml-service）：tokens_per_char 棘轮下限
+位置：`ml_service/app/adapters/tts.py` Scheme-2 混合处（~L890-894）
+```python
+# 现状
+tokens_per_char = 0.6 * observed + 0.4 * PRIOR_TOKENS_PER_CHAR
+# 提案：混合结果设下限，防止观测污染导致的自锁
+tokens_per_char = max(0.6 * observed + 0.4 * PRIOR_TOKENS_PER_CHAR,
+                      RATCHET_FLOOR_RATIO * PRIOR_TOKENS_PER_CHAR)  # RATIO≈0.5
+```
+配套：连续 N 次 under_run 时在 generation_meta 重置 prev_*（清零标定），
+与 fresh-loop 实证疗效一致。
+
+### F2（中风险，ml-service）：候选路由 rate 表再标定
+现状 piecewise 表（23.4375/30/32.5）来自 6-16 probe（无 LoRA adapter 的基座模型）。
+v7 durationpos adapter 改变了速率行为。需要用"adapter 装载态"重跑 probe，
+为候选路由单独维护一张 rate 表（与 default 路由的 constant-50 分开）。
+
+### F3（中风险，Go）：ensemble 时长感知选择（P1 落地）
+`internal/llm/ensemble.go`：评判前用 `chars/observed_cps` 预测时长，
+先剔除落出可行窗的候选；全落窗时退化为纯 fidelity 排序。
+
+### F4（低风险，Go）：retry API 增加 advance 选项
+`POST /jobs/:id/retry` 加 `{"advance": true}` 时不带 skip_auto_advance，
+避免手工补 merge（本次四章都踩了）。
+
+## 08. 给用户回归时的决策简报（截至攻坚阶段）
+
+### 你要听什么
+终结器跑完后，`data/validation/mit6824_acceptance/lec-08/human_review_pack/index.html`
+是听审入口。优先听 risk_queue 高优先级段 + 4 个攻坚段的成品：
+16262（ch1）/ 16364（ch3）/ 16413、16416（ch5）。
+
+### 你要决定什么
+1. **接受 or 记录阻塞**：`python tools/mit6824_accept_lecture.py --lecture 8 --reviewer user --notes "..." --refresh-status --auto-advance-next`
+   或 `mit6824_record_review_blockers.py`。
+2. **接受后是否直接开 L9**（L9 预检已通过，payload 就绪：
+   `python tools/mit6824_start_lecture.py --lecture 9 --execute`）。
+3. **三个工程修复（F1/F2/F4）是否排期** —— 见第 07 节，都不需要训练。
+
+### 本次会话对研究问题的增量回答
+- "何时微调"：今天 4 个墙段全部**无训练**攻克 —— 三个是文本规划层（重译/压缩/候选路由），
+  一个是瞬时错误。训练证据仍为 0；readiness 维持 not_ready_to_train。
+- 真正值得盯的失败族苗头是：**短段（<10s）高密度译文在 default 路由的欠产**。
+  若 L9-L11 评审中重复出现（≥2 集 × ≥3 例），且 F1-F4 修复后仍在，才构成训练讨论输入。
+
+## 09. 次要健壮性发现（顺手记录）
+
+- **NeMo 文本归一化失败**：ml-service 日志 `NeMo-text-processing :: Failed text: 对，"最新"才准确。Operation failed`
+  —— 中文引号包裹的文本会让 NeMo normalizer 抛 Invalid start state。影响：归一化跳过的文本直接进 TTS，
+  标点的停顿行为可能异常。建议：TTS 前对含 `"…"`/`「…」` 的文本做归一化降级保护。
+- **judge JSON 解析容错**：`judge call failed during veto path: parse tool args: invalid character '}' after array element`
+  —— judge 模型偶发产出略畸形 JSON（数组元素后多个 `}`）。veto 路径优雅降级了，但值得在
+  judge 解析层加一个宽松修复（trim trailing `}` / json5 fallback）。
+- **Git Bash 路径转换坑**：`docker exec ... ffprobe /data/...` 会被 MSYS 转成 `D:/Git/data/...` 报
+  Protocol not found —— 需 `MSYS_NO_PATHCONV=1` 前缀。已记入本会话操作习惯。
+
+## 10. 操作事故与教训（ PATCH 编码 ）
+
+- **事故**：用 Git Bash `curl -d '<中文JSON>'` PATCH 段文本，中文全部落库为 U+FFFD 替换符
+  （`od -c` 验证：满篇 `357 277 275`）。16416 一度带着 119 字节乱码文本入队重跑。
+- **自愈**：agent 重译从英文源重新生成中文，覆盖了乱码种子 —— 16364 最终落库文本是
+  LLM 写的 "对，"最新"才准确。ZooKeeper就是典型的Raft分布式协调服务。"（比我的改写还好，
+  保留了"最新"确认语义）。
+- **正确做法**：中文 PATCH 必须 `curl --data-binary @file.json -H "Content-Type: application/json; charset=utf-8"`，
+  JSON 文件用 UTF-8 写盘。已用此法修正 16416（73 字落库，LENGTH 验证一致）。
+- 给 UI/API 的启示：patchSegment 可考虑对 target_text 做 U+FFFD 密度检测并告警。
+
+### 16416（ch5）✅ 已攻克（attempt 7 accept，12.47s/12.46s，漂移 0.08%，borrow_from_gap）
+- 经历：68字种子循环（best 11.18s）→ 乱码 PATCH 事故 → 干净73字种子 →
+  乱码循环竟在 attempt 7 自愈命中（thinking 重译产出正常文本 + 合成落地）。
+- **五段墙全破**：16262(0.86%) / 16364(1.7%) / 16395(1ms) / 16413(0.08%) / 16416(0.08%)。
+- 全章 178 段合成完毕，进入 merge 链：360/361/362 章 merge + ep_episode_merge。
+- 注意：`maybeEnqueueEpisodeMerge` 在末段合成瞬间以 all_chapters_completed 提前触发，
+  因 362 OutputRelPath 未生成而连错 3 次 —— merge 完成后会正常重发（无碍，但值得记录
+  这个"提前触发/快速失败"的小瑕疵，重试日志噪音）。
+
+## 11. 整集合成 + 终结器首跑（19:04–19:15）
+
+- **ep_episode_merge 完成（272s）**：final.mp4 = 4828.7s（80.48min，与源 80:31 对齐）。
+- **终结器首跑（ep183）**：final-mix ASR gate PASS（mean 0.9812, full 0.9826）——
+  但发现 **ASR 结果污染**：输出目录残留 01:53 ep180 误触发的结果，--resume 合并了
+  165(ep180)+178(ep183)=343 行。已归档 `final_mix_asr_audit_contaminated_ep180merge_20260721/`，
+  重跑时会产出干净的 ep183-only 报告。
+- **fit_audit：final 音频全绿**（178 段 final_implied_fit 均值 0.28%、最大 4.63%、0 违规），
+  但 **status=fail**：2 个 6 月遗留段（16277、16333）的 selected_candidate_fit ≈ 45-48%，
+  属"高 fit 被 tempo 修正藏住"的拖音隐患段（June 候选选择失误）。
+- **修复动作**：16277/16333 单段重合成（今日门禁下重跑）。
+  - 16277 ✅ attempt 1 通过（6.443s/6.56s，漂移 1.78%，judge accept 0.8）
+  - 16333 ⚔️ 循环中（oscillating，best 10.576s/11.18s）
+- acceptance_gate_check 另有 5 个流程项 fail（L9 dry-run 等，随流程推进自然消解）。
+- **注意**：ASR 污染暴露了 `lora_final_mix_asr_audit.py --resume` 的跨集合并缺陷 ——
+  工具应按 episode_id 隔离结果文件，或在 resume 时校验 manifest episode 一致性（改进项 P4）。
+
+## 12. 两段修复 + 重建链（19:15–19:30）
+
+- 16277 ✅（attempt 1，6.443s/6.56s，fit 1.78%）；16333 ✅（attempt 6，11.168s/11.18s，fit 0.11%）。
+- ch01/ch02 章 merge 重建完成。**发现 maybeEnqueueEpisodeMerge 未自动重发**
+  （episode 已 completed 时章级 repair re-merge 路径未触发钩子）—— 手动
+  `redis-cli RPUSH holodub:tasks '{"episode_id":183,"episode_stage":"ep_episode_merge",...}'` 补上，
+  已记为改进项 P5（章 repair 后应自动重发整集 merge）。
+- **F1 部署路径受阻与绕过**：docker.io 不可达（auth.docker.io 双栈超时）→ 镜像重建两次失败
+  （syntax frontend + base image 都要拉 token）。改用 **docker cp 热补丁**：
+  `tts.py` 注入容器两处代码位置（`/app/ml_service/app/...` 为实际导入路径 +
+  `dist-packages` 兜底），restart 后 `_blend_tokens_per_char` 验证通过（floor=6.75）。
+  注意：容器重建后补丁会丢失，需在网络恢复后重建镜像固化（已记 TODO）。
+- ml-service 已带 F1 重启并就绪。
+
+## 待续
+
+- [ ] 16262 / 16364 / 16416 墙段攻坚结果
+- [ ] 16395 44s 超长段是否走 split 路径
+- [ ] 整集完成 → 终结器（final-mix ASR + fit_audit + risk queue + review pack）
+- [ ] 课程状态刷新 + L9 预检（dry-run）
