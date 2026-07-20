@@ -535,6 +535,15 @@ def run_asr_batch(args: argparse.Namespace, manifest: list[dict[str, Any]], outp
         existing = json.loads(raw_path.read_text(encoding="utf-8"))
     if args.resume and remaining_raw.exists() and remaining_raw.stat().st_size:
         existing.extend(json.loads(remaining_raw.read_text(encoding="utf-8")))
+    # Cross-episode isolation (2026-07-21): with --resume, results left in the
+    # same output dir by a DIFFERENT episode must not merge into this run's
+    # gate — otherwise a failed earlier episode silently inflates the current
+    # one's ASR report (production case: ep180 results merged into ep183's
+    # 343-row report). Only rows for the requested episode are reused.
+    existing = [
+        row for row in existing
+        if int(row.get("episode_id") or 0) == int(args.episode_id)
+    ]
     by_label: dict[str, dict[str, Any]] = {}
     for row in existing:
         label = str(row.get("label") or "")
