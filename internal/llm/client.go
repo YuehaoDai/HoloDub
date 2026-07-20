@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode"
 
 	"holodub/internal/config"
 	"holodub/internal/httpx"
@@ -19,23 +20,28 @@ import (
 )
 
 type Client struct {
-	provider                 string
-	baseURL                  string
-	apiKey                   string
-	model                    string
-	temperature              float64
-	retranslationModel       string
-	retranslationTemperature float64
-	thinkingModel            string
-	segmentReviewModel       string
-	segmentReviewUseTools    bool
-	judgeModel               string // OPT-002; "" disables segment judging
-	chapterJudgeModel        string // OPT-409; "" disables chapter-level judging
-	episodeJudgeModel        string // OPT-406; "" disables episode-level judging
-	glossaryModel            string // OPT-402; "" => fall back to model
-	chapterReviewModel       string // OPT-403; "" => fall back to model
-	thinkingHTTPClient       *http.Client
-	httpClient               *http.Client
+	provider                            string
+	baseURL                             string
+	apiKey                              string
+	model                               string
+	temperature                         float64
+	retranslationModel                  string
+	retranslationTemperature            float64
+	thinkingModel                       string
+	segmentReviewModel                  string
+	segmentReviewUseTools               bool
+	segmentReviewMaxMergeGapMs          int64
+	segmentReviewMaxMergedDurationMs    int64
+	segmentReviewShortSegmentMs         int64
+	segmentReviewMaxMergeSegments       int
+	segmentReviewAutoApplyMinConfidence float64
+	judgeModel                          string // OPT-002; "" disables segment judging
+	chapterJudgeModel                   string // OPT-409; "" disables chapter-level judging
+	episodeJudgeModel                   string // OPT-406; "" disables episode-level judging
+	glossaryModel                       string // OPT-402; "" => fall back to model
+	chapterReviewModel                  string // OPT-403; "" => fall back to model
+	thinkingHTTPClient                  *http.Client
+	httpClient                          *http.Client
 }
 
 func New(cfg config.Config) *Client {
@@ -48,21 +54,26 @@ func New(cfg config.Config) *Client {
 		thinkingTimeout = 600 * time.Second
 	}
 	return &Client{
-		provider:                 strings.ToLower(cfg.TranslationProvider),
-		baseURL:                  strings.TrimRight(cfg.OpenAIBaseURL, "/"),
-		apiKey:                   cfg.OpenAIAPIKey,
-		model:                    cfg.OpenAIModel,
-		temperature:              cfg.OpenAITemperature,
-		retranslationModel:       cfg.RetranslationModel,
-		retranslationTemperature: retranslationTemp,
-		thinkingModel:            cfg.RetranslationThinkingModel,
-		segmentReviewModel:       cfg.SegmentReviewModel,
-		segmentReviewUseTools:    cfg.SegmentReviewUseTools,
-		judgeModel:               cfg.JudgeModel,
-		chapterJudgeModel:        cfg.ChapterJudgeModel,
-		episodeJudgeModel:        cfg.EpisodeJudgeModel,
-		glossaryModel:            cfg.GlossaryModel,
-		chapterReviewModel:       cfg.ChapterReviewModel,
+		provider:                            strings.ToLower(cfg.TranslationProvider),
+		baseURL:                             strings.TrimRight(cfg.OpenAIBaseURL, "/"),
+		apiKey:                              cfg.OpenAIAPIKey,
+		model:                               cfg.OpenAIModel,
+		temperature:                         cfg.OpenAITemperature,
+		retranslationModel:                  cfg.RetranslationModel,
+		retranslationTemperature:            retranslationTemp,
+		thinkingModel:                       cfg.RetranslationThinkingModel,
+		segmentReviewModel:                  cfg.SegmentReviewModel,
+		segmentReviewUseTools:               cfg.SegmentReviewUseTools,
+		segmentReviewMaxMergeGapMs:          cfg.SegmentReviewMaxMergeGapMs,
+		segmentReviewMaxMergedDurationMs:    cfg.SegmentReviewMaxMergedDurationMs,
+		segmentReviewShortSegmentMs:         cfg.SegmentReviewShortSegmentMs,
+		segmentReviewMaxMergeSegments:       cfg.SegmentReviewMaxMergeSegments,
+		segmentReviewAutoApplyMinConfidence: cfg.SegmentReviewAutoApplyMinConfidence,
+		judgeModel:                          cfg.JudgeModel,
+		chapterJudgeModel:                   cfg.ChapterJudgeModel,
+		episodeJudgeModel:                   cfg.EpisodeJudgeModel,
+		glossaryModel:                       cfg.GlossaryModel,
+		chapterReviewModel:                  cfg.ChapterReviewModel,
 		thinkingHTTPClient: &http.Client{
 			Timeout: thinkingTimeout,
 		},
@@ -101,6 +112,91 @@ func maxChars(lang string, targetSec float64) int {
 	return limit
 }
 
+func sourceTimingHint(text string, targetSec float64) string {
+	if targetSec < 8 {
+		return ""
+	}
+	units := sourceTimingUnitCount(text)
+	unitsPerSec := 0.0
+	if targetSec > 0 {
+		unitsPerSec = float64(units) / targetSec
+	}
+	fragments := sourceTimingFragments(text)
+	shortFragments := 0
+	repeated := map[string]int{}
+	maxRepeat := 0
+	for _, fragment := range fragments {
+		if sourceTimingUnitCount(fragment) <= 3 {
+			shortFragments++
+		}
+		key := strings.ToLower(strings.Join(strings.Fields(fragment), " "))
+		if key != "" {
+			repeated[key]++
+			if repeated[key] > maxRepeat {
+				maxRepeat = repeated[key]
+			}
+		}
+	}
+	fragmented := len(fragments) >= 4 && shortFragments >= max(4, len(fragments)/2)
+	sparse := targetSec >= 12 && unitsPerSec < 1.4
+	if !fragmented && !sparse && maxRepeat < 3 {
+		return ""
+	}
+	return fmt.Sprintf(
+		"[Source timing note]\n"+
+			"The source transcript is sparse or ASR-fragmented for a %.1fs slot (source density %.2f units/sec). "+
+			"First reconstruct the intended sentence instead of copying every ASR period as a hard pause. "+
+			"Then preserve natural semantic pauses with punctuation, short clauses, and connective phrasing; "+
+			"do not compress it into one dense sentence that TTS must stretch unnaturally.\n\n",
+		targetSec, unitsPerSec,
+	)
+}
+
+func sourceTimingFragments(text string) []string {
+	fields := strings.FieldsFunc(text, func(r rune) bool {
+		switch r {
+		case '.', '!', '?', ';', ':', '\n', '\r',
+			'\u3002', '\uff01', '\uff1f', '\uff1b', '\uff1a':
+			return true
+		default:
+			return false
+		}
+	})
+	out := make([]string, 0, len(fields))
+	for _, field := range fields {
+		fragment := strings.TrimSpace(field)
+		if fragment != "" {
+			out = append(out, fragment)
+		}
+	}
+	return out
+}
+
+func sourceTimingUnitCount(text string) int {
+	count := 0
+	inWord := false
+	for _, r := range text {
+		if isCJKTimingRune(r) {
+			count++
+			inWord = false
+			continue
+		}
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			if !inWord {
+				count++
+				inWord = true
+			}
+			continue
+		}
+		inWord = false
+	}
+	return count
+}
+
+func isCJKTimingRune(r rune) bool {
+	return (r >= '\u3400' && r <= '\u9fff') || (r >= '\uf900' && r <= '\ufaff')
+}
+
 func (c *Client) TranslateText(ctx context.Context, sourceLanguage, targetLanguage, text string) (string, error) {
 	switch c.provider {
 	case "", "mock":
@@ -133,6 +229,17 @@ func (c *Client) TranslateTextWithDuration(ctx context.Context, sourceLanguage, 
 type RetranslationAttempt struct {
 	Text      string  // translation text used
 	ActualSec float64 // TTS output duration in seconds
+}
+
+// DurationCompressionHint records a LoRA candidate planner signal that the
+// current target text is too dense for reliable speech-rate control.
+type DurationCompressionHint struct {
+	Reason                 string
+	MaxAllowedCharsPerSec  float64
+	MaxRequiredCharsPerSec float64
+	RecommendedMaxChars    int
+	CurrentChars           int
+	RiskPartIndexes        []int
 }
 
 // ContextSegment holds a source+translation pair from an adjacent segment.
@@ -216,6 +323,36 @@ func (c *Client) RetranslateWithConstraint(
 	nextSrcText string,
 	translationSummary string,
 ) (string, error) {
+	return c.RetranslateWithConstraintHint(
+		ctx,
+		sourceLanguage, targetLanguage, srcText, currentTrans,
+		targetSec, actualSec,
+		attempt, maxAttempts,
+		driftThresholdPct,
+		history,
+		useThinking,
+		observedCharsPerSec,
+		contextBefore,
+		nextSrcText,
+		translationSummary,
+		nil,
+	)
+}
+
+func (c *Client) RetranslateWithConstraintHint(
+	ctx context.Context,
+	sourceLanguage, targetLanguage, srcText, currentTrans string,
+	targetSec, actualSec float64,
+	attempt, maxAttempts int,
+	driftThresholdPct float64,
+	history []RetranslationAttempt,
+	useThinking bool,
+	observedCharsPerSec float64,
+	contextBefore []ContextSegment,
+	nextSrcText string,
+	translationSummary string,
+	compressionHint *DurationCompressionHint,
+) (string, error) {
 	return c.retranslateWithConstraintModel(
 		ctx, "",
 		sourceLanguage, targetLanguage, srcText, currentTrans,
@@ -228,6 +365,7 @@ func (c *Client) RetranslateWithConstraint(
 		contextBefore,
 		nextSrcText,
 		translationSummary,
+		compressionHint,
 	)
 }
 
@@ -249,6 +387,7 @@ func (c *Client) retranslateWithConstraintModel(
 	contextBefore []ContextSegment,
 	nextSrcText string,
 	translationSummary string,
+	compressionHint *DurationCompressionHint,
 ) (string, error) {
 	if c.baseURL == "" || c.apiKey == "" {
 		return "", errors.New("OPENAI_BASE_URL and OPENAI_API_KEY are required for retranslation")
@@ -275,6 +414,12 @@ func (c *Client) retranslateWithConstraintModel(
 		}
 	}
 	currentLen := len([]rune(currentTrans))
+	if compressionHint != nil && compressionHint.RecommendedMaxChars > 0 {
+		limit = compressionHint.RecommendedMaxChars
+		if compressionHint.MaxAllowedCharsPerSec > 0 {
+			rate = compressionHint.MaxAllowedCharsPerSec
+		}
+	}
 	pctDiff := math.Abs(actualSec-targetSec) / targetSec * 100
 	direction := "over"
 	if actualSec < targetSec {
@@ -403,7 +548,26 @@ func (c *Client) retranslateWithConstraintModel(
 	// Do NOT use aggressive LENGTHEN/SHORTEN language — it causes LLM to oscillate between
 	// two extreme translations rather than converging to the target character count.
 	var charTargetInstruction string
-	if actualSec > targetSec {
+	if compressionHint != nil && compressionHint.RecommendedMaxChars > 0 {
+		recommended := compressionHint.RecommendedMaxChars
+		if limit > 0 && limit < recommended {
+			recommended = limit
+		}
+		if recommended < 1 {
+			recommended = 1
+		}
+		charDelta := currentLen - recommended
+		if charDelta < 0 {
+			charDelta = 0
+		}
+		charTargetInstruction = fmt.Sprintf(
+			"Compress the current translation to at most %d characters "+
+				"(current: %d; reduce by about %d; hard ceiling: %d chars). "+
+				"The duration planner detected speech-rate density above the safe %.1f chars/sec limit. "+
+				"The previous under-run is likely TTS truncation from dense text, so do NOT expand this segment. "+
+				"Preserve critical terms, numbers, and operation order while using tighter phrasing.",
+			recommended, currentLen, charDelta, limit, compressionHint.MaxAllowedCharsPerSec)
+	} else if actualSec > targetSec {
 		// Over-run: scale down proportionally.
 		recommended := int(math.Round(float64(currentLen) * targetSec / actualSec))
 		if recommended < 1 {
@@ -450,7 +614,7 @@ func (c *Client) retranslateWithConstraintModel(
 	// over-running segments have the opposite problem (need
 	// compression, already addressed by charTargetInstruction).
 	adaptationStrategy := ""
-	if direction == "under" {
+	if direction == "under" && compressionHint == nil {
 		adaptationStrategy = "\n[Adaptation strategy]\n" +
 			"Chinese typically renders 30-40% shorter than English source when translated " +
 			"compactly. If under-running by >15%, the previous translation was too terse. " +
@@ -460,6 +624,9 @@ func (c *Client) retranslateWithConstraintModel(
 			"  - Expand abbreviations / acronyms into their full forms.\n" +
 			"  - Add a brief clarifying clause if the source implies one.\n" +
 			"You MAY paraphrase more aggressively (not minimal edits) when drift >15%.\n"
+		if hint := sourceTimingHint(srcText, targetSec); hint != "" {
+			adaptationStrategy += "\n" + hint
+		}
 	}
 
 	systemPrompt := fmt.Sprintf(
@@ -512,6 +679,20 @@ func (c *Client) retranslateWithConstraintModel(
 	if contextSuffix.Len() > 0 {
 		systemPrompt += contextSuffix.String()
 	}
+	if compressionHint != nil {
+		systemPrompt += fmt.Sprintf(
+			"\n\n[LoRA duration planner compression signal]\n"+
+				"Reason: %s.\n"+
+				"Required speech rate: %.2f chars/sec. Safe limit: %.2f chars/sec.\n"+
+				"Recommended hard ceiling for this retry: %d characters.\n"+
+				"Treat this as a compression task even if the last audio was short; dense text can make TTS truncate.\n"+
+				"[End compression signal]",
+			compressionHint.Reason,
+			compressionHint.MaxRequiredCharsPerSec,
+			compressionHint.MaxAllowedCharsPerSec,
+			compressionHint.RecommendedMaxChars,
+		)
+	}
 
 	// OPT-204-followup-2 (P1): severe under-runs (drift > 15%) get a
 	// loosened edit instruction. "Minimal edits" turned into a trap
@@ -521,7 +702,9 @@ func (c *Client) retranslateWithConstraintModel(
 	// more freely.
 	userEditInstruction := "make minimal edits to THIS text, " +
 		"do NOT re-translate from scratch, do NOT revert to any previous version, "
-	if pctDiff > 15 && direction == "under" {
+	if compressionHint != nil {
+		userEditInstruction = "compress THIS text according to the LoRA duration planner signal, do NOT expand it, do NOT revert to any previous version, "
+	} else if pctDiff > 15 && direction == "under" {
 		userEditInstruction = "you may rewrite the translation more freely (not just minimal edits) to reach the duration target, " +
 			"but do NOT revert to any previous version, "
 	}
@@ -720,6 +903,9 @@ func (c *Client) translateWithDurationViaOpenAI(ctx context.Context, sourceLangu
 	userMsg.WriteString("[Per-segment constraints]\n")
 	userMsg.WriteString(fmt.Sprintf("Segment duration: %.1f seconds.\n", targetSec))
 	userMsg.WriteString(fmt.Sprintf("Hard character limit: %d characters.\n\n", limit))
+	if hint := sourceTimingHint(text, targetSec); hint != "" {
+		userMsg.WriteString(hint)
+	}
 
 	// Inject preceding translated segments for local consistency.
 	// contextBefore also varies per segment, so it stays in user message.
@@ -1103,9 +1289,23 @@ type SegmentInfo struct {
 	SplitReason string
 }
 
+// SegmentReviewPolicy carries every tunable threshold for the LLM
+// segmentation-review prompt. Keeping these as data, rather than interpolated
+// into the system prompt, makes the prompt cache-stable and lets operators
+// tune policy without changing wording.
+type SegmentReviewPolicy struct {
+	SourceLanguage         string  `json:"source_language"`
+	MaxMergeGapMs          int64   `json:"max_merge_gap_ms"`
+	MaxMergedDurationMs    int64   `json:"max_merged_duration_ms"`
+	ShortSegmentMs         int64   `json:"short_segment_ms"`
+	MaxMergeSegments       int     `json:"max_merge_segments"`
+	AutoApplyMinConfidence float64 `json:"auto_apply_min_confidence"`
+}
+
 // SegmentReviewSuggestion is one merge recommendation returned by ReviewSegmentation.
-// Only "merge" actions are produced; splits require word-level timestamps and are
-// performed manually through the UI.
+// Only "merge" actions are produced because they can be auto-applied with
+// deterministic safety checks. Split suggestions stay out of the automated
+// contract until word-level timestamp repair is available.
 type SegmentReviewSuggestion struct {
 	Action     string // always "merge"
 	SegmentIDs []uint // IDs of the segments to merge (must be consecutive)
@@ -1206,6 +1406,44 @@ func reviewSystemPrompt(sourceLanguage string, toolMode bool) string {
 		"Return ONLY the JSON array, no other text."
 }
 
+// reviewSystemPromptV2 is the production segment_review prompt. Tunable
+// thresholds are supplied in the user-message policy object, keeping this
+// system prompt cache-stable while operators tune behaviour.
+func reviewSystemPromptV2(toolMode bool) string {
+	base :=
+		"You are an expert ASR post-processing agent for a video dubbing pipeline.\n\n" +
+			"You will receive one JSON object with two top-level keys: policy and segments.\n" +
+			"The policy object is authoritative. It contains source_language, max_merge_gap_ms,\n" +
+			"max_merged_duration_ms, short_segment_ms, max_merge_segments, and\n" +
+			"auto_apply_min_confidence. Do not invent hidden thresholds; if a decision depends\n" +
+			"on a threshold, use the value from policy and mention the relevant signal in the\n" +
+			"reason. The segments array is ordered by time. Each segment has ordinal, id,\n" +
+			"text, duration_ms, gap_after_ms, and split_reason.\n\n" +
+			"Your task: identify adjacent segments that should be merged because they form a\n" +
+			"single natural utterance that was incorrectly split. Strong merge evidence includes:\n" +
+			"- a sentence split mid-clause because of a brief pause;\n" +
+			"- the following segment starts with a conjunction, subordinator, discourse marker,\n" +
+			"  particle, or continuation phrase in the source language;\n" +
+			"- two or more very short adjacent segments, as defined by policy.short_segment_ms,\n" +
+			"  combine into one coherent phrase;\n" +
+			"- punctuation, casing, or syntax shows the boundary interrupts one thought.\n\n" +
+			"Do not suggest a merge when there is a clear sentence, speaker, topic, or rhetorical\n" +
+			"boundary; when any internal gap is greater than policy.max_merge_gap_ms; when the\n" +
+			"merged duration would exceed policy.max_merged_duration_ms; or when the group would\n" +
+			"contain more than policy.max_merge_segments segments. Keep confidence calibrated:\n" +
+			"0.90+ means safe for automatic application, 0.75-0.89 means plausible but context\n" +
+			"sensitive, below 0.75 means weak evidence and should usually be omitted. Return only\n" +
+			"merge suggestions over consecutive ordinals, never split or rewrite text.\n\n"
+	if toolMode {
+		return base + "Call the emit_segment_suggestions function with your suggestions. " +
+			"Return an empty suggestions array if there are no problems."
+	}
+	return base +
+		"Respond with a JSON array of suggestions. Each element must be:\n" +
+		"  { \"ordinals\": [<ordinal_a>, <ordinal_b>], \"reason\": \"<short reason>\", \"confidence\": <0.0-1.0> }\n" +
+		"If there are no problems, return [] and no prose."
+}
+
 // ReviewSegmentation analyses the ASR-produced segments and returns a list of
 // merge suggestions.  It returns an empty slice (no error) when running in
 // mock/offline mode or when the LLM finds no problems.
@@ -1247,7 +1485,7 @@ func (c *Client) reviewSegmentationViaTools(
 	sourceLanguage string,
 	segments []SegmentInfo,
 ) ([]SegmentReviewSuggestion, error) {
-	segJSON2, err := marshalReviewSegments(segments)
+	reqJSON, err := marshalReviewRequest(c.segmentReviewPolicy(sourceLanguage), segments)
 	if err != nil {
 		return nil, err
 	}
@@ -1257,8 +1495,8 @@ func (c *Client) reviewSegmentationViaTools(
 		Model:       model,
 		Temperature: 0.2,
 		Messages: []chatMessage{
-			{Role: "system", Content: reviewSystemPrompt(sourceLanguage, true)},
-			{Role: "user", Content: string(segJSON2)},
+			{Role: "system", Content: reviewSystemPromptV2(true)},
+			{Role: "user", Content: string(reqJSON)},
 		},
 		Tools: []toolDef{{
 			Type: "function",
@@ -1291,7 +1529,7 @@ func (c *Client) reviewSegmentationViaPrompt(
 	sourceLanguage string,
 	segments []SegmentInfo,
 ) ([]SegmentReviewSuggestion, error) {
-	segJSON2, err := marshalReviewSegments(segments)
+	reqJSON, err := marshalReviewRequest(c.segmentReviewPolicy(sourceLanguage), segments)
 	if err != nil {
 		return nil, err
 	}
@@ -1301,8 +1539,8 @@ func (c *Client) reviewSegmentationViaPrompt(
 		Model:       model,
 		Temperature: 0.2,
 		Messages: []chatMessage{
-			{Role: "system", Content: reviewSystemPrompt(sourceLanguage, false)},
-			{Role: "user", Content: string(segJSON2)},
+			{Role: "system", Content: reviewSystemPromptV2(false)},
+			{Role: "user", Content: string(reqJSON)},
 		},
 	}
 
@@ -1339,6 +1577,65 @@ func (c *Client) reviewModel() string {
 	return model
 }
 
+func (c *Client) segmentReviewPolicy(sourceLanguage string) SegmentReviewPolicy {
+	policy := SegmentReviewPolicy{
+		SourceLanguage:         strings.TrimSpace(sourceLanguage),
+		MaxMergeGapMs:          c.segmentReviewMaxMergeGapMs,
+		MaxMergedDurationMs:    c.segmentReviewMaxMergedDurationMs,
+		ShortSegmentMs:         c.segmentReviewShortSegmentMs,
+		MaxMergeSegments:       c.segmentReviewMaxMergeSegments,
+		AutoApplyMinConfidence: c.segmentReviewAutoApplyMinConfidence,
+	}
+	if policy.SourceLanguage == "" {
+		policy.SourceLanguage = "unknown"
+	}
+	if policy.MaxMergeGapMs <= 0 {
+		policy.MaxMergeGapMs = 2000
+	}
+	if policy.MaxMergedDurationMs <= 0 {
+		policy.MaxMergedDurationMs = 20000
+	}
+	if policy.ShortSegmentMs <= 0 {
+		policy.ShortSegmentMs = 1000
+	}
+	if policy.MaxMergeSegments < 2 {
+		policy.MaxMergeSegments = 4
+	}
+	if policy.AutoApplyMinConfidence <= 0 || policy.AutoApplyMinConfidence > 1 {
+		policy.AutoApplyMinConfidence = 0.82
+	}
+	return policy
+}
+
+func marshalReviewRequest(policy SegmentReviewPolicy, segments []SegmentInfo) ([]byte, error) {
+	type segJSON struct {
+		Ordinal     int    `json:"ordinal"`
+		ID          int    `json:"id"`
+		Text        string `json:"text"`
+		DurationMs  int64  `json:"duration_ms"`
+		GapAfterMs  int64  `json:"gap_after_ms"`
+		SplitReason string `json:"split_reason"`
+	}
+	segList := make([]segJSON, len(segments))
+	for i, s := range segments {
+		segList[i] = segJSON{
+			Ordinal:     s.Ordinal,
+			ID:          s.Ordinal,
+			Text:        s.Text,
+			DurationMs:  s.EndMs - s.StartMs,
+			GapAfterMs:  s.GapAfterMs,
+			SplitReason: s.SplitReason,
+		}
+	}
+	return json.Marshal(struct {
+		Policy   SegmentReviewPolicy `json:"policy"`
+		Segments []segJSON           `json:"segments"`
+	}{
+		Policy:   policy,
+		Segments: segList,
+	})
+}
+
 func marshalReviewSegments(segments []SegmentInfo) ([]byte, error) {
 	type segJSON struct {
 		Ordinal     int    `json:"ordinal"`
@@ -1373,8 +1670,17 @@ func finaliseReviewSuggestions(rawItems []reviewRawSuggestion, segments []Segmen
 			continue
 		}
 		ids := make([]uint, len(item.Ordinals))
+		valid := true
 		for i, ord := range item.Ordinals {
-			ids[i] = ordinalToID[ord]
+			id, ok := ordinalToID[ord]
+			if !ok {
+				valid = false
+				break
+			}
+			ids[i] = id
+		}
+		if !valid {
+			continue
 		}
 		suggestions = append(suggestions, SegmentReviewSuggestion{
 			Action:     "merge",

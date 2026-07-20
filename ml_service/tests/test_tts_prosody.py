@@ -15,15 +15,31 @@ test suite. CI containers do not carry the GPU runtime.
 from __future__ import annotations
 
 import math
+import wave
+from array import array
 
 from app.adapters.tts import (
     _EMO_VECTOR_LEN,
     _IDX_ANGRY,
-    _IDX_EXCITED,
+    _IDX_CALM,
     _IDX_HAPPY,
-    _IDX_NEUTRAL,
     _IDX_SAD,
+    _IDX_SURPRISED,
+    _LoraCandidatePolicy,
     _emo_vector_from_valence_arousal,
+    _find_loud_reference_start,
+    _find_stable_reference_candidate,
+    _has_speakable_text,
+    _indextts2_duration_control_mode,
+    _indextts2_duration_min_sec,
+    _indextts2_duration_max_tokens,
+    _indextts2_duration_token_rate,
+    _indextts2_duration_tokens,
+    _lora_candidate_diag_from_meta,
+    _resolve_num_beams,
+    _split_long_tts_text,
+    _timing_groups_from_meta,
+    _timing_max_allowed_ms,
 )
 
 
@@ -43,11 +59,9 @@ def test_emo_vector_length_is_eight():
     assert _EMO_VECTOR_LEN == 8
 
 
-def test_emo_vector_is_l1_normalised():
-    """Across the (valence, arousal) cube the projected vector MUST
-    sum to ~1.0 so IndexTTS2 treats it as a probability distribution.
-    Sampling the four quadrants + boundaries catches any branch where
-    the normalisation got dropped."""
+def test_emo_vector_sum_is_capped():
+    """The projected vector must stay below IndexTTS2's 0.8 ceiling.
+    We default lower so speaker prompt style remains dominant."""
     samples = [
         (0.8, 0.9),
         (0.8, 0.1),
@@ -61,25 +75,25 @@ def test_emo_vector_is_l1_normalised():
     for v, a in samples:
         vec = _emo_vector_from_valence_arousal(v, a)
         s = sum(vec)
-        assert _close(s, 1.0), f"valence={v} arousal={a} sum={s:.4f}"
+        assert _close(s, 0.35), f"valence={v} arousal={a} sum={s:.4f}"
 
 
-def test_emo_vector_high_valence_high_arousal_is_excited():
-    """The 'high valence + high arousal' quadrant should put non-trivial
-    mass on excited/happy and no mass on the negative emotions."""
+def test_emo_vector_high_valence_high_arousal_is_happy_surprised():
+    """The 'high valence + high arousal' quadrant should put mass on
+    happy/surprised and no mass on the negative emotions."""
     vec = _emo_vector_from_valence_arousal(0.9, 0.9)
-    assert vec[_IDX_EXCITED] > 0.3, vec
-    assert vec[_IDX_HAPPY] > 0.2, vec
+    assert vec[_IDX_HAPPY] > 0.25, vec
+    assert vec[_IDX_SURPRISED] > 0.0, vec
     assert vec[_IDX_SAD] == 0.0
     assert vec[_IDX_ANGRY] == 0.0
 
 
 def test_emo_vector_low_valence_low_arousal_is_sad():
     """The 'low valence + low arousal' quadrant should put non-trivial
-    mass on sadness + a touch of neutral, no mass on excited/angry."""
+    mass on sadness + calm, no mass on happy/angry."""
     vec = _emo_vector_from_valence_arousal(-0.8, 0.1)
-    assert vec[_IDX_SAD] > 0.3, vec
-    assert vec[_IDX_EXCITED] == 0.0
+    assert vec[_IDX_SAD] > 0.15, vec
+    assert vec[_IDX_HAPPY] == 0.0
     assert vec[_IDX_ANGRY] == 0.0
 
 
@@ -87,16 +101,16 @@ def test_emo_vector_low_valence_high_arousal_is_angry():
     """The 'low valence + high arousal' quadrant maps to anger /
     surprise / fear; no mass on the positive emotions."""
     vec = _emo_vector_from_valence_arousal(-0.8, 0.9)
-    assert vec[_IDX_ANGRY] > 0.3, vec
+    assert vec[_IDX_ANGRY] > 0.15, vec
     assert vec[_IDX_HAPPY] == 0.0
-    assert vec[_IDX_EXCITED] == 0.0
+    assert vec[_IDX_CALM] == 0.0
 
 
 def test_emo_vector_neutral_default():
     """The (0, 0) centre point should be predominantly neutral so a
     segment without strong affect cues does not get over-emoted."""
     vec = _emo_vector_from_valence_arousal(0.0, 0.0)
-    assert vec[_IDX_NEUTRAL] > 0.5, vec
+    assert vec[_IDX_CALM] > 0.25, vec
 
 
 def test_emo_vector_clipping():
@@ -145,10 +159,20 @@ class _StubSettings:
     ml_tts_backend = "indextts2"
     indextts2_inline = True
     indextts2_use_emo_text = False
+    indextts2_num_beams = 1
+    indextts2_long_num_beams = 3
+    indextts2_long_quality_min_sec = 30.0
+    indextts2_duration_control_mode = "off"
+    indextts2_duration_token_rate = 50.0
+    indextts2_duration_token_rate_policy = "constant"
+    indextts2_duration_piecewise_token_rates = "15:23.4375,23:30,default:32.5"
+    indextts2_duration_control_min_sec = 15.0
     data_root = "/tmp"
     default_sample_rate = 24000
     default_channels = 1
     ffmpeg_bin = "ffmpeg"
+    indextts2_neutral_dubbing_max_arousal = 0.65
+    indextts2_dubbing_emo_vector_max_sum = 0.35
 
 
 def _make_adapter():
@@ -171,7 +195,7 @@ def test_resolve_prosody_kwargs_disables_emo_text():
     assert len(kwargs["emo_vector"]) == 8
 
 
-def test_resolve_prosody_kwargs_only_anchored_emphasis_words():
+def test_resolve_prosody_kwargs_ignores_emphasis_words_for_inline_runtime():
     """Emphasis words that do NOT appear in the target text must be
     stripped — the model can't anchor on a token it never sees."""
     a = _make_adapter()
@@ -183,8 +207,22 @@ def test_resolve_prosody_kwargs_only_anchored_emphasis_words():
         },
         text="hello world",
     )
-    assert "emphasis_words" in kwargs
-    assert kwargs["emphasis_words"] == ["hello", "world"]
+    assert "emphasis_words" not in kwargs
+    assert "emo_vector" not in kwargs
+
+
+def test_resolve_prosody_kwargs_neutralizes_calm_lecture_segments():
+    """Neutral/calm lecture plans should not force an emotion vector."""
+    a = _make_adapter()
+    kwargs = a._resolve_prosody_kwargs(
+        {
+            "emotion": {"valence": 0.3, "arousal": 0.6, "label": "calm"},
+            "pacing": "normal",
+        },
+        text="lecture narration",
+    )
+    assert kwargs["use_emo_text"] is False
+    assert "emo_vector" not in kwargs
 
 
 def test_resolve_prosody_kwargs_skips_empty_emphasis_list():
@@ -216,4 +254,268 @@ def test_resolve_prosody_kwargs_missing_emotion_falls_back_to_neutral():
     # Without emotion the mapping defaults to (valence=0, arousal=0) →
     # predominantly neutral.
     assert kwargs["use_emo_text"] is False
-    assert sum(kwargs["emo_vector"]) > 0.99  # L1 normalised
+    assert "emo_vector" not in kwargs
+
+
+def test_resolve_num_beams_keeps_short_segments_fast():
+    assert _resolve_num_beams(
+        _StubSettings(),
+        target_sec=5.0,
+        timing_status="fits",
+    ) == 1
+
+
+def test_resolve_num_beams_promotes_long_or_risky_segments():
+    settings = _StubSettings()
+    assert _resolve_num_beams(settings, target_sec=31.0, timing_status="fits") == 3
+    assert _resolve_num_beams(settings, target_sec=5.0, timing_status="too_long") == 3
+
+
+def test_duration_control_mode_defaults_off():
+    settings = _StubSettings()
+    assert _indextts2_duration_control_mode(settings) == "off"
+    settings.indextts2_duration_control_mode = "community"
+    assert _indextts2_duration_control_mode(settings) == "embedding"
+
+
+def test_duration_control_token_budget_keeps_target_reachable():
+    settings = _StubSettings()
+    settings.indextts2_duration_token_rate = 50.0
+    target_tokens = _indextts2_duration_tokens(settings, 7.5)
+    assert target_tokens == 375
+    max_tokens = _indextts2_duration_max_tokens(
+        settings,
+        current_max_mel_tokens=120,
+        target_duration_tokens=target_tokens,
+        max_allowed_sec=8.0,
+    )
+    assert max_tokens >= target_tokens
+    assert max_tokens <= 400
+
+
+def test_duration_control_piecewise_token_rate_matches_lora_pilot():
+    settings = _StubSettings()
+    settings.indextts2_duration_token_rate_policy = "piecewise"
+    settings.indextts2_duration_piecewise_token_rates = "15:23.4375,23:30,default:32.5"
+
+    assert _indextts2_duration_token_rate(settings, 8.28) == 23.4375
+    assert _indextts2_duration_token_rate(settings, 20.46) == 30.0
+    assert _indextts2_duration_token_rate(settings, 26.35) == 32.5
+    assert _indextts2_duration_tokens(settings, 20.46) == 614
+
+
+def test_duration_control_generation_meta_overrides_global_default():
+    settings = _StubSettings()
+    meta = {
+        "duration_control_mode": "embedding",
+        "duration_control_min_sec": 0.05,
+        "duration_token_rate_policy": "piecewise",
+        "duration_token_rate": 23.4375,
+        "duration_piecewise_token_rates": "15:23.4375,23:30,default:32.5",
+    }
+
+    assert _indextts2_duration_control_mode(settings) == "off"
+    assert _indextts2_duration_control_mode(settings, meta) == "embedding"
+    assert _indextts2_duration_min_sec(settings, meta) == 0.05
+    assert _indextts2_duration_token_rate(settings, 11.0, meta) == 23.4375
+    assert _indextts2_duration_token_rate(settings, 22.0, meta) == 30.0
+    assert _indextts2_duration_tokens(settings, 11.0, meta) == 258
+
+
+def test_duration_control_unknown_token_rate_policy_uses_constant():
+    settings = _StubSettings()
+    settings.indextts2_duration_token_rate = 42.0
+    settings.indextts2_duration_token_rate_policy = "mystery"
+
+    assert _indextts2_duration_token_rate(settings, 20.0) == 42.0
+
+
+def test_duration_control_min_sec_defaults_to_long_segments():
+    settings = _StubSettings()
+    assert _indextts2_duration_min_sec(settings) == 15.0
+
+
+def test_timing_groups_from_meta_round_trips_matching_text():
+    meta = {
+        "timing": {
+            "max_allowed_ms": 5300,
+            "groups": [
+                {"text": "one.", "target_ms": 1200},
+                {"text": "two?", "target_ms": 1800},
+            ],
+        }
+    }
+    assert _timing_groups_from_meta(meta, "one. two?") == [
+        ("one.", 1200),
+        ("two?", 1800),
+    ]
+    assert _timing_max_allowed_ms(meta) == 5300
+
+
+def test_timing_groups_from_meta_rejects_stale_text():
+    meta = {
+        "timing": {
+            "groups": [
+                {"text": "old text.", "target_ms": 1200},
+            ],
+        }
+    }
+    assert _timing_groups_from_meta(meta, "new text.") is None
+
+
+def test_timing_groups_from_meta_ignores_bad_groups():
+    meta = {
+        "timing": {
+            "max_allowed_ms": "bad",
+            "groups": [
+                {"text": "", "target_ms": 1200},
+                {"text": "valid.", "target_ms": "900"},
+                {"text": "invalid.", "target_ms": -1},
+            ],
+        }
+    }
+    assert _timing_groups_from_meta(meta, "valid.") == [("valid.", 900)]
+    assert _timing_max_allowed_ms(meta) == 0
+
+
+def test_lora_candidate_diag_from_meta_is_shadow_only():
+    meta = {
+        "lora_candidate": {
+            "schema_version": 2,
+            "enabled": True,
+            "phase": "main_flow_shadow",
+            "execution_mode": "shadow_only",
+            "policy_version": "main_flow_shadow_v1",
+            "offline_baseline_id": "episode146_full145_episode_assembly_v7",
+            "candidate_execution_enabled": False,
+            "audio_selection_mode": "default_audio",
+            "selected_family": "default",
+            "fallback_reason": "candidate_loop_shadow_only_default_audio",
+            "split_planning": True,
+            "candidate_families": ["default", "split_light_vector", "split_mix"],
+            "split_policy": {"join_quality_required": True},
+            "gate": {"max_drift_ms": 500, "max_fit_delta": 0.05},
+        }
+    }
+    policy = _LoraCandidatePolicy.from_meta(meta)
+    diag = _lora_candidate_diag_from_meta(meta)
+
+    assert policy.present is True
+    assert policy.should_execute_candidates is False
+    assert "lora_candidate=main_flow_shadow" in diag
+    assert "mode=shadow_only" in diag
+    assert "enabled=true" in diag
+    assert "split=true" in diag
+    assert "selected=default" in diag
+    assert "families=3" in diag
+    assert "schema=2" in diag
+    assert "policy=main_flow_shadow_v1" in diag
+    assert "baseline=episode146_full145_episode_assembly_v7" in diag
+    assert "audio=default_audio" in diag
+    assert "join_required=true" in diag
+    assert "max_drift_ms=500" in diag
+    assert "max_fit_delta=0.05" in diag
+    assert "fallback=candidate_loop_shadow_only_default_audio" in diag
+
+
+def test_lora_candidate_policy_requires_candidate_audio_execution():
+    meta = {
+        "lora_candidate": {
+            "enabled": True,
+            "phase": "main_flow_candidate",
+            "execution_mode": "opt_in",
+            "candidate_execution_enabled": True,
+            "audio_selection_mode": "candidate_audio",
+            "selected_family": "split_mix",
+        }
+    }
+
+    assert _LoraCandidatePolicy.from_meta(meta).should_execute_candidates is True
+
+    meta["lora_candidate"]["audio_selection_mode"] = "default_audio"
+    assert _LoraCandidatePolicy.from_meta(meta).should_execute_candidates is False
+
+
+def test_find_loud_reference_start_picks_high_energy_window(tmp_path):
+    path = tmp_path / "reference.wav"
+    sample_rate = 1000
+    samples = array(
+        "h",
+        [0] * sample_rate * 2
+        + [9000] * sample_rate * 2
+        + [0] * sample_rate,
+    )
+    with wave.open(str(path), "wb") as wav_file:
+        wav_file.setnchannels(1)
+        wav_file.setsampwidth(2)
+        wav_file.setframerate(sample_rate)
+        wav_file.writeframes(samples.tobytes())
+
+    assert _find_loud_reference_start(path, window_sec=1.0, hop_sec=1.0) == 2.0
+
+
+def test_find_stable_reference_candidate_avoids_loudest_window(tmp_path):
+    path = tmp_path / "reference.wav"
+    sample_rate = 1000
+    samples = array(
+        "h",
+        [1200] * sample_rate * 4
+        + [20000] * sample_rate * 2
+        + [1400] * sample_rate * 4,
+    )
+    with wave.open(str(path), "wb") as wav_file:
+        wav_file.setnchannels(1)
+        wav_file.setsampwidth(2)
+        wav_file.setframerate(sample_rate)
+        wav_file.writeframes(samples.tobytes())
+
+    candidate = _find_stable_reference_candidate([path], window_sec=2.0, hop_sec=1.0)
+    assert candidate["path"] == path
+    assert candidate["start_sec"] != 4.0
+
+
+def test_has_speakable_text_keeps_cjk_and_ascii_terms():
+    assert _has_speakable_text("三号服务器复制日志。")
+    assert _has_speakable_text("AppendEntries RPC")
+    assert not _has_speakable_text("  。！？., ")
+
+
+def test_split_long_tts_text_keeps_short_text_intact():
+    text = "AppendEntries RPC stays in one short utterance."
+    assert _split_long_tts_text(text) == [text]
+
+
+def test_split_long_tts_text_uses_chinese_punctuation_boundaries():
+    sentence = (
+        "\u9886\u5bfc\u8005\u5148\u5411\u8ddf\u968f\u8005\u53d1\u9001"
+        "\u8ffd\u52a0\u6761\u76ee\u8bf7\u6c42\uff0c"
+        "\u7136\u540e\u6839\u636e\u54cd\u5e94\u9010\u6b65\u8c03\u6574"
+        "\u4e0b\u4e00\u4e2a\u7d22\u5f15\u3002"
+    )
+    text = sentence * 4
+
+    chunks = _split_long_tts_text(text)
+
+    assert len(chunks) > 1
+    assert "".join(chunks) == text
+    assert all(len(chunk.strip()) <= 110 for chunk in chunks)
+
+
+def test_split_long_tts_text_splits_long_unpunctuated_text():
+    text = "server" * 40
+
+    chunks = _split_long_tts_text(text)
+
+    assert len(chunks) > 1
+    assert "".join(chunks) == text
+    assert all(len(chunk) <= 110 for chunk in chunks)
+
+
+def test_release_indextts2_drops_cached_model():
+    a = _make_adapter()
+    a._indextts2_model = object()
+    a._indextts2_warmup_status = "ready"
+
+    assert a.release_indextts2() is True
+    assert a._indextts2_model is None
+    assert a.get_indextts2_warmup_status() == "idle"

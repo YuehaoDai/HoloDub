@@ -105,6 +105,12 @@ func (s *Service) runEpisodeChapterize(ctx context.Context, task models.TaskPayl
 		"episode_duration_ms", episodeDurMs,
 		"max_chapter_ms", s.cfg.ChapterizeMaxChapterMs,
 	)
+	if ep.Status == models.EpisodeStatusPending {
+		if err := s.store.UpdateEpisodeStatus(ctx, ep.ID, models.EpisodeStatusChaptering, ""); err != nil {
+			slog.Warn("ep_chapterize: pending->chaptering transition failed; continuing",
+				"episode_id", ep.ID, "error", err)
+		}
+	}
 
 	chapterSegs := make([]chapterize.Segment, len(segs))
 	for i, seg := range segs {

@@ -46,6 +46,7 @@ async def smart_split(request: Request, payload: SmartSplitRequest) -> SmartSpli
 
     logger.info("smart_split acquiring GPU guard, then running VAD+ASR...")
     async with services.gpu_guard.acquire():
+        services.tts.release_indextts2()
         # Run blocking Whisper/Pyannote inference in a thread so healthz stays responsive.
         result = await loop.run_in_executor(None, _run)
     logger.info("smart_split done: %d segments", len(result.segments))
@@ -95,6 +96,7 @@ async def transcribe_segment(
         return TranscribeSegmentResponse(text=text, diagnostics=diagnostics)
 
     async with services.gpu_guard.acquire():
+        services.tts.release_indextts2()
         result = await loop.run_in_executor(None, _run)
     logger.info("transcribe_segment done: text_len=%d", len(result.text))
     return result

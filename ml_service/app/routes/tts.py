@@ -18,7 +18,7 @@ async def run_tts(request: Request, payload: TTSRequest) -> TTSResponse:
     async with services.gpu_guard.acquire():
         try:
             return await loop.run_in_executor(
-                None, partial(services.tts.synthesize, payload)
+                None, partial(services.lora_candidate.synthesize, payload)
             )
         except UnsupportedTTSBackendError as exc:
             logger.error("tts backend misconfigured: %s", exc)

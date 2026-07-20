@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 import subprocess
 import tempfile
+from collections import Counter
+from dataclasses import dataclass
 from pathlib import Path
 
 from app.adapters.media import probe_duration
@@ -17,6 +20,29 @@ from app.services.model_registry import ModelRegistry
 SENTENCE_ENDINGS = (".", "!", "?", "。", "！", "？")
 
 
+@dataclass(frozen=True)
+class WhisperSegmentMeta:
+    start_ms: int
+    end_ms: int
+    text: str
+    avg_logprob: float | None = None
+    no_speech_prob: float | None = None
+    compression_ratio: float | None = None
+
+
+@dataclass(frozen=True)
+class AudioWindowStats:
+    sample_count: int = 0
+    rms: float = 0.0
+    zero_crossing_rate: float = 0.0
+
+
+@dataclass(frozen=True)
+class ASRGuardDecision:
+    drop: bool
+    reason: str = ""
+
+
 class ASRAdapter:
     def __init__(self, settings: Settings, registry: ModelRegistry) -> None:
         self.settings = settings
@@ -25,9 +51,14 @@ class ASRAdapter:
     def backend_name(self) -> str:
         return self.settings.ml_asr_backend
 
-    def transcribe_words(self, audio_path: Path, source_language: str) -> tuple[list[WordToken], list[str]]:
+    def transcribe_words(
+        self,
+        audio_path: Path,
+        source_language: str,
+        speech_spans: list[SpeechSpan] | None = None,
+    ) -> tuple[list[WordToken], list[str]]:
         if self.settings.ml_asr_backend == "faster_whisper":
-            return self._run_faster_whisper(audio_path, source_language)
+            return self._run_faster_whisper(audio_path, source_language, speech_spans or [])
         return self._run_mock(audio_path)
 
     def smart_split(
@@ -40,7 +71,7 @@ class ASRAdapter:
         close_gap_ms: int = 800,
         speech_spans: list[SpeechSpan] | None = None,
     ) -> tuple[list[Segment], list[str]]:
-        words, diagnostics = self.transcribe_words(audio_path, source_language)
+        words, diagnostics = self.transcribe_words(audio_path, source_language, speech_spans)
         words = assign_speakers(words, speech_spans or [])
         segments = segment_words(words, min_segment_sec, max_segment_sec, hard_max_segment_sec, close_gap_ms)
 
@@ -163,6 +194,14 @@ class ASRAdapter:
         )
         chunks: list[str] = []
         for segment in segments:
+            decision = _classify_asr_segment(
+                self.settings,
+                audio_path,
+                _whisper_segment_meta(segment),
+                [],
+            )
+            if decision.drop:
+                continue
             text = (segment.text or "").strip()
             if text:
                 chunks.append(text)
@@ -209,7 +248,12 @@ class ASRAdapter:
             )
         ], ["asr backend=mock generated"]
 
-    def _run_faster_whisper(self, audio_path: Path, source_language: str) -> tuple[list[WordToken], list[str]]:
+    def _run_faster_whisper(
+        self,
+        audio_path: Path,
+        source_language: str,
+        speech_spans: list[SpeechSpan] | None = None,
+    ) -> tuple[list[WordToken], list[str]]:
         try:
             from faster_whisper import WhisperModel
         except ImportError as exc:
@@ -227,7 +271,23 @@ class ASRAdapter:
             beam_size=self.settings.faster_whisper_beam_size,
         )
         words: list[WordToken] = []
+        drop_reasons: Counter[str] = Counter()
+        dropped_segments = 0
+        dropped_words = 0
         for segment in segments:
+            meta = _whisper_segment_meta(segment)
+            decision = _classify_asr_segment(
+                self.settings,
+                audio_path,
+                meta,
+                speech_spans or [],
+            )
+            if decision.drop:
+                segment_words = getattr(segment, "words", None) or []
+                dropped_segments += 1
+                dropped_words += max(len(segment_words), 1)
+                drop_reasons[decision.reason] += 1
+                continue
             segment_words = getattr(segment, "words", None) or []
             if segment_words:
                 for word in segment_words:
@@ -251,9 +311,270 @@ class ASRAdapter:
                         end_ms=int(segment.end * 1000),
                     )
                 )
-        if not words:
-            raise RuntimeError("faster-whisper returned no words")
-        return words, ["asr backend=faster_whisper"]
+        diagnostics = ["asr backend=faster_whisper"]
+        diagnostics.extend(_format_guard_diagnostics(dropped_segments, dropped_words, drop_reasons))
+        return words, diagnostics
+
+
+def _whisper_segment_meta(segment: object) -> WhisperSegmentMeta:
+    start = float(getattr(segment, "start", 0.0) or 0.0)
+    end = float(getattr(segment, "end", start) or start)
+    return WhisperSegmentMeta(
+        start_ms=int(start * 1000),
+        end_ms=int(end * 1000),
+        text=(getattr(segment, "text", "") or "").strip(),
+        avg_logprob=_optional_float(getattr(segment, "avg_logprob", None)),
+        no_speech_prob=_optional_float(getattr(segment, "no_speech_prob", None)),
+        compression_ratio=_optional_float(getattr(segment, "compression_ratio", None)),
+    )
+
+
+def _optional_float(value: object) -> float | None:
+    if value is None:
+        return None
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return None
+    if math.isnan(f) or math.isinf(f):
+        return None
+    return f
+
+
+def _classify_asr_segment(
+    settings: Settings,
+    audio_path: Path,
+    meta: WhisperSegmentMeta,
+    speech_spans: list[SpeechSpan],
+) -> ASRGuardDecision:
+    if not settings.asr_non_speech_guard_enabled:
+        return ASRGuardDecision(False)
+
+    duration_ms = max(meta.end_ms - meta.start_ms, 0)
+    if duration_ms < settings.asr_guard_min_duration_ms:
+        return ASRGuardDecision(False)
+
+    if speech_spans:
+        overlap = _speech_overlap_ratio(
+            meta.start_ms,
+            meta.end_ms,
+            speech_spans,
+            pad_ms=settings.asr_guard_vad_pad_ms,
+        )
+        if overlap < settings.asr_guard_min_vad_overlap:
+            return ASRGuardDecision(True, f"vad_overlap_low:{overlap:.2f}")
+
+    text_reason = _text_hallucination_reason(
+        meta.text,
+        duration_ms,
+        settings.asr_guard_max_chars_per_sec,
+    )
+
+    if (
+        meta.compression_ratio is not None
+        and meta.compression_ratio >= settings.asr_guard_compression_ratio
+    ):
+        return ASRGuardDecision(True, f"compression_ratio:{meta.compression_ratio:.2f}")
+
+    high_no_speech_prob = (
+        meta.no_speech_prob is not None
+        and meta.no_speech_prob >= settings.asr_guard_no_speech_prob
+    )
+    confident_text = (
+        meta.avg_logprob is not None
+        and meta.avg_logprob > settings.asr_guard_soft_avg_logprob
+        and text_reason == ""
+    )
+    if high_no_speech_prob and not confident_text:
+        return ASRGuardDecision(True, f"no_speech_prob:{meta.no_speech_prob:.2f}")
+
+    low_logprob = (
+        meta.avg_logprob is not None
+        and meta.avg_logprob <= settings.asr_guard_avg_logprob
+    )
+    if low_logprob and text_reason:
+        return ASRGuardDecision(True, f"low_logprob+{text_reason}")
+
+    if (
+        settings.asr_guard_audio_features_enabled
+        and (
+            low_logprob
+            or text_reason != ""
+            or (
+                meta.no_speech_prob is not None
+                and meta.no_speech_prob >= settings.asr_guard_soft_no_speech_prob
+            )
+            or (
+                meta.avg_logprob is not None
+                and meta.avg_logprob <= settings.asr_guard_soft_avg_logprob
+            )
+        )
+    ):
+        stats = _audio_window_stats(settings, audio_path, meta.start_ms, meta.end_ms)
+        if (
+            stats.sample_count > 0
+            and stats.rms >= settings.asr_guard_min_rms
+            and stats.zero_crossing_rate >= settings.asr_guard_zcr_threshold
+        ):
+            return ASRGuardDecision(
+                True,
+                f"high_zcr:{stats.zero_crossing_rate:.2f}",
+            )
+
+    return ASRGuardDecision(False)
+
+
+def _speech_overlap_ratio(
+    start_ms: int,
+    end_ms: int,
+    spans: list[SpeechSpan],
+    pad_ms: int = 0,
+) -> float:
+    duration = max(end_ms - start_ms, 0)
+    if duration <= 0:
+        return 0.0
+
+    start = start_ms - max(pad_ms, 0)
+    end = end_ms + max(pad_ms, 0)
+    overlap = 0
+    for span in spans:
+        span_start = max(span.start_ms, start)
+        span_end = min(span.end_ms, end)
+        if span_end > span_start:
+            overlap += span_end - span_start
+    return min(overlap / duration, 1.0)
+
+
+def _text_hallucination_reason(text: str, duration_ms: int, max_chars_per_sec: float) -> str:
+    stripped = text.strip()
+    if not stripped:
+        return "empty_text"
+
+    chars = [ch.lower() for ch in stripped if ch.isalnum()]
+    if not chars:
+        return "no_alnum_text"
+
+    duration_sec = max(duration_ms / 1000.0, 0.001)
+    chars_per_sec = len(chars) / duration_sec
+    if max_chars_per_sec > 0 and chars_per_sec > max_chars_per_sec:
+        return f"chars_per_sec:{chars_per_sec:.1f}"
+
+    if len(chars) >= 8:
+        max_run = _max_consecutive_run(chars)
+        if max_run >= max(6, int(len(chars) * 0.55)):
+            return "repeated_chars"
+
+        unique_ratio = len(set(chars)) / len(chars)
+        if unique_ratio < 0.18:
+            return "low_char_diversity"
+
+    tokens = re.findall(r"\w+", stripped.lower(), flags=re.UNICODE)
+    if len(tokens) >= 6:
+        counts = Counter(tokens)
+        most_common = counts.most_common(1)[0][1]
+        if most_common / len(tokens) >= 0.60:
+            return "repeated_tokens"
+
+    if duration_ms >= 5000 and len(chars) <= 2:
+        return "long_window_tiny_text"
+
+    return ""
+
+
+def _max_consecutive_run(chars: list[str]) -> int:
+    best = 0
+    current = 0
+    prev = ""
+    for ch in chars:
+        if ch == prev:
+            current += 1
+        else:
+            current = 1
+            prev = ch
+        if current > best:
+            best = current
+    return best
+
+
+def _audio_window_stats(
+    settings: Settings,
+    audio_path: Path,
+    start_ms: int,
+    end_ms: int,
+) -> AudioWindowStats:
+    duration_ms = max(end_ms - start_ms, 0)
+    if duration_ms <= 0:
+        return AudioWindowStats()
+
+    try:
+        result = subprocess.run(
+            [
+                settings.ffmpeg_bin,
+                "-v",
+                "error",
+                "-ss",
+                f"{max(start_ms, 0) / 1000.0:.3f}",
+                "-i",
+                str(audio_path),
+                "-t",
+                f"{duration_ms / 1000.0:.3f}",
+                "-vn",
+                "-f",
+                "s16le",
+                "-acodec",
+                "pcm_s16le",
+                "-ar",
+                "16000",
+                "-ac",
+                "1",
+                "-",
+            ],
+            check=True,
+            capture_output=True,
+            timeout=12,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return AudioWindowStats()
+
+    raw = result.stdout
+    sample_count = len(raw) // 2
+    if sample_count < 2:
+        return AudioWindowStats(sample_count=sample_count)
+
+    zero_crossings = 0
+    sum_sq = 0
+    prev = int.from_bytes(raw[0:2], byteorder="little", signed=True)
+    sum_sq += prev * prev
+    for offset in range(2, sample_count * 2, 2):
+        sample = int.from_bytes(raw[offset : offset + 2], byteorder="little", signed=True)
+        sum_sq += sample * sample
+        if (sample >= 0) != (prev >= 0) and abs(sample - prev) > 128:
+            zero_crossings += 1
+        prev = sample
+
+    rms = math.sqrt(sum_sq / sample_count) / 32768.0
+    zcr = zero_crossings / max(sample_count - 1, 1)
+    return AudioWindowStats(
+        sample_count=sample_count,
+        rms=rms,
+        zero_crossing_rate=zcr,
+    )
+
+
+def _format_guard_diagnostics(
+    dropped_segments: int,
+    dropped_words: int,
+    drop_reasons: Counter[str],
+) -> list[str]:
+    if dropped_segments <= 0:
+        return []
+    reasons = ", ".join(f"{reason}={count}" for reason, count in drop_reasons.most_common())
+    return [
+        (
+            "asr non_speech_guard dropped "
+            f"segments={dropped_segments} words={dropped_words} reasons={reasons}"
+        )
+    ]
 
 
 def assign_speakers(words: list[WordToken], spans: list[SpeechSpan]) -> list[WordToken]:

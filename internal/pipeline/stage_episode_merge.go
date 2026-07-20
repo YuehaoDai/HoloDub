@@ -119,6 +119,13 @@ func (s *Service) runEpisodeMerge(ctx context.Context, task models.TaskPayload) 
 		s.markEpisodeFailed(ctx, ep, fmt.Sprintf("concat: %v", concatErr))
 		return fmt.Errorf("ep_episode_merge: concat: %w", concatErr)
 	}
+	targetDurationMs := episodeMergeTargetDurationMs(ep, chapters)
+	if targetDurationMs > 0 {
+		if err := media.ClampMuxedVideoDuration(ctx, s.cfg.FFmpegBin, finalAbs, targetDurationMs); err != nil {
+			s.markEpisodeFailed(ctx, ep, fmt.Sprintf("duration lock: %v", err))
+			return fmt.Errorf("ep_episode_merge: duration lock: %w", err)
+		}
+	}
 
 	// Optional master EBU R128 pass on the concatenated final. Skipped when
 	// disabled by config OR when there is only one chapter (chapter-level
@@ -156,7 +163,7 @@ func (s *Service) runEpisodeMerge(ctx context.Context, task models.TaskPayload) 
 		// Soft warning: video + manifest are on disk; operator can re-run
 		// the merge handler to update the row when DB is healthy again.
 		slog.Warn("ep_episode_merge: persist Episode output paths failed",
-			"episode_id", ep.ID, "error", err)
+			"episode_id", ep.ID, "status", ep.Status, "error", err)
 	}
 	if masterStats != nil {
 		// Flat key (`vp{N}_master`) so the shallow `||` merge in
@@ -176,13 +183,19 @@ func (s *Service) runEpisodeMerge(ctx context.Context, task models.TaskPayload) 
 	// check runs (it allows running → completed, dispatched → completed,
 	// merging → completed; the back-fill / shortcut paths handle everything
 	// else).
-	if err := s.store.UpdateEpisodeStatus(ctx, ep.ID, models.EpisodeStatusCompleted, ""); err != nil {
-		// Some active episodes may be in dispatched state from chapterize
-		// fan-out without ever transitioning through running. The status
-		// machine accepts dispatched → completed directly so this is a real
-		// error worth surfacing rather than swallowing.
-		slog.Warn("ep_episode_merge: episode status → completed failed",
-			"episode_id", ep.ID, "error", err)
+	if episodeMergeShouldUpdateCompletedStatus(ep.Status) {
+		if err := s.store.UpdateEpisodeStatus(ctx, ep.ID, models.EpisodeStatusCompleted, ""); err != nil {
+			// Some active episodes may be in dispatched state from chapterize
+			// fan-out without ever transitioning through running. The status
+			// machine accepts dispatched → completed directly so this is a real
+			// error worth surfacing rather than swallowing.
+			slog.Warn("ep_episode_merge: episode status → completed failed",
+				"episode_id", ep.ID, "status", ep.Status, "error", err)
+		}
+	} else {
+		slog.Info("ep_episode_merge: refreshed completed episode output",
+			"episode_id", ep.ID,
+			"output_rel_path", finalRelPath)
 	}
 
 	// OPT-406 trigger: episode is now Completed. Fire off the cross-chapter
@@ -199,6 +212,19 @@ func (s *Service) runEpisodeMerge(ctx context.Context, task models.TaskPayload) 
 		"master_loudnorm", masterStats != nil,
 	)
 	return nil
+}
+
+func episodeMergeTargetDurationMs(ep *models.Episode, chapters []models.Job) int64 {
+	if ep != nil && ep.DurationMs > 0 {
+		return ep.DurationMs
+	}
+	var maxEnd int64
+	for _, ch := range chapters {
+		if ch.ChapterEndMs > maxEnd {
+			maxEnd = ch.ChapterEndMs
+		}
+	}
+	return maxEnd
 }
 
 // runMasterLoudnorm runs media.LoudnormTwoPass on the concatenated final
@@ -343,9 +369,8 @@ func buildChaptersManifest(
 // — when (and only when) every chapter under an Episode has Status =
 // completed, it enqueues ep_episode_merge.
 //
-// Idempotent: if the merge already wrote OutputRelPath the function logs
-// and returns nil so re-triggers (e.g. operator manually retrying the
-// last chapter) do not double-enqueue.
+// Completed episodes are intentionally eligible so a chapter repair can
+// refresh final episode artifacts.
 func (s *Service) maybeEnqueueEpisodeMerge(ctx context.Context, episodeID uint) {
 	if !s.cfg.EpisodeMergeEnabled || episodeID == 0 {
 		return
@@ -354,9 +379,6 @@ func (s *Service) maybeEnqueueEpisodeMerge(ctx context.Context, episodeID uint) 
 	if err != nil || ep == nil {
 		slog.Warn("maybeEnqueueEpisodeMerge: load episode failed",
 			"episode_id", episodeID, "error", err)
-		return
-	}
-	if ep.Status.IsTerminal() {
 		return
 	}
 	chapters, err := s.store.GetEpisodeChapters(ctx, episodeID)
@@ -368,16 +390,31 @@ func (s *Service) maybeEnqueueEpisodeMerge(ctx context.Context, episodeID uint) 
 			return // not ready
 		}
 	}
+	reason := episodeMergeEnqueueReason(ep.Status)
 	if err := s.EnqueueEpisodeStage(ctx,
 		episodeID,
 		models.EpisodeStageEpisodeMerge,
 		"pipeline",
-		"all_chapters_completed",
+		reason,
 	); err != nil {
 		slog.Warn("maybeEnqueueEpisodeMerge: enqueue failed",
 			"episode_id", episodeID, "error", err)
 		return
 	}
 	slog.Info("maybeEnqueueEpisodeMerge: enqueued ep_episode_merge",
-		"episode_id", episodeID, "chapter_count", len(chapters))
+		"episode_id", episodeID,
+		"episode_status", ep.Status,
+		"chapter_count", len(chapters),
+		"reason", reason)
+}
+
+func episodeMergeEnqueueReason(status models.EpisodeStatus) string {
+	if status.IsTerminal() {
+		return "chapter_merge_rebuilt_terminal_episode"
+	}
+	return "all_chapters_completed"
+}
+
+func episodeMergeShouldUpdateCompletedStatus(status models.EpisodeStatus) bool {
+	return status != models.EpisodeStatusCompleted
 }

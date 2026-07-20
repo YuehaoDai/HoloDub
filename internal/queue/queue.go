@@ -116,6 +116,19 @@ func (q *Queue) AcquireStageLease(ctx context.Context, jobID uint, stage models.
 	return q.client.SetNX(ctx, key, time.Now().UTC().Format(time.RFC3339Nano), ttl).Result()
 }
 
+func (q *Queue) RefreshStageLease(ctx context.Context, jobID uint, stage models.JobStage, ttl time.Duration) error {
+	key := q.stageLeaseKey(jobID, stage)
+	refreshed, err := q.client.Expire(ctx, key, ttl).Result()
+	if err != nil {
+		return err
+	}
+	if refreshed {
+		return nil
+	}
+	_, err = q.client.SetNX(ctx, key, time.Now().UTC().Format(time.RFC3339Nano), ttl).Result()
+	return err
+}
+
 func (q *Queue) ReleaseStageLease(ctx context.Context, jobID uint, stage models.JobStage) error {
 	return q.client.Del(ctx, q.stageLeaseKey(jobID, stage)).Err()
 }

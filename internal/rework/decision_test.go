@@ -44,7 +44,7 @@ func TestParseLevel(t *testing.T) {
 		"segment":     LevelSegment,
 		"chapter":     LevelChapter,
 		"episode":     LevelEpisode,
-		"NONE":        LevelNone,    // case sensitive — typo collapses
+		"NONE":        LevelNone, // case sensitive — typo collapses
 		"chap":        LevelNone,
 		"  episode  ": LevelNone, // whitespace not stripped (caller's job)
 	}
@@ -188,8 +188,8 @@ func TestDecide_Oscillation(t *testing.T) {
 	if got.Type != ActionEscalateOscillation {
 		t.Fatalf("expected ActionEscalateOscillation, got %s (%s)", got.Type, got.Note)
 	}
-	if got.ReworkStatus != "escalated_oscillation" {
-		t.Fatalf("expected ReworkStatus=escalated_oscillation, got %q", got.ReworkStatus)
+	if got.ReworkStatus != "" {
+		t.Fatalf("oscillation should no longer halt rework status, got %q", got.ReworkStatus)
 	}
 
 	// Threshold=0 falls back to the default of 2; same input should still
@@ -352,11 +352,11 @@ func TestDecide_ChapterVerdicts(t *testing.T) {
 			ChapterReworkMaxRounds: 1,
 			OscillationThreshold:   99,
 		})
-		if got.Type != ActionEscalateChapter {
-			t.Fatalf("want ActionEscalateChapter after max rounds, got %s", got.Type)
+		if got.Type != ActionNoop {
+			t.Fatalf("want ActionNoop after max rounds, got %s", got.Type)
 		}
-		if got.ReworkStatus != "escalated_chapter" {
-			t.Fatalf("expected ReworkStatus=escalated_chapter, got %q", got.ReworkStatus)
+		if got.ReworkStatus != "" {
+			t.Fatalf("expected no rework status after max rounds, got %q", got.ReworkStatus)
 		}
 	})
 
@@ -367,21 +367,35 @@ func TestDecide_ChapterVerdicts(t *testing.T) {
 			WeakestSegmentIDs:      nil,
 			ChapterReworkMaxRounds: 1,
 		})
-		if got.Type != ActionEscalateChapter {
-			t.Fatalf("want ActionEscalateChapter when no segments resolved, got %s", got.Type)
+		if got.Type != ActionNoop {
+			t.Fatalf("want ActionNoop when no segments resolved, got %s", got.Type)
 		}
 		if !strings.Contains(got.SkipReason, "no_weakest_segments") {
 			t.Fatalf("expected SkipReason to mention no_weakest_segments, got %q", got.SkipReason)
 		}
 	})
 
-	t.Run("verdict_needs_major_rework", func(t *testing.T) {
+	t.Run("verdict_needs_major_rework_with_segments_revises", func(t *testing.T) {
+		got := Decide(DecideInput{
+			Level: LevelChapter, EnabledLevel: LevelChapter,
+			Verdict: "needs_major_rework", TargetID: 200, EpisodeID: 50, Score: 0.5,
+			WeakestSegmentIDs: []uint{21, 22},
+		})
+		if got.Type != ActionReviseWeakestSegments {
+			t.Fatalf("want ActionReviseWeakestSegments, got %s", got.Type)
+		}
+		if len(got.SegmentIDs) != 2 {
+			t.Fatalf("expected two weak segments, got %v", got.SegmentIDs)
+		}
+	})
+
+	t.Run("verdict_needs_major_rework_without_segments_noops", func(t *testing.T) {
 		got := Decide(DecideInput{
 			Level: LevelChapter, EnabledLevel: LevelChapter,
 			Verdict: "needs_major_rework", TargetID: 200, EpisodeID: 50, Score: 0.5,
 		})
-		if got.Type != ActionEscalateChapter {
-			t.Fatalf("want ActionEscalateChapter, got %s", got.Type)
+		if got.Type != ActionNoop {
+			t.Fatalf("want ActionNoop without weak segment targets, got %s", got.Type)
 		}
 	})
 }
@@ -427,11 +441,11 @@ func TestDecide_EpisodeVerdicts(t *testing.T) {
 			History:                hist,
 			OscillationThreshold:   99,
 		})
-		if got.Type != ActionEscalateHumanReview {
-			t.Fatalf("want human review after one broadcast, got %s", got.Type)
+		if got.Type != ActionNoop {
+			t.Fatalf("want noop after one broadcast, got %s", got.Type)
 		}
-		if got.ReworkStatus != "escalated_human" {
-			t.Fatalf("expected ReworkStatus=escalated_human, got %q", got.ReworkStatus)
+		if got.ReworkStatus != "" {
+			t.Fatalf("expected no rework status after one broadcast, got %q", got.ReworkStatus)
 		}
 	})
 
@@ -447,24 +461,24 @@ func TestDecide_EpisodeVerdicts(t *testing.T) {
 		}
 	})
 
-	t.Run("major_revision_human_review", func(t *testing.T) {
+	t.Run("major_revision_broadcasts_glossary", func(t *testing.T) {
 		got := Decide(DecideInput{
 			Level: LevelEpisode, EnabledLevel: LevelEpisode,
 			Verdict: "needs_major_revision", TargetID: 50, EpisodeID: 50, Score: 0.6,
 		})
-		if got.Type != ActionEscalateHumanReview {
-			t.Fatalf("want ActionEscalateHumanReview, got %s", got.Type)
+		if got.Type != ActionBroadcastGlossary {
+			t.Fatalf("want ActionBroadcastGlossary, got %s", got.Type)
 		}
 	})
 
-	t.Run("unknown_verdict_with_low_narrative_escalates", func(t *testing.T) {
+	t.Run("unknown_verdict_with_low_narrative_broadcasts_glossary", func(t *testing.T) {
 		got := Decide(DecideInput{
 			Level: LevelEpisode, EnabledLevel: LevelEpisode,
 			Verdict: "weirdo_verdict", TargetID: 50, EpisodeID: 50,
 			NarrativeCoherence: 0.5,
 		})
-		if got.Type != ActionEscalateHumanReview {
-			t.Fatalf("want human review on low narrative, got %s", got.Type)
+		if got.Type != ActionBroadcastGlossary {
+			t.Fatalf("want glossary broadcast on low narrative, got %s", got.Type)
 		}
 	})
 }
@@ -475,7 +489,7 @@ func TestAccumulateCostUSD(t *testing.T) {
 		{Dispatched: true, CostUSDDelta: 0.10},
 		{Dispatched: false, CostUSDDelta: 0.05}, // not counted
 		{Dispatched: true, CostUSDDelta: 0.20},
-		{Dispatched: true, CostUSDDelta: -1.0},  // defensive: not counted
+		{Dispatched: true, CostUSDDelta: -1.0}, // defensive: not counted
 		{Dispatched: true, CostUSDDelta: 0.005},
 	}
 	want := 0.305
@@ -752,7 +766,7 @@ func TestShouldDriftOverrideToRetry(t *testing.T) {
 		{"zero_drift", DecideInput{Verdict: "accept", DriftSec: 0, DriftHardLimitOverSec: 0.3, DriftHardLimitUnderSec: 0.7}, false},
 		{"verdict_retry", DecideInput{Verdict: "retry", DriftSec: 5, DriftHardLimitOverSec: 0.3, DriftHardLimitUnderSec: 0.7}, false},
 		{"verdict_split", DecideInput{Verdict: "split", DriftSec: 5, DriftHardLimitOverSec: 0.3, DriftHardLimitUnderSec: 0.7}, false},
-		{"over_at_limit", DecideInput{Verdict: "accept", DriftSec: 0.3, DriftHardLimitOverSec: 0.3, DriftHardLimitUnderSec: 0.7}, false},      // strictly greater than
+		{"over_at_limit", DecideInput{Verdict: "accept", DriftSec: 0.3, DriftHardLimitOverSec: 0.3, DriftHardLimitUnderSec: 0.7}, false}, // strictly greater than
 		{"over_just_above", DecideInput{Verdict: "accept", DriftSec: 0.31, DriftHardLimitOverSec: 0.3, DriftHardLimitUnderSec: 0.7}, true},
 		{"over_far_above", DecideInput{Verdict: "accept", DriftSec: 5.0, DriftHardLimitOverSec: 0.3, DriftHardLimitUnderSec: 0.7}, true},
 		{"under_at_limit", DecideInput{Verdict: "accept", DriftSec: -0.7, DriftHardLimitOverSec: 0.3, DriftHardLimitUnderSec: 0.7}, false},

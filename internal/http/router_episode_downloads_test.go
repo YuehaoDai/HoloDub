@@ -29,6 +29,7 @@ import (
 	"context"
 	stdhttp "net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
@@ -51,7 +52,8 @@ func newDownloadsTestEnv(t *testing.T) (*gin.Engine, *store.Store, string) {
 	gin.SetMode(gin.TestMode)
 	dataRoot := t.TempDir()
 
-	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
+	dsn := "file:" + url.PathEscape(t.Name()) + "?mode=memory&cache=shared"
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}

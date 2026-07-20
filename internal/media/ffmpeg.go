@@ -17,9 +17,9 @@ import (
 )
 
 type AudioOverlay struct {
-	RelPath       string
-	DelayMs       int64
-	DurationMs    int64
+	RelPath    string
+	DelayMs    int64
+	DurationMs int64
 	// MaxDurationMs is the hard playback ceiling for this overlay — the gap
 	// to the next segment start.  Audio beyond this point would overlap the
 	// next sentence.  Zero means unconstrained (use DurationMs as ceiling).
@@ -76,6 +76,10 @@ func RenderDubTrack(dataRoot, ffmpegBin string, outputRelPath string, durationMs
 // renderDubTrackDirect is the original single-pass approach, used when the
 // segment count is small enough for one filter_complex call.
 func renderDubTrackDirect(dataRoot, ffmpegBin, outputPath string, durationMs int64, bgmRelPath string, overlays []AudioOverlay) error {
+	if len(overlays) == 0 {
+		return renderBackgroundOnly(dataRoot, ffmpegBin, outputPath, durationMs, bgmRelPath)
+	}
+
 	args := []string{
 		"-y",
 		"-f", "lavfi",
@@ -120,6 +124,32 @@ func renderDubTrackDirect(dataRoot, ffmpegBin, outputPath string, durationMs int
 		"-ac", "1",
 		outputPath,
 	)
+	return runCmd(ffmpegBin, args...)
+}
+
+func renderBackgroundOnly(dataRoot, ffmpegBin, outputPath string, durationMs int64, bgmRelPath string) error {
+	if bgmRelPath != "" {
+		args := []string{
+			"-y",
+			"-i", storage.ResolveDataPath(dataRoot, bgmRelPath),
+			"-t", formatSeconds(durationMs),
+			"-af", "aresample=24000,volume=0.75,alimiter=limit=0.95",
+			"-ar", "24000",
+			"-ac", "1",
+			outputPath,
+		}
+		return runCmd(ffmpegBin, args...)
+	}
+
+	args := []string{
+		"-y",
+		"-f", "lavfi",
+		"-t", formatSeconds(durationMs),
+		"-i", "anullsrc=r=24000:cl=mono",
+		"-ar", "24000",
+		"-ac", "1",
+		outputPath,
+	}
 	return runCmd(ffmpegBin, args...)
 }
 
@@ -263,23 +293,40 @@ func cleanupFiles(paths []string) {
 }
 
 func MuxVideo(dataRoot, ffmpegBin, inputRelPath, audioRelPath, outputRelPath string) error {
+	return MuxVideoWithDuration(dataRoot, ffmpegBin, inputRelPath, audioRelPath, outputRelPath, 0)
+}
+
+func MuxVideoWithDuration(dataRoot, ffmpegBin, inputRelPath, audioRelPath, outputRelPath string, durationMs int64) error {
 	outputPath := storage.ResolveDataPath(dataRoot, outputRelPath)
 	if err := storage.EnsureParentDir(outputPath); err != nil {
 		return err
 	}
 
+	args := muxVideoArgs(
+		storage.ResolveDataPath(dataRoot, inputRelPath),
+		storage.ResolveDataPath(dataRoot, audioRelPath),
+		outputPath,
+		durationMs,
+	)
+	return runCmd(ffmpegBin, args...)
+}
+
+func muxVideoArgs(inputPath, audioPath, outputPath string, durationMs int64) []string {
 	args := []string{
 		"-y",
-		"-i", storage.ResolveDataPath(dataRoot, inputRelPath),
-		"-i", storage.ResolveDataPath(dataRoot, audioRelPath),
+		"-i", inputPath,
+		"-i", audioPath,
 		"-map", "0:v:0",
 		"-map", "1:a:0",
 		"-c:v", "copy",
 		"-c:a", "aac",
 		"-shortest",
-		outputPath,
 	}
-	return runCmd(ffmpegBin, args...)
+	if durationMs > 0 {
+		args = append(args, "-t", formatSeconds(durationMs))
+	}
+	args = append(args, outputPath)
+	return args
 }
 
 func ProbeDurationMs(dataRoot, ffprobeBin, relPath string) (int64, error) {
@@ -336,6 +383,46 @@ func TrimAudioSegment(ffmpegBin, inputPath, outPath string, startMs, endMs int64
 		outPath,
 	}
 	return runCmd(ffmpegBin, args...)
+}
+
+// ClampMuxedVideoDuration trims an already-muxed media file to the requested
+// wall-clock duration without re-encoding. It is intended as the final guardrail
+// after chapter or episode concat, where stream-copy slicing can preserve a few
+// extra packets from the source video.
+func ClampMuxedVideoDuration(ctx context.Context, ffmpegBin, inputPath string, durationMs int64) error {
+	if inputPath == "" {
+		return errors.New("ClampMuxedVideoDuration: empty input path")
+	}
+	if durationMs <= 0 {
+		return fmt.Errorf("ClampMuxedVideoDuration: invalid duration %dms", durationMs)
+	}
+	if _, err := os.Stat(inputPath); err != nil {
+		return fmt.Errorf("ClampMuxedVideoDuration: stat input: %w", err)
+	}
+	tmpPath := inputPath + ".duration_lock.mp4"
+	defer os.Remove(tmpPath)
+	args := []string{
+		"-y",
+		"-i", inputPath,
+		"-t", formatSeconds(durationMs),
+		"-c", "copy",
+		"-avoid_negative_ts", "make_zero",
+		tmpPath,
+	}
+	if err := runCmdCtx(ctx, ffmpegBin, args...); err != nil {
+		return err
+	}
+	backupPath := inputPath + ".duration_lock.bak"
+	_ = os.Remove(backupPath)
+	if err := os.Rename(inputPath, backupPath); err != nil {
+		return fmt.Errorf("ClampMuxedVideoDuration: move original aside: %w", err)
+	}
+	if err := os.Rename(tmpPath, inputPath); err != nil {
+		_ = os.Rename(backupPath, inputPath)
+		return fmt.Errorf("ClampMuxedVideoDuration: replace input: %w", err)
+	}
+	_ = os.Remove(backupPath)
+	return nil
 }
 
 func overlayFadeFilter(durationMs int64) string {
@@ -480,16 +567,21 @@ func LoudnormTwoPass(
 		targetI, targetTP, targetLRA,
 		stats.InputI, stats.InputTP, stats.InputLRA, stats.InputThresh, stats.TargetOffset,
 	)
-	pass2Args := []string{
-		"-y", "-i", inputPath,
-		"-af", pass2Filter,
-		"-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2",
-		outPath,
-	}
+	pass2Args := loudnormPass2Args(inputPath, outPath, pass2Filter)
 	if err := runCmdCtx(ctx, ffmpegBin, pass2Args...); err != nil {
 		return stats, fmt.Errorf("loudnorm pass 2: %w", err)
 	}
 	return stats, nil
+}
+
+func loudnormPass2Args(inputPath, outPath, pass2Filter string) []string {
+	return []string{
+		"-y", "-i", inputPath,
+		"-map", "0:a:0", "-vn", "-sn", "-dn",
+		"-af", pass2Filter,
+		"-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2",
+		outPath,
+	}
 }
 
 // ConcatChapterVideos concatenates ordered chapter videos into outPath using

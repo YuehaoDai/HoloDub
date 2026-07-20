@@ -310,6 +310,52 @@ func TestTranslateUserMsgContainsPerSegmentConstraints(t *testing.T) {
 	}
 }
 
+func TestTranslateUserMsgAddsSourceTimingNoteForFragmentedLongSource(t *testing.T) {
+	var capturedUser string
+	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req chatCompletionRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		for _, m := range req.Messages {
+			if m.Role == "user" {
+				capturedUser = m.Content
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"ok"}}],"usage":{"prompt_tokens":100}}`))
+	}))
+	defer stub.Close()
+
+	c := &Client{
+		provider:   "openai_compatible",
+		baseURL:    stub.URL,
+		apiKey:     "sk-test",
+		model:      "qwen-turbo",
+		httpClient: &http.Client{Timeout: 5 * time.Second},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if _, err := c.translateWithDurationViaOpenAI(
+		ctx,
+		"en",
+		"zh-CN",
+		"Be. Helpful. For. People. Building. Their. Own. Distributed. Systems.",
+		22.9,
+		4.0,
+		nil,
+		"Genre: tech.",
+	); err != nil {
+		t.Fatalf("translateWithDurationViaOpenAI: %v", err)
+	}
+	if !strings.Contains(capturedUser, "[Source timing note]") {
+		t.Fatalf("fragmented long source should add source timing note; user=%q", capturedUser)
+	}
+	if !strings.Contains(capturedUser, "reconstruct the intended sentence") {
+		t.Fatalf("source timing note should instruct pause planning; user=%q", capturedUser)
+	}
+}
 
 // TestOperationConstants guards against a future maintainer renaming or
 // removing the metric labels. Changing these breaks existing dashboards /
@@ -344,8 +390,8 @@ func hashPrompt(s string) string {
 // closing instruction. A regression on either contract breaks OPT-001 cache
 // reuse OR OPT-003 tool-call enforcement.
 func TestReviewSystemPromptDualMode(t *testing.T) {
-	toolP := reviewSystemPrompt("en", true)
-	promptP := reviewSystemPrompt("en", false)
+	toolP := reviewSystemPromptV2(true)
+	promptP := reviewSystemPromptV2(false)
 	if toolP == promptP {
 		t.Fatal("tool-mode and prompt-mode system prompts must differ on closing instruction")
 	}
@@ -359,6 +405,12 @@ func TestReviewSystemPromptDualMode(t *testing.T) {
 	}
 	if !strings.Contains(promptP, "JSON array") {
 		t.Fatal("prompt-mode prompt must describe the JSON array format")
+	}
+	if strings.Contains(toolP, "Source language:") {
+		t.Fatal("v2 prompt must keep language in policy, not interpolate it into the system prompt")
+	}
+	if !strings.Contains(toolP, "policy.max_merge_gap_ms") {
+		t.Fatal("v2 prompt must refer to decoupled policy parameters")
 	}
 }
 
@@ -530,6 +582,9 @@ func TestReviewToolFlagOff(t *testing.T) {
 		if len(req.Tools) > 0 {
 			t.Errorf("flag OFF should not send tools; got %d", len(req.Tools))
 		}
+		if len(req.Messages) < 2 || !strings.Contains(req.Messages[1].Content, `"policy"`) {
+			t.Errorf("review request should carry decoupled policy in user JSON: %+v", req.Messages)
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"[]"}}],"usage":{"prompt_tokens":100}}`))
 	}))
@@ -638,11 +693,77 @@ func TestRetranslatePrompt_UnderRunIncludesAdaptationStrategy(t *testing.T) {
 	}
 }
 
+func TestRetranslatePrompt_CompressionHintOverridesUnderRunExpansion(t *testing.T) {
+	c, captured, close := captureRetranslatePayload(t, "compressed translation")
+	defer close()
+	_, err := c.RetranslateWithConstraintHint(
+		context.Background(),
+		"en", "zh",
+		"And so this is proof that the history is linearizable.",
+		"因此，这便构成了该操作历史满足线性一致性的严格证明：此处存在一个明确的全局顺序。",
+		19.82, 12.77,
+		5, 8,
+		0.06,
+		nil, false, 4.0, nil, "", "",
+		&DurationCompressionHint{
+			Reason:                 "split_part_required_speech_rate_above_safe_limit",
+			MaxRequiredCharsPerSec: 7.13,
+			MaxAllowedCharsPerSec:  5.6,
+			RecommendedMaxChars:    110,
+			CurrentChars:           140,
+			RiskPartIndexes:        []int{1, 2},
+		},
+	)
+	if err != nil {
+		t.Fatalf("retranslate: %v", err)
+	}
+	body := string(*captured)
+	if strings.Contains(body, "Adaptation strategy") {
+		t.Fatalf("compression hint must suppress under-run expansion strategy; body=%s", body)
+	}
+	for _, want := range []string{
+		"Compress the current translation to at most 110 characters",
+		"do NOT expand this segment",
+		"Required speech rate: 7.13 chars/sec",
+		"Safe limit: 5.60 chars/sec",
+		"Recommended hard ceiling for this retry: 110 characters",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("compression prompt missing %q; body=%s", want, body)
+		}
+	}
+}
+
 // TestRetranslatePrompt_OverRunOmitsAdaptationStrategy (OPT-204-followup-2 / P1):
 // the adaptation block is under-run specific. Over-run segments need
 // compression guidance (already in charTargetInstruction) — adding
 // "you may paraphrase more aggressively" here would push the LLM
 // to produce LONGER output, the opposite of what we want.
+func TestRetranslatePrompt_FragmentedSourceAddsTimingNote(t *testing.T) {
+	c, captured, close := captureRetranslatePayload(t, "updated translation")
+	defer close()
+	_, err := c.RetranslateWithConstraint(
+		context.Background(),
+		"en", "zh",
+		"Be. Helpful. For. People. Building. Their. Own. Distributed. Systems.",
+		"这能帮助那些构建分布式系统的人吗？",
+		22.9, 12.0,
+		1, 10,
+		0.06,
+		nil, false, 4.0, nil, "", "",
+	)
+	if err != nil {
+		t.Fatalf("retranslate: %v", err)
+	}
+	body := string(*captured)
+	if !strings.Contains(body, "[Source timing note]") {
+		t.Fatalf("fragmented under-run source should add timing note; body=%s", body)
+	}
+	if !strings.Contains(body, "short clauses") {
+		t.Fatalf("timing note should prefer short clauses; body=%s", body)
+	}
+}
+
 func TestRetranslatePrompt_OverRunOmitsAdaptationStrategy(t *testing.T) {
 	c, captured, close := captureRetranslatePayload(t, "shorter")
 	defer close()

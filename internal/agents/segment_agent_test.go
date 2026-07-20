@@ -128,10 +128,10 @@ func TestDecide_DecisionMatrix(t *testing.T) {
 			wantReason: "under_run_drift",
 		},
 		{
-			name:  "under-run/10pct/last-attempt/accept-no-more",
-			state: State{Attempt: 5, Text: "t", BestAbsDrift: math.MaxFloat64},
-			obs:   makeObs(10_000, 9_000),
-			cfg:   defaultCfg(),
+			name:       "under-run/10pct/last-attempt/accept-no-more",
+			state:      State{Attempt: 5, Text: "t", BestAbsDrift: math.MaxFloat64},
+			obs:        makeObs(10_000, 9_000),
+			cfg:        defaultCfg(),
 			wantKind:   DecisionAccept,
 			wantReason: "no_more_attempts",
 		},
@@ -625,12 +625,12 @@ func TestAdaptiveMaxAcceptableDrift(t *testing.T) {
 		targetSec float64
 		want      float64
 	}{
-		{1.0, 0.025},                     // < 5s tier
-		{4.99, 4.99 * 0.025},             // just below 5s tier boundary
-		{5.0, 5.0 * 0.05},                // 5s-20s tier
-		{19.99, 19.99 * 0.05},            // just below 20s tier boundary
-		{20.0, 20.0 * 0.08},              // ≥ 20s tier
-		{30.0, 30.0 * 0.08},              // long segment, 8% band → 2.4s
+		{1.0, 0.025},          // < 5s tier
+		{4.99, 4.99 * 0.025},  // just below 5s tier boundary
+		{5.0, 5.0 * 0.05},     // 5s-20s tier
+		{19.99, 19.99 * 0.05}, // just below 20s tier boundary
+		{20.0, 20.0 * 0.08},   // ≥ 20s tier
+		{30.0, 30.0 * 0.08},   // long segment, 8% band → 2.4s
 	}
 	for _, c := range cases {
 		got := AdaptiveMaxAcceptableDrift(c.targetSec)
@@ -720,12 +720,12 @@ func TestCanBorrow_Boundary(t *testing.T) {
 // =========================================================================
 func TestShouldUseThinking_TruthTable(t *testing.T) {
 	type tcase struct {
-		name                  string
-		consecSame            int
-		attemptsWithoutImpr   int
-		stuckThr              int
-		ncWindow              int
-		want                  bool
+		name                string
+		consecSame          int
+		attemptsWithoutImpr int
+		stuckThr            int
+		ncWindow            int
+		want                bool
 	}
 	cases := []tcase{
 		{"all-zero", 0, 0, 2, 3, false},
@@ -756,13 +756,14 @@ func TestShouldUseThinking_TruthTable(t *testing.T) {
 // =========================================================================
 func TestShouldRestoreBest_Table(t *testing.T) {
 	cases := []struct {
-		name     string
-		state    State
-		current  float64
-		want     bool
+		name    string
+		state   State
+		current float64
+		want    bool
 	}{
 		{"no-best-text", State{Text: "current", BestText: ""}, 1.0, false},
 		{"same-as-current", State{Text: "x", BestText: "x", BestAbsDrift: 0.5}, 1.0, false},
+		{"same-text-better-audio-path", State{Text: "x", BestText: "x", BestAudioRelPath: "attempt00.wav", BestAbsDrift: 0.5}, 1.0, true},
 		{"best-equal", State{Text: "now", BestText: "old", BestAbsDrift: 1.0}, 1.0, false},
 		{"best-worse", State{Text: "now", BestText: "old", BestAbsDrift: 1.2}, 1.0, false},
 		{"best-better-by-0.05", State{Text: "now", BestText: "old", BestAbsDrift: 0.95}, 1.0, false},
@@ -881,9 +882,9 @@ func TestApplyRetranslate_PrevFeedbackRules(t *testing.T) {
 // =========================================================================
 func TestObserveResult_DriftMath(t *testing.T) {
 	cases := []struct {
-		actualMs int64
-		targetMs int64
-		wantOver int64
+		actualMs  int64
+		targetMs  int64
+		wantOver  int64
 		wantDrift float64
 		wantPct   float64
 	}{
@@ -965,6 +966,343 @@ func TestAgentRun_StableConvergence(t *testing.T) {
 	}
 }
 
+func TestAgentRun_LoraCandidateGateSelectedBypassesOuterGapRetry(t *testing.T) {
+	cfg := defaultCfg()
+	cfg.GapAfterMs = 0
+	cfg.MaxImpliedFitDelta = 0.05
+	ft := newFakeTools().
+		WantSynthesize(TTSResult{
+			AudioRelPath:     "candidate.wav",
+			ActualDurationMs: 10_400,
+			LoraCandidateRuntime: map[string]any{
+				"audio_selection_mode": "candidate_audio",
+				"selected_family":      "split_mix",
+				"fallback_reason":      "",
+				"gate_decision": map[string]any{
+					"status": "selected",
+				},
+			},
+		}, nil)
+	agent := NewAgent(ft)
+	out, err := agent.Run(context.Background(), RunInput{SegmentID: 1, InitialText: "candidate"}, cfg)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if ft.Calls("tts") != 1 || ft.Calls("retranslate") != 0 {
+		t.Fatalf("candidate gate should stop outer retry, got tts=%d retranslate=%d", ft.Calls("tts"), ft.Calls("retranslate"))
+	}
+	if out.FinalDecision.Kind != DecisionAccept || out.FinalDecision.Reason != "lora_candidate_gate" {
+		t.Fatalf("unexpected final decision: %+v", out.FinalDecision)
+	}
+}
+
+func TestAgentRun_LoraCandidateHighFitDeltaDoesNotBypassOuterRetry(t *testing.T) {
+	cfg := defaultCfg()
+	cfg.GapAfterMs = 0
+	cfg.MaxImpliedFitDelta = 0.05
+	ft := newFakeTools().
+		WantSynthesize(TTSResult{
+			AudioRelPath:     "candidate.wav",
+			ActualDurationMs: 10_400,
+			LoraCandidateRuntime: map[string]any{
+				"audio_selection_mode":    "candidate_audio",
+				"selected_family":         "split_mix",
+				"selected_split_strategy": "automatic",
+				"fallback_reason":         "",
+				"gate_decision": map[string]any{
+					"status": "selected",
+				},
+				"selected_candidate": map[string]any{
+					"family":          "split_mix",
+					"split_strategy":  "automatic",
+					"fit_tempo_delta": 0.0601,
+					"gate_pass":       true,
+				},
+			},
+		}, nil).
+		WantRetranslate("shorter", false, nil).
+		WantSynthesize(TTSResult{AudioRelPath: "accepted.wav", ActualDurationMs: 10_000}, nil)
+	agent := NewAgent(ft)
+	out, err := agent.Run(context.Background(), RunInput{SegmentID: 1, InitialText: "candidate"}, cfg)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if ft.Calls("retranslate") != 1 {
+		t.Fatalf("high-fit selected candidate must not stop outer retry, got retranslate=%d", ft.Calls("retranslate"))
+	}
+	if out.FinalDecision.Kind != DecisionAccept || out.FinalDecision.Reason != "within_threshold" {
+		t.Fatalf("unexpected final decision: %+v", out.FinalDecision)
+	}
+}
+
+func TestAgentRun_HighImpliedFitDeltaRejectsFinalAccept(t *testing.T) {
+	cfg := defaultCfg()
+	cfg.MaxAttempts = 0
+	cfg.MaxImpliedFitDelta = 0.05
+	cfg.HardMaxOverDriftSec = 0
+	cfg.HardMaxUnderDriftSec = 0
+	ft := newFakeTools().
+		WantSynthesize(TTSResult{AudioRelPath: "too-stretched.wav", ActualDurationMs: 10_550}, nil)
+	agent := NewAgent(ft)
+	out, err := agent.Run(context.Background(), RunInput{SegmentID: 1, InitialText: "candidate"}, cfg)
+	if err == nil {
+		t.Fatal("expected high implied fit delta to fail final accept")
+	}
+	if out.FinalDecision.Kind != DecisionAccept || out.FinalDecision.Reason != "borrow_from_gap" {
+		t.Fatalf("unexpected final decision: %+v", out.FinalDecision)
+	}
+}
+
+func TestAgentRun_LoraCandidateGateSelectedDoesNotBypassHardCap(t *testing.T) {
+	cfg := defaultCfg()
+	cfg.GapAfterMs = 0
+	cfg.HardMaxOverDriftSec = 0.3
+	ft := newFakeTools().
+		WantSynthesize(TTSResult{
+			ActualDurationMs: 10_400,
+			LoraCandidateRuntime: map[string]any{
+				"audio_selection_mode": "candidate_audio",
+				"selected_family":      "split_mix",
+				"fallback_reason":      "",
+				"gate_decision": map[string]any{
+					"status": "selected",
+				},
+			},
+		}, nil).
+		WantRetranslate("shorter", false, nil).
+		WantSynthesize(TTSResult{AudioRelPath: "accepted.wav", ActualDurationMs: 10_000}, nil)
+	agent := NewAgent(ft)
+	out, err := agent.Run(context.Background(), RunInput{SegmentID: 1, InitialText: "candidate"}, cfg)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if ft.Calls("retranslate") != 1 {
+		t.Fatalf("candidate gate must not bypass hard cap, got retranslate=%d", ft.Calls("retranslate"))
+	}
+	if out.FinalDecision.Kind != DecisionAccept || out.FinalDecision.Reason != "within_threshold" {
+		t.Fatalf("unexpected final decision: %+v", out.FinalDecision)
+	}
+}
+
+func TestAgentRun_LoraCandidateFallbackDoesNotBypassRetry(t *testing.T) {
+	cfg := defaultCfg()
+	cfg.GapAfterMs = 0
+	ft := newFakeTools().
+		WantSynthesize(TTSResult{
+			ActualDurationMs: 10_400,
+			LoraCandidateRuntime: map[string]any{
+				"audio_selection_mode": "default_audio",
+				"selected_family":      "default",
+				"fallback_reason":      "all_candidates_rejected",
+				"gate_decision": map[string]any{
+					"status": "fallback",
+				},
+			},
+		}, nil).
+		WantRetranslate("shorter", false, nil).
+		WantSynthesize(TTSResult{AudioRelPath: "accepted.wav", ActualDurationMs: 10_000}, nil)
+	agent := NewAgent(ft)
+	out, err := agent.Run(context.Background(), RunInput{SegmentID: 1, InitialText: "candidate"}, cfg)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if ft.Calls("retranslate") != 1 {
+		t.Fatalf("fallback candidate must keep outer retry behavior, got retranslate=%d", ft.Calls("retranslate"))
+	}
+	if out.FinalDecision.Kind != DecisionAccept || out.FinalDecision.Reason != "within_threshold" {
+		t.Fatalf("unexpected final decision: %+v", out.FinalDecision)
+	}
+	rec := ft.RecordedSynthesize()
+	if len(rec) != 2 {
+		t.Fatalf("expected 2 synth calls, got %d", len(rec))
+	}
+	if rec[0].PriorLoraCandidateCount != 0 {
+		t.Fatalf("first synth PriorLoraCandidateCount: want 0, got %d", rec[0].PriorLoraCandidateCount)
+	}
+	if rec[1].PriorLoraCandidateCount != 1 {
+		t.Fatalf("all-candidates-rejected must count against retry budget; second synth PriorLoraCandidateCount: want 1, got %d", rec[1].PriorLoraCandidateCount)
+	}
+	if rec[1].Attempt != 1 {
+		t.Fatalf("second synth Attempt: want 1, got %d", rec[1].Attempt)
+	}
+}
+
+func TestAgentRun_LoraCandidateTextCompressionUsesCandidateTimingForRetranslate(t *testing.T) {
+	cfg := defaultCfg()
+	cfg.GapAfterMs = 0
+	ft := newFakeTools().
+		WantSynthesize(TTSResult{
+			ActualDurationMs: 8_000,
+			LoraCandidateRuntime: map[string]any{
+				"audio_selection_mode": "default_audio",
+				"selected_family":      "default",
+				"fallback_reason":      "all_candidates_rejected",
+				"gate_decision": map[string]any{
+					"status":                 "fallback",
+					"needs_text_compression": true,
+				},
+				"text_compression_recommendation": map[string]any{
+					"needed":        true,
+					"best_drift_ms": 2500.0,
+				},
+			},
+		}, nil).
+		WantRetranslate("shorter", false, nil).
+		WantSynthesize(TTSResult{AudioRelPath: "accepted.wav", ActualDurationMs: 10_000}, nil)
+	agent := NewAgent(ft)
+	out, err := agent.Run(context.Background(), RunInput{SegmentID: 1, InitialText: "candidate"}, cfg)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	rec := ft.RecordedRetranslate()
+	if len(rec) != 1 {
+		t.Fatalf("expected one retranslate call, got %d", len(rec))
+	}
+	if math.Abs(rec[0].ActualSec-12.5) > 1e-9 {
+		t.Fatalf("retranslate ActualSec = %.3f, want candidate-derived 12.500", rec[0].ActualSec)
+	}
+	if len(rec[0].History) != 0 {
+		t.Fatalf("first retranslate should not include prior history, got %+v", rec[0].History)
+	}
+	synth := ft.RecordedSynthesize()
+	if len(synth) != 2 {
+		t.Fatalf("expected 2 synth calls, got %d", len(synth))
+	}
+	if synth[1].PriorLoraCandidateCount != 0 {
+		t.Fatalf("text-compression planning signal must not consume candidate budget, got %d", synth[1].PriorLoraCandidateCount)
+	}
+	if out.FinalDecision.Kind != DecisionAccept || out.FinalDecision.Reason != "within_threshold" {
+		t.Fatalf("unexpected final decision: %+v", out.FinalDecision)
+	}
+}
+
+func TestAgentRun_LoraCandidateTextCompressionUsesCPSRecommendationForRetranslate(t *testing.T) {
+	cfg := defaultCfg()
+	cfg.TargetSec = 10
+	cfg.TargetMs = 10_000
+	cfg.GapAfterMs = 0
+	ft := newFakeTools().
+		WantSynthesize(TTSResult{
+			ActualDurationMs: 8_000,
+			LoraCandidateRuntime: map[string]any{
+				"audio_selection_mode": "default_audio",
+				"selected_family":      "default",
+				"fallback_reason":      "all_candidates_rejected",
+				"gate_decision": map[string]any{
+					"status":                 "fallback",
+					"needs_text_compression": true,
+				},
+				"text_compression_recommendation": map[string]any{
+					"needed":                     true,
+					"max_required_chars_per_sec": 7.0,
+					"max_allowed_chars_per_sec":  5.6,
+				},
+			},
+		}, nil).
+		WantRetranslate("shorter", false, nil).
+		WantSynthesize(TTSResult{AudioRelPath: "accepted.wav", ActualDurationMs: 10_000}, nil)
+	agent := NewAgent(ft)
+	out, err := agent.Run(context.Background(), RunInput{SegmentID: 16096, InitialText: "dense candidate"}, cfg)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	rec := ft.RecordedRetranslate()
+	if len(rec) != 1 {
+		t.Fatalf("expected one retranslate call, got %d", len(rec))
+	}
+	if rec[0].ActualSec <= cfg.TargetSec {
+		t.Fatalf("CPS recommendation must be interpreted as text-compression overrun evidence; ActualSec=%.3f target=%.3f", rec[0].ActualSec, cfg.TargetSec)
+	}
+	if math.Abs(rec[0].ActualSec-12.5) > 1e-9 {
+		t.Fatalf("retranslate ActualSec = %.3f, want CPS-derived 12.500", rec[0].ActualSec)
+	}
+	if rec[0].CompressionHint == nil {
+		t.Fatal("expected compression hint from LoRA text-compression recommendation")
+	}
+	if rec[0].CompressionHint.RecommendedMaxChars != 56 {
+		t.Fatalf("recommended max chars = %d, want 56", rec[0].CompressionHint.RecommendedMaxChars)
+	}
+	if rec[0].CompressionHint.MaxRequiredCharsPerSec != 7.0 || rec[0].CompressionHint.MaxAllowedCharsPerSec != 5.6 {
+		t.Fatalf("unexpected compression cps hint: %+v", rec[0].CompressionHint)
+	}
+	if out.FinalDecision.Kind != DecisionAccept || out.FinalDecision.Reason != "within_threshold" {
+		t.Fatalf("unexpected final decision: %+v", out.FinalDecision)
+	}
+}
+
+func TestAgentRun_LoraCandidateTextCompressionRefusesFinalHardCapEscape(t *testing.T) {
+	cfg := defaultCfg()
+	cfg.TargetSec = 10
+	cfg.TargetMs = 10_000
+	cfg.GapAfterMs = 0
+	cfg.MaxAttempts = 0
+	cfg.HardMaxOverDriftSec = 0.3
+	ft := newFakeTools().
+		WantSynthesize(TTSResult{
+			AudioRelPath:     "bad-overrun.wav",
+			ActualDurationMs: 14_200,
+			LoraCandidateRuntime: map[string]any{
+				"audio_selection_mode": "default_audio",
+				"selected_family":      "default",
+				"fallback_reason":      "all_candidates_rejected",
+				"gate_decision": map[string]any{
+					"status":                 "fallback",
+					"needs_text_compression": true,
+				},
+				"text_compression_recommendation": map[string]any{
+					"needed":        true,
+					"best_drift_ms": 4200.0,
+				},
+			},
+		}, nil)
+	agent := NewAgent(ft)
+
+	out, err := agent.Run(context.Background(), RunInput{SegmentID: 16096, InitialText: "dense long candidate"}, cfg)
+	if err == nil {
+		t.Fatal("expected hard-cap text-compression candidate to fail instead of shipping clipped audio")
+	}
+	if out.FinalDecision.Kind != DecisionAccept || out.FinalDecision.Reason != "clip_overflow" {
+		t.Fatalf("unexpected final decision evidence: %+v", out.FinalDecision)
+	}
+	if !out.FinalDecision.HardCapExceeded || out.FinalDecision.HardCapDirection != "over" {
+		t.Fatalf("expected over hard-cap evidence, got %+v", out.FinalDecision)
+	}
+	if ft.Calls("retranslate") != 0 {
+		t.Fatalf("max-attempt hard failure should not call retranslate, got %d", ft.Calls("retranslate"))
+	}
+}
+
+func TestAgentRun_LoraCandidateUnavailableDoesNotConsumeRetryBudget(t *testing.T) {
+	cfg := defaultCfg()
+	cfg.GapAfterMs = 0
+	ft := newFakeTools().
+		WantSynthesize(TTSResult{
+			ActualDurationMs: 10_400,
+			LoraCandidateRuntime: map[string]any{
+				"audio_selection_mode": "default_audio",
+				"selected_family":      "default",
+				"fallback_reason":      "candidate_execution_not_available",
+			},
+		}, nil).
+		WantRetranslate("shorter", false, nil).
+		WantSynthesize(TTSResult{AudioRelPath: "accepted.wav", ActualDurationMs: 10_000}, nil)
+	agent := NewAgent(ft)
+	out, err := agent.Run(context.Background(), RunInput{SegmentID: 1, InitialText: "candidate"}, cfg)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if out.FinalDecision.Kind != DecisionAccept || out.FinalDecision.Reason != "within_threshold" {
+		t.Fatalf("unexpected final decision: %+v", out.FinalDecision)
+	}
+	rec := ft.RecordedSynthesize()
+	if len(rec) != 2 {
+		t.Fatalf("expected 2 synth calls, got %d", len(rec))
+	}
+	if rec[1].PriorLoraCandidateCount != 0 {
+		t.Fatalf("candidate unavailable must not consume real candidate budget; got %d", rec[1].PriorLoraCandidateCount)
+	}
+}
+
 func TestAgentRun_OscillationBestRestore(t *testing.T) {
 	cfg := defaultCfg()
 	cfg.MaxAttempts = 3
@@ -982,21 +1320,78 @@ func TestAgentRun_OscillationBestRestore(t *testing.T) {
 		WantRetranslate("b", false, nil).
 		WantSynthesize(TTSResult{ActualDurationMs: 12_500, AudioRelPath: "a3"}, nil).
 		WantRetranslate("c", false, nil).
-		WantSynthesize(TTSResult{ActualDurationMs: 13_500, AudioRelPath: "a4"}, nil). // last attempt
-		WantSynthesize(TTSResult{ActualDurationMs: 8_700, AudioRelPath: "a-best"}, nil) // best restore
+		WantSynthesize(TTSResult{ActualDurationMs: 13_500, AudioRelPath: "a4"}, nil) // last attempt
 	agent := NewAgent(ft)
 	out, err := agent.Run(context.Background(), RunInput{SegmentID: 1, InitialText: "init"}, cfg)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if ft.Calls("tts") < 4 {
+	if ft.Calls("tts") != 4 {
 		t.Errorf("expected ≥ 4 tts calls (3 attempts + best restore), got %d", ft.Calls("tts"))
 	}
 	if !out.RestoredFromBest {
 		t.Errorf("expected best-restore, got %+v", out)
 	}
-	if out.FinalAudioRelPath != "a-best" {
-		t.Errorf("expected restored audio path 'a-best', got %q", out.FinalAudioRelPath)
+	if out.FinalAudioRelPath != "a2" {
+		t.Errorf("expected restored audio path 'a2', got %q", out.FinalAudioRelPath)
+	}
+}
+
+func TestAgentRun_RestoresSameTextBetterAudioAttempt(t *testing.T) {
+	cfg := defaultCfg()
+	cfg.MaxAttempts = 1
+	cfg.GapAfterMs = 0
+	cfg.HardMaxOverDriftSec = 0.3
+	cfg.HardMaxUnderDriftSec = 0.7
+	ft := newFakeTools().
+		WantSynthesize(TTSResult{ActualDurationMs: 10_300, AudioRelPath: "attempt00.wav"}, nil).
+		WantRetranslate("same text", false, nil).
+		WantSynthesize(TTSResult{ActualDurationMs: 10_590, AudioRelPath: "attempt01.wav"}, nil)
+	agent := NewAgent(ft)
+	out, err := agent.Run(context.Background(), RunInput{SegmentID: 1, InitialText: "same text"}, cfg)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if !out.RestoredFromBest {
+		t.Fatalf("same text with better saved audio should restore best attempt: %+v", out)
+	}
+	if out.FinalAudioRelPath != "attempt00.wav" {
+		t.Fatalf("final audio path: want attempt00.wav, got %q", out.FinalAudioRelPath)
+	}
+	if out.FinalActualMs != 10_300 {
+		t.Fatalf("final actual ms: want 10300, got %d", out.FinalActualMs)
+	}
+}
+
+func TestAgentRun_AttemptOutputPathsPreserveMidLoopAudio(t *testing.T) {
+	cfg := defaultCfg()
+	cfg.MaxAttempts = 2
+	cfg.GapAfterMs = 500
+	ft := newFakeTools().
+		WantSynthesize(TTSResult{ActualDurationMs: 13_000, AudioRelPath: "attempt0.wav"}, nil).
+		WantRetranslate("short", false, nil).
+		WantSynthesize(TTSResult{ActualDurationMs: 10_000, AudioRelPath: "attempt1.wav"}, nil)
+	agent := NewAgent(ft)
+	_, err := agent.Run(context.Background(), RunInput{
+		SegmentID:     1,
+		InitialText:   "init",
+		OutputRelPath: "jobs/1/tts/vp0/segment-0001.wav",
+	}, cfg)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	got := ft.RecordedSynthesize()
+	if len(got) != 2 {
+		t.Fatalf("expected 2 synth calls, got %d", len(got))
+	}
+	want := []string{
+		"jobs/1/tts/vp0/segment-0001.agent_attempt00.wav",
+		"jobs/1/tts/vp0/segment-0001.agent_attempt01.wav",
+	}
+	for i := range want {
+		if got[i].OutputRelPath != want[i] {
+			t.Fatalf("attempt %d OutputRelPath: want %q, got %q", i, want[i], got[i].OutputRelPath)
+		}
 	}
 }
 
@@ -1011,7 +1406,7 @@ func TestAgentRun_StuckTriggersThinking(t *testing.T) {
 		WantSynthesize(TTSResult{ActualDurationMs: 13_000}, nil).
 		WantRetranslate("xyz", false, nil). // 3 chars, equal → counter=1
 		WantSynthesize(TTSResult{ActualDurationMs: 13_000}, nil).
-		WantRetranslate("def", true, nil). // 3 chars, equal → counter=2 → useThinking=true
+		WantRetranslate("def", true, nil).                       // 3 chars, equal → counter=2 → useThinking=true
 		WantSynthesize(TTSResult{ActualDurationMs: 10_200}, nil) // borrow
 	agent := NewAgent(ft)
 	_, err := agent.Run(context.Background(), RunInput{SegmentID: 1, InitialText: "ini"}, cfg)
@@ -1197,6 +1592,406 @@ func TestAgentRun_EmptyInitialTextErrors(t *testing.T) {
 	}
 }
 
+func TestAgentRun_HardCapEscapeAcceptReturnsMarkedOutput(t *testing.T) {
+	cfg := defaultCfg()
+	cfg.TargetSec = 10.0
+	cfg.TargetMs = 10_000
+	cfg.GapAfterMs = 0
+	cfg.MaxAttempts = 0
+	cfg.HardMaxOverDriftSec = 0.3
+	cfg.HardMaxUnderDriftSec = 0.7
+	ft := newFakeTools().
+		WantSynthesize(TTSResult{ActualDurationMs: 10_559, AudioRelPath: "over.wav"}, nil)
+	agent := NewAgent(ft)
+
+	out, err := agent.Run(context.Background(), RunInput{SegmentID: 42, InitialText: "too long"}, cfg)
+	if err != nil {
+		t.Fatalf("hard-cap escape should return marked output, not block the whole segment: %v", err)
+	}
+	if out.FinalDecision.Kind != DecisionAccept || out.FinalDecision.Reason != "clip_overflow" {
+		t.Fatalf("unexpected final decision: %+v", out.FinalDecision)
+	}
+	if !out.FinalDecision.HardCapExceeded || out.FinalDecision.HardCapDirection != "over" {
+		t.Fatalf("expected over hard cap mark, got %+v", out.FinalDecision)
+	}
+	if out.FinalAudioRelPath != "over.wav" || out.FinalActualMs != 10_559 {
+		t.Fatalf("expected final hard-cap output to be preserved, got path=%q ms=%d", out.FinalAudioRelPath, out.FinalActualMs)
+	}
+}
+
+func TestAgentRun_RejectHardCapEscapeReturnsError(t *testing.T) {
+	cfg := defaultCfg()
+	cfg.TargetSec = 10.0
+	cfg.TargetMs = 10_000
+	cfg.GapAfterMs = 0
+	cfg.MaxAttempts = 0
+	cfg.HardMaxOverDriftSec = 0.3
+	cfg.HardMaxUnderDriftSec = 0.7
+	cfg.RejectHardCapEscape = true
+	ft := newFakeTools().
+		WantSynthesize(TTSResult{ActualDurationMs: 10_559, AudioRelPath: "over.wav"}, nil)
+	agent := NewAgent(ft)
+
+	out, err := agent.Run(context.Background(), RunInput{SegmentID: 420, InitialText: "too long"}, cfg)
+	if err == nil {
+		t.Fatal("expected hard-cap escape to fail when RejectHardCapEscape is enabled")
+	}
+	if out.FinalDecision.Kind != DecisionAccept || out.FinalDecision.Reason != "clip_overflow" {
+		t.Fatalf("unexpected final decision evidence: %+v", out.FinalDecision)
+	}
+	if !out.FinalDecision.HardCapExceeded || out.FinalDecision.HardCapDirection != "over" {
+		t.Fatalf("expected over hard-cap mark, got %+v", out.FinalDecision)
+	}
+	if out.FinalAudioRelPath != "over.wav" || out.FinalActualMs != 10_559 {
+		t.Fatalf("expected rejected output evidence to be preserved, got path=%q ms=%d", out.FinalAudioRelPath, out.FinalActualMs)
+	}
+}
+
+func TestAgentRun_RetranslateFailureAcceptsHardCapViolationAsMarkedOutput(t *testing.T) {
+	cfg := defaultCfg()
+	cfg.TargetSec = 10.0
+	cfg.TargetMs = 10_000
+	cfg.GapAfterMs = 0
+	cfg.HardMaxOverDriftSec = 0.3
+	cfg.HardMaxUnderDriftSec = 0.7
+	ft := newFakeTools().
+		WantSynthesize(TTSResult{ActualDurationMs: 10_600, AudioRelPath: "over.wav"}, nil).
+		WantRetranslate("", false, errFakeBoom)
+	agent := NewAgent(ft)
+
+	out, err := agent.Run(context.Background(), RunInput{SegmentID: 43, InitialText: "too long"}, cfg)
+	if err != nil {
+		t.Fatalf("retranslate failure should return marked current output, not block the whole segment: %v", err)
+	}
+	if out.FinalDecision.Kind != DecisionAccept || out.FinalDecision.Reason != "retranslate_failed" {
+		t.Fatalf("unexpected final decision: %+v", out.FinalDecision)
+	}
+	if !out.FinalDecision.HardCapExceeded || out.FinalDecision.HardCapDirection != "over" {
+		t.Fatalf("expected over hard cap mark, got %+v", out.FinalDecision)
+	}
+	if out.FinalAudioRelPath != "over.wav" || out.FinalActualMs != 10_600 {
+		t.Fatalf("expected final hard-cap output to be preserved, got path=%q ms=%d", out.FinalAudioRelPath, out.FinalActualMs)
+	}
+}
+
+func TestAgentRun_BestRestoreSkipsHardCapViolatingBest(t *testing.T) {
+	cfg := defaultCfg()
+	cfg.TargetSec = 10.0
+	cfg.TargetMs = 10_000
+	cfg.GapAfterMs = 0
+	cfg.MaxAttempts = 1
+	cfg.HardMaxOverDriftSec = 0.3
+	cfg.HardMaxUnderDriftSec = 0.7
+	ft := newFakeTools().
+		WantSynthesize(TTSResult{ActualDurationMs: 10_350, AudioRelPath: "best-but-over-cap.wav"}, nil).
+		WantRetranslate("shorter", false, nil).
+		WantSynthesize(TTSResult{ActualDurationMs: 9_500, AudioRelPath: "final-within-cap.wav"}, nil)
+	agent := NewAgent(ft)
+
+	out, err := agent.Run(context.Background(), RunInput{SegmentID: 44, InitialText: "initial"}, cfg)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if out.RestoredFromBest {
+		t.Fatalf("must not restore hard-cap-violating best result: %+v", out)
+	}
+	if out.FinalAudioRelPath != "final-within-cap.wav" {
+		t.Fatalf("expected final-within-cap.wav, got %q", out.FinalAudioRelPath)
+	}
+}
+
+func TestAgentRun_BestRestoreCanSelectLeastBadHardCapViolation(t *testing.T) {
+	cfg := defaultCfg()
+	cfg.TargetSec = 10.0
+	cfg.TargetMs = 10_000
+	cfg.GapAfterMs = 0
+	cfg.MaxAttempts = 1
+	cfg.AbsMaxDriftSec = 0.8
+	cfg.HardMaxOverDriftSec = 0.3
+	cfg.HardMaxUnderDriftSec = 0.5
+	ft := newFakeTools().
+		WantSynthesize(TTSResult{ActualDurationMs: 10_350, AudioRelPath: "best-over-cap.wav"}, nil).
+		WantRetranslate("shorter", false, nil).
+		WantSynthesize(TTSResult{ActualDurationMs: 9_400, AudioRelPath: "final-under-cap.wav"}, nil)
+	agent := NewAgent(ft)
+
+	out, err := agent.Run(context.Background(), RunInput{SegmentID: 45, InitialText: "initial"}, cfg)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if !out.RestoredFromBest {
+		t.Fatalf("expected least-bad best restore, got %+v", out)
+	}
+	if !out.RestoredBestHardCapExceeded || out.RestoredBestHardCapDirection != "over" {
+		t.Fatalf("expected restored best hard-cap marker direction=over, got %+v", out)
+	}
+	if !out.FinalDecision.HardCapExceeded || out.FinalDecision.HardCapDirection != "over" {
+		t.Fatalf("final decision must keep hard-cap marker for restored best, got %+v", out.FinalDecision)
+	}
+	if out.FinalAudioRelPath != "best-over-cap.wav" || out.FinalActualMs != 10_350 {
+		t.Fatalf("expected best-over-cap.wav at 10350ms, got path=%q ms=%d", out.FinalAudioRelPath, out.FinalActualMs)
+	}
+}
+
+// =========================================================================
+// OPT-201-followup-2: HardMaxUnderDriftSec / HardMaxOverDriftSec absolute
+// caps. The cap layers on top of the percentage gates — every regular
+// acceptance branch (within_threshold / borrow_from_gap / judge_veto_drift)
+// must satisfy BOTH the percentage gate AND the absolute cap; the
+// explicit escape branches (no_more_attempts / clip_overflow /
+// over_short_gap_stuck / retranslation_disabled) still accept but
+// flag the decision via HardCapExceeded + HardCapDirection.
+// =========================================================================
+func TestAgentRun_BestRestorePrefersSmallOverCapToHugeUnderRun(t *testing.T) {
+	cfg := defaultCfg()
+	cfg.TargetSec = 32.04
+	cfg.TargetMs = 32_040
+	cfg.GapAfterMs = 0
+	cfg.MaxAttempts = 1
+	cfg.AbsMaxDriftSec = 0.3
+	cfg.HardMaxOverDriftSec = 0.3
+	cfg.HardMaxUnderDriftSec = 0.7
+	ft := newFakeTools().
+		WantSynthesize(TTSResult{ActualDurationMs: 32_626, AudioRelPath: "best-small-over-cap.wav"}, nil).
+		WantRetranslate("badly compressed", false, nil).
+		WantSynthesize(TTSResult{ActualDurationMs: 24_904, AudioRelPath: "final-huge-under-run.wav"}, nil)
+	agent := NewAgent(ft)
+
+	out, err := agent.Run(context.Background(), RunInput{SegmentID: 16011, InitialText: "initial"}, cfg)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if !out.RestoredFromBest {
+		t.Fatalf("expected least-bad restore to choose small over-cap candidate, got %+v", out)
+	}
+	if out.FinalAudioRelPath != "best-small-over-cap.wav" || out.FinalActualMs != 32_626 {
+		t.Fatalf("expected best-small-over-cap.wav at 32626ms, got path=%q ms=%d", out.FinalAudioRelPath, out.FinalActualMs)
+	}
+	if !out.RestoredBestHardCapExceeded || out.RestoredBestHardCapDirection != "over" {
+		t.Fatalf("expected restored best hard-cap marker direction=over, got %+v", out)
+	}
+}
+
+func TestDecide_HardCap_UnderRunRejectsWithinThreshold(t *testing.T) {
+	// 30s target, 28.9s actual: -1.1s under-run, drift_pct = 3.67%
+	// which is INSIDE the default 6% threshold. Hard cap 0.7s says
+	// "1.1s under is too much, retranslate".
+	cfg := defaultCfg()
+	cfg.TargetSec = 30.0
+	cfg.TargetMs = 30_000
+	cfg.HardMaxUnderDriftSec = 0.7
+	cfg.HardMaxOverDriftSec = 0.3
+	state := State{Text: "t", Attempt: 1, BestAbsDrift: math.MaxFloat64}
+	obs := makeObs(30_000, 28_900)
+
+	d := Decide(state, obs, cfg)
+	if d.Kind != DecisionRetranslate {
+		t.Errorf("Kind: want Retranslate (under-run %v > cap 0.7s), got %v reason=%q",
+			obs.AbsDrift, d.Kind, d.Reason)
+	}
+	if d.HardCapExceeded {
+		t.Errorf("HardCapExceeded should be false on retranslate decisions (cap forced the retry, not bypassed it)")
+	}
+}
+
+func TestDecide_HardCap_OverRunRejectsBorrow(t *testing.T) {
+	// 20s target, 20.4s actual: +0.4s over-run, drift_pct = 2% which
+	// is INSIDE MaxBorrowDriftPct=12%, and the gap is large enough
+	// to absorb 0.4s. Hard cap 0.3s says "0.4s over is too much".
+	cfg := defaultCfg()
+	cfg.TargetSec = 20.0
+	cfg.TargetMs = 20_000
+	cfg.GapAfterMs = 1_500
+	cfg.HardMaxUnderDriftSec = 0.7
+	cfg.HardMaxOverDriftSec = 0.3
+	state := State{Text: "t", Attempt: 1, BestAbsDrift: math.MaxFloat64}
+	obs := makeObs(20_000, 20_400)
+
+	d := Decide(state, obs, cfg)
+	if d.Kind != DecisionRetranslate {
+		t.Errorf("Kind: want Retranslate (over-run %v > cap 0.3s), got %v reason=%q",
+			obs.AbsDrift, d.Kind, d.Reason)
+	}
+}
+
+func TestDecide_HardCap_RejectsJudgeVeto(t *testing.T) {
+	// 25s target, 23.5s actual: under-run 1.5s = 6% which is BELOW
+	// AdaptiveMaxAcceptableDrift (8% for ≥20s) so VETO would normally
+	// fire. Hard cap 0.7s blocks it.
+	cfg := defaultCfg()
+	cfg.TargetSec = 25.0
+	cfg.TargetMs = 25_000
+	cfg.JudgeVetoDriftRetry = true
+	cfg.JudgeVetoMinScore = 0.95
+	cfg.HardMaxUnderDriftSec = 0.7
+	cfg.HardMaxOverDriftSec = 0.3
+	state := State{Text: "t", Attempt: 1, BestAbsDrift: math.MaxFloat64}
+	obs := Observation{
+		ActualDurationMs: 23_500,
+		ActualSec:        23.5,
+		OverflowMs:       -1_500,
+		AbsDrift:         1.5,
+		DriftPct:         0.06,
+		JudgeVerdict:     "accept",
+		JudgeScore:       0.98,
+	}
+
+	d := Decide(state, obs, cfg)
+	if d.Kind != DecisionRetranslate {
+		t.Errorf("Kind: want Retranslate (VETO blocked by hard cap), got %v reason=%q", d.Kind, d.Reason)
+	}
+	if d.Reason == "judge_veto_drift" {
+		t.Errorf("Reason should not be judge_veto_drift when hard cap fires, got %q", d.Reason)
+	}
+}
+
+func TestDecide_HardCap_RejectsOverRunJudgeVeto(t *testing.T) {
+	// 25s target, 26.2s actual: over-run 1.2s = 4.8% < adaptive 8%
+	// → VETO would fire on over-run path. Cap 0.3s blocks it.
+	cfg := defaultCfg()
+	cfg.TargetSec = 25.0
+	cfg.TargetMs = 25_000
+	cfg.GapAfterMs = 300 // too small to borrow anyway
+	cfg.JudgeVetoDriftRetry = true
+	cfg.JudgeVetoMinScore = 0.95
+	cfg.HardMaxUnderDriftSec = 0.7
+	cfg.HardMaxOverDriftSec = 0.3
+	state := State{Text: "t", Attempt: 1, BestAbsDrift: math.MaxFloat64}
+	obs := Observation{
+		ActualDurationMs: 26_200,
+		ActualSec:        26.2,
+		OverflowMs:       1_200,
+		AbsDrift:         1.2,
+		DriftPct:         0.048,
+		JudgeVerdict:     "accept",
+		JudgeScore:       0.98,
+	}
+
+	d := Decide(state, obs, cfg)
+	if d.Kind != DecisionRetranslate {
+		t.Errorf("Kind: want Retranslate (over-run VETO blocked by 0.3s cap), got %v reason=%q", d.Kind, d.Reason)
+	}
+}
+
+func TestDecide_HardCap_DisabledFallsBackToLegacy(t *testing.T) {
+	// 25s target, drift 1.8s = 7.2% which is OUTSIDE DriftThreshold
+	// (6%) so the within_threshold path doesn't fire — VETO is the
+	// only accepting path. 7.2% < 8% AdaptiveMaxAcceptableDrift so
+	// VETO would normally fire. With caps disabled (=0) the legacy
+	// VETO accept must still fire.
+	cfg := defaultCfg()
+	cfg.TargetSec = 25.0
+	cfg.TargetMs = 25_000
+	cfg.JudgeVetoDriftRetry = true
+	cfg.JudgeVetoMinScore = 0.95
+	cfg.HardMaxUnderDriftSec = 0 // disabled
+	cfg.HardMaxOverDriftSec = 0  // disabled
+	state := State{Text: "t", Attempt: 1, BestAbsDrift: math.MaxFloat64}
+	obs := Observation{
+		ActualDurationMs: 23_200,
+		ActualSec:        23.2,
+		OverflowMs:       -1_800,
+		AbsDrift:         1.8,
+		DriftPct:         0.072,
+		JudgeVerdict:     "accept",
+		JudgeScore:       0.98,
+	}
+
+	d := Decide(state, obs, cfg)
+	if d.Kind != DecisionAccept || d.Reason != "judge_veto_drift" {
+		t.Errorf("with cap disabled the legacy VETO accept must fire; got Kind=%v Reason=%q", d.Kind, d.Reason)
+	}
+	if d.HardCapExceeded {
+		t.Errorf("HardCapExceeded must be false when caps are disabled, got %+v", d)
+	}
+}
+
+func TestDecide_HardCap_LastAttemptStillAcceptsButMarks(t *testing.T) {
+	// Last attempt, drift 1.5s under (above cap) but inside the
+	// percentage threshold → no more retries, MUST accept and mark.
+	cfg := defaultCfg()
+	cfg.TargetSec = 25.0
+	cfg.TargetMs = 25_000
+	cfg.MaxAttempts = 3
+	cfg.HardMaxUnderDriftSec = 0.7
+	cfg.HardMaxOverDriftSec = 0.3
+	state := State{Text: "t", Attempt: 3, BestAbsDrift: math.MaxFloat64} // == MaxAttempts → last
+	obs := makeObs(25_000, 23_500)
+
+	d := Decide(state, obs, cfg)
+	if d.Kind != DecisionAccept {
+		t.Errorf("last-attempt must accept regardless of cap, got %v reason=%q", d.Kind, d.Reason)
+	}
+	if !d.HardCapExceeded {
+		t.Errorf("HardCapExceeded must be set when shipping over the cap on escape, got %+v", d)
+	}
+	if d.HardCapDirection != "under" {
+		t.Errorf("HardCapDirection: want under, got %q", d.HardCapDirection)
+	}
+}
+
+func TestDecide_HardCap_OverShortGapStuckStillEscapes(t *testing.T) {
+	// Over-run stuck loop: AwI=4, Attempt=7 (MaxAttempts=10), cap=0.3s,
+	// observed 1.5s over. The stuck-escape branch must still accept
+	// because the loop has demonstrated non-convergence; the cap
+	// stamp surfaces in metrics/logs but doesn't block the bailout.
+	cfg := defaultCfg()
+	cfg.TargetSec = 30.0
+	cfg.TargetMs = 30_000
+	cfg.GapAfterMs = 200 // below ShortGapThresholdMs → no borrow
+	cfg.MaxAttempts = 10
+	cfg.HardMaxUnderDriftSec = 0.7
+	cfg.HardMaxOverDriftSec = 0.3
+	state := State{
+		Text:                       "t",
+		Attempt:                    7,
+		AttemptsWithoutImprovement: 4,
+		BestAbsDrift:               math.MaxFloat64,
+	}
+	obs := makeObs(30_000, 31_500)
+
+	d := Decide(state, obs, cfg)
+	if d.Kind != DecisionAccept || d.Reason != "over_short_gap_stuck" {
+		t.Errorf("expected escape accept, got Kind=%v Reason=%q", d.Kind, d.Reason)
+	}
+	if !d.HardCapExceeded || d.HardCapDirection != "over" {
+		t.Errorf("escape must mark HardCapExceeded direction=over, got %+v", d)
+	}
+}
+
+func TestDecide_HardCap_AsymmetricUnderToleratedOverNot(t *testing.T) {
+	// Same |drift| 0.6s: as under-run it's BELOW the 0.7s cap →
+	// within_threshold accept without mark; as over-run it's ABOVE
+	// the 0.3s cap → forced retranslate.
+	cfg := defaultCfg()
+	cfg.TargetSec = 10.0
+	cfg.TargetMs = 10_000
+	cfg.GapAfterMs = 2_000 // plenty of gap so borrow would otherwise fire
+	cfg.HardMaxUnderDriftSec = 0.7
+	cfg.HardMaxOverDriftSec = 0.3
+	state := State{Text: "t", Attempt: 1, BestAbsDrift: math.MaxFloat64}
+
+	// Under-run 0.6s, drift_pct=6% (== threshold) → accept.
+	under := makeObs(10_000, 9_400)
+	d := Decide(state, under, cfg)
+	if d.Kind != DecisionAccept || d.Reason != "within_threshold" {
+		t.Errorf("under-run 0.6s should accept within_threshold (under cap 0.7s), got Kind=%v Reason=%q",
+			d.Kind, d.Reason)
+	}
+	if d.HardCapExceeded {
+		t.Errorf("HardCapExceeded must stay false when drift <= cap, got %+v", d)
+	}
+
+	// Over-run 0.6s (above 0.3s cap) → retranslate even though
+	// borrow would otherwise fit. Confirms asymmetric cap.
+	over := makeObs(10_000, 10_600)
+	d = Decide(state, over, cfg)
+	if d.Kind != DecisionRetranslate {
+		t.Errorf("over-run 0.6s should retranslate (over cap 0.3s), got Kind=%v Reason=%q",
+			d.Kind, d.Reason)
+	}
+}
+
 // =========================================================================
 // Decision matrix sweep: cross-product of {drift bands × overflow direction
 // × attempt position × thinking signals}. Generates ~120 cases that
@@ -1205,15 +2000,15 @@ func TestAgentRun_EmptyInitialTextErrors(t *testing.T) {
 // =========================================================================
 func TestDecide_DecisionMatrixSweep(t *testing.T) {
 	driftBands := []struct {
-		name    string
+		name     string
 		actualMs int64
 	}{
-		{"under-zero", 9_400},   // -6% exactly within threshold
-		{"under-large", 8_000},  // -20% out of threshold
+		{"under-zero", 9_400},  // -6% exactly within threshold
+		{"under-large", 8_000}, // -20% out of threshold
 		{"exact", 10_000},
-		{"over-small", 10_300},  // +3% small overflow
+		{"over-small", 10_300},      // +3% small overflow
 		{"over-borrowable", 11_100}, // +11% borrowable when gap fits
-		{"over-large", 12_500},  // +25% large overflow
+		{"over-large", 12_500},      // +25% large overflow
 	}
 	gapStates := []struct {
 		name  string
@@ -1224,7 +2019,7 @@ func TestDecide_DecisionMatrixSweep(t *testing.T) {
 		{"large-gap", 5_000},
 	}
 	attemptStates := []struct {
-		name string
+		name    string
 		attempt int
 	}{
 		{"first-attempt", 0},
@@ -1232,9 +2027,9 @@ func TestDecide_DecisionMatrixSweep(t *testing.T) {
 		{"last-attempt", 5},
 	}
 	thinkingTriggers := []struct {
-		name string
+		name  string
 		stuck int
-		nc int
+		nc    int
 	}{
 		{"none", 0, 0},
 		{"stuck-only", 2, 0},

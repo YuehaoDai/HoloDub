@@ -1,4 +1,4 @@
-// Package rework — OPT-407 Closed-loop rework engine.
+// Package rework implements the OPT-407 closed-loop rework engine.
 //
 // This package converts the three layers of judge verdicts (segment OPT-002,
 // chapter OPT-409, episode OPT-406) into concrete rework Actions. The
@@ -13,10 +13,13 @@
 //     is deferred to OPT-407-followup-1.
 //   - Chapter-level: verdict=needs_revision dispatches the top-3 weakest
 //     segments through RetryJob(stage=translate) so they re-translate AND
-//     re-synthesise. verdict=needs_major_rework escalates (no auto-rework).
+//     re-synthesise. verdict=needs_major_rework uses the same automatic
+//     weakest-segment repair when targets are available; otherwise it
+//     records a no-op audit row.
 //   - Episode-level: verdict=needs_minor_revision + cross-chapter terminology
 //     drift triggers a broadcast_glossary update (new EpisodeStage).
-//     verdict=needs_major_revision escalates to human review.
+//     verdict=needs_major_revision attempts the glossary broadcast once,
+//     then records a no-op audit row if no further automatic target exists.
 //
 // Hard guards on every level (NEVER bypassed):
 //   - Per-level retry cap
@@ -25,8 +28,9 @@
 //   - REWORK_ENGINE_LEVEL feature flag (default "none" — observe-only)
 //
 // Anything that would loop forever is forced into ActionEscalateOscillation
-// or ActionHaltCost, which write the rework_status column on the Episode
-// for operator review and stop dispatching new work.
+// or ActionHaltCost. Oscillation now stops the current automatic pass without
+// blocking later dispatch; the cost ceiling writes halted_cost and blocks
+// further rework until the budget flag is cleared.
 package rework
 
 import "time"
@@ -73,7 +77,7 @@ func ParseLevel(s string) Level {
 }
 
 // ActionType is the discriminator for Action. Keep this list small and
-// stable — operators read it from rework_attempts.action_type and any new
+// stable: operators read it from rework_attempts.action_type and any new
 // value should ship with a CHANGELOG entry + roadmap follow-up.
 type ActionType string
 
@@ -113,10 +117,9 @@ const (
 	// merge re-runs once they finish.
 	ActionReviseWeakestSegments ActionType = "revise_weakest_segments"
 
-	// ActionEscalateChapter = chapter verdict was needs_major_rework. Set
-	// rework_status on the Episode + log. Operator can manually trigger
-	// further work; we never auto-rework an entire chapter (would be a
-	// cost grenade).
+	// ActionEscalateChapter is a legacy non-dispatching action retained so
+	// historical rework_attempts rows still decode. Current decisions prefer
+	// ActionReviseWeakestSegments or ActionNoop for chapter-level failures.
 	ActionEscalateChapter ActionType = "escalate_chapter"
 
 	// ActionBroadcastGlossary = episode-level glossary refresh. Enqueues
@@ -125,20 +128,20 @@ const (
 	// for affected segments under a per-episode cap.
 	ActionBroadcastGlossary ActionType = "broadcast_glossary"
 
-	// ActionEscalateHumanReview = episode verdict was needs_major_revision
-	// OR narrative_coherence < threshold. Always manual; we set
-	// rework_status="escalated_human" + log so the EpisodeDetail UI can
-	// surface the alert.
+	// ActionEscalateHumanReview is a legacy non-dispatching action retained
+	// for historical rows. Current episode decisions attempt automatic
+	// glossary broadcast once, then record ActionNoop when exhausted.
 	ActionEscalateHumanReview ActionType = "escalate_human_review"
 
 	// ActionEscalateOscillation = same target hit the same verdict N
 	// consecutive times. Stops dispatching at this level for this target
-	// (rework_status="escalated_oscillation" if episode-level).
+	// for this pass and records an audit row; it no longer writes a blocking
+	// rework_status value.
 	ActionEscalateOscillation ActionType = "escalate_oscillation"
 
 	// ActionHaltCost = accumulated_cost_usd > ceiling. Halts ALL rework
 	// for this episode (rework_status="halted_cost"); resumed only after
-	// operator clears the flag.
+	// the budget flag is cleared.
 	ActionHaltCost ActionType = "halt_cost"
 )
 
@@ -154,7 +157,7 @@ type Action struct {
 	Type ActionType `json:"type"`
 
 	// SkipReason is populated when Type == ActionNoop or any of the halt /
-	// escalate variants — explains in operator-readable language why no
+	// escalate variants: explains in operator-readable language why no
 	// real dispatch happened (e.g. "level_disabled", "max_attempts_3_reached",
 	// "cost_ceiling_exceeded_usd_2.10_of_2.00").
 	SkipReason string `json:"skip_reason,omitempty"`
@@ -195,8 +198,9 @@ type Action struct {
 	DriftThresholdHint float64 `json:"drift_threshold_hint,omitempty"`
 
 	// ReworkStatus is the column value to set on Episode.ReworkStatus when
-	// this action implies a state change ("escalated_human" / "halted_cost"
-	// / "escalated_oscillation" / "in_progress" / ""). Empty = no change.
+	// this action implies a state change. Current decisions write
+	// "in_progress" for active episode-stage repair or "halted_cost" for the
+	// budget hard stop. Empty = no change.
 	ReworkStatus string `json:"rework_status,omitempty"`
 
 	// Note is a human-readable one-line rationale persisted onto the
@@ -228,16 +232,16 @@ func (a Action) IsNoop() bool {
 // failed". This avoids the silent-decision class of bug.
 type ReworkAttempt struct {
 	Level        Level      `json:"level"`
-	TargetID     uint       `json:"target_id"`         // segment_id / job_id / episode_id depending on Level
-	JobID        uint       `json:"job_id,omitempty"`  // populated when target is segment / chapter
-	Verdict      string     `json:"verdict"`           // input verdict that drove the decision
-	BeforeScore  float64    `json:"before_score"`      // judge score that triggered this attempt
+	TargetID     uint       `json:"target_id"`        // segment_id / job_id / episode_id depending on Level
+	JobID        uint       `json:"job_id,omitempty"` // populated when target is segment / chapter
+	Verdict      string     `json:"verdict"`          // input verdict that drove the decision
+	BeforeScore  float64    `json:"before_score"`     // judge score that triggered this attempt
 	ActionType   ActionType `json:"action_type"`
-	Dispatched   bool       `json:"dispatched"`        // true when Engine actually called RetryJob / EnqueueEpisodeStage
+	Dispatched   bool       `json:"dispatched"` // true when Engine actually called RetryJob / EnqueueEpisodeStage
 	SkipReason   string     `json:"skip_reason,omitempty"`
 	Stage        string     `json:"stage,omitempty"`
 	SegmentIDs   []uint     `json:"segment_ids,omitempty"`
-	CostUSDDelta float64    `json:"cost_usd_delta"`    // cost we estimate the dispatched work will incur (used for cost ceiling tracking)
+	CostUSDDelta float64    `json:"cost_usd_delta"` // cost we estimate the dispatched work will incur (used for cost ceiling tracking)
 	Note         string     `json:"note,omitempty"`
 	Timestamp    time.Time  `json:"ts"`
 }
@@ -251,12 +255,12 @@ type ReworkAttempt struct {
 // (avoiding a circular import: rework would otherwise need internal/llm,
 // which depends on internal/observability, which is already a dependency).
 type DecideInput struct {
-	Level        Level  // which judge layer fired
-	EnabledLevel Level  // current REWORK_ENGINE_LEVEL config
-	Verdict      string // raw verdict string from the judge
-	TargetID     uint   // segment_id / job_id / episode_id
-	JobID        uint   // parent chapter Job (for segment + chapter levels); 0 for episode level
-	EpisodeID    uint   // for cost / oscillation tracking & history scoping; required
+	Level        Level   // which judge layer fired
+	EnabledLevel Level   // current REWORK_ENGINE_LEVEL config
+	Verdict      string  // raw verdict string from the judge
+	TargetID     uint    // segment_id / job_id / episode_id
+	JobID        uint    // parent chapter Job (for segment + chapter levels); 0 for episode level
+	EpisodeID    uint    // for cost / oscillation tracking & history scoping; required
 	Score        float64 // judge OverallScore() for the target
 
 	// Auxiliary axes used by some decision rules. Zero means "not provided"

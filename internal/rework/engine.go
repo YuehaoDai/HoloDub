@@ -50,10 +50,10 @@ type RetryJobAPI interface {
 // background context. The caller (stage_tts.go / stage_episode_judge.go)
 // invokes us as fire-and-forget; we are the last hop.
 type Engine struct {
-	cfg     config.Config
-	store   *store.Store
-	api     RetryJobAPI
-	clock   func() time.Time // injectable for tests
+	cfg   config.Config
+	store *store.Store
+	api   RetryJobAPI
+	clock func() time.Time // injectable for tests
 }
 
 // NewEngine constructs the OPT-407 Engine. cfg.ReworkEngineLevel governs
@@ -192,10 +192,9 @@ func (e *Engine) runDecisionLoop(ctx context.Context, in DecideInput) {
 		}
 		return
 	}
-	// Halt all rework once the episode has been escalated / halted; the
-	// operator must clear rework_status before we resume. This is the safety
-	// equivalent of "burn everything down" — ensures a stuck episode never
-	// keeps generating dispatch attempts on every subsequent judge run.
+	// Halt all rework only for hard-stop statuses such as halted_cost. Legacy
+	// escalated_* statuses no longer block the automated path; they are kept
+	// as historical labels only.
 	if isHaltedStatus(ep.ReworkStatus) {
 		slog.Info("rework engine: episode is halted, skipping",
 			"episode_id", in.EpisodeID,
@@ -272,8 +271,8 @@ func (e *Engine) runDecisionLoop(ctx context.Context, in DecideInput) {
 			"episode_id", in.EpisodeID, "level", in.Level, "error", appErr)
 	}
 
-	// Episode-level status mutations (escalated_human / halted_cost / etc.)
-	// are best-effort: a status mismatch never blocks dispatch.
+	// Episode-level status mutations (in_progress / halted_cost) are
+	// best-effort: a status mismatch never blocks dispatch.
 	if action.ReworkStatus != "" {
 		if statusErr := e.store.SetEpisodeReworkStatus(ctx, in.EpisodeID, action.ReworkStatus); statusErr != nil {
 			slog.Warn("rework engine: set rework_status failed",
@@ -400,14 +399,14 @@ func boolToStr(b bool) string {
 
 // IsHaltedReworkStatus reports whether an Episode's rework_status indicates
 // that no further auto-rework should be attempted. The engine refuses to
-// dispatch when this is true; an operator must clear the column manually.
+// dispatch only for hard budget stops; legacy escalated_* states are treated
+// as historical labels and do not block the automated path.
 //
 // Exported so non-engine callers (judge_backfill, future operator endpoints)
 // can apply the same gate without re-implementing the status set.
 func IsHaltedReworkStatus(s string) bool {
 	switch strings.TrimSpace(s) {
-	case "halted_cost", "escalated_human", "escalated_oscillation",
-		"escalated_chapter":
+	case "halted_cost":
 		return true
 	}
 	return false

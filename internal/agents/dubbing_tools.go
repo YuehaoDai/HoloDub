@@ -45,8 +45,19 @@ import (
 // contract; output paths are repository-relative (no leading slash, see
 // lessons-learned.mdc#2).
 type TTSArgs struct {
+	JobID                   uint
+	SegmentID               uint
+	Attempt                 int
+	PriorLoraCandidateCount int
+
 	// Text is the translation text the TTS model should speak.
 	Text string
+
+	// TargetLanguage and CharsPerSecHint let the real tool adapter build
+	// a pre-TTS timing plan for the current text. They are hints only;
+	// fake tools and legacy callers may ignore them.
+	TargetLanguage  string
+	CharsPerSecHint float64
 
 	// TargetDurationSec is the slot length the dub should aim for. The
 	// agent reads ActualDurationSec - TargetDurationSec as the per-attempt
@@ -87,9 +98,10 @@ type TTSArgs struct {
 // flat string slice so the agent can surface them in slog without
 // depending on ml types.
 type TTSResult struct {
-	AudioRelPath     string
-	ActualDurationMs int64
-	Diagnostics      []string
+	AudioRelPath         string
+	ActualDurationMs     int64
+	Diagnostics          []string
+	LoraCandidateRuntime map[string]any
 }
 
 // RetranslateArgs is the input bundle for one RetranslateWithConstraint
@@ -143,6 +155,12 @@ type RetranslateArgs struct {
 	// + episode glossary + reference card). Passed through verbatim so
 	// the LLM sees canonical terminology even on a single isolated retry.
 	TranslationSummary string
+
+	// CompressionHint is set when the LoRA candidate planner proves the
+	// current text is too dense for the target duration. It should override
+	// naive under-run expansion because dense text often makes IndexTTS2
+	// truncate rather than speak longer.
+	CompressionHint *llm.DurationCompressionHint
 }
 
 // RetranslateResult is what RetranslateWithConstraint returns. The text

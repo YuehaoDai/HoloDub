@@ -42,6 +42,11 @@ type Service struct {
 	rework *rework.Engine
 }
 
+var (
+	stageHeartbeatInterval      = 30 * time.Second
+	stageHeartbeatUpdateTimeout = 5 * time.Second
+)
+
 func NewService(cfg config.Config, st *store.Store, q *queue.Queue, mlClient *ml.Client, llmClient *llm.Client) *Service {
 	svc := &Service{
 		cfg:      cfg,
@@ -364,6 +369,8 @@ func (s *Service) HandleTask(ctx context.Context, task models.TaskPayload) error
 		return err
 	}
 	_ = s.store.TouchJobHeartbeat(ctx, task.JobID)
+	stopHeartbeat := s.startStageHeartbeat(task.JobID, task.Stage)
+	defer stopHeartbeat()
 	_ = s.notifyJobEvent(ctx, *job, "stage.started", task, nil)
 
 	stageTimeout := s.stageTimeoutForJob(*job)
@@ -450,6 +457,31 @@ func (s *Service) HandleTask(ctx context.Context, task models.TaskPayload) error
 		RequestedBy: "pipeline",
 		Reason:      string(task.Stage) + "_completed",
 	})
+}
+
+func (s *Service) startStageHeartbeat(jobID uint, stage models.JobStage) func() {
+	done := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(stageHeartbeatInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				ctx, cancel := context.WithTimeout(context.Background(), stageHeartbeatUpdateTimeout)
+				if err := s.store.TouchJobHeartbeat(ctx, jobID); err != nil {
+					slog.Warn("stage heartbeat refresh failed",
+						"job_id", jobID,
+						"stage", stage,
+						"error", err,
+					)
+				}
+				cancel()
+			case <-done:
+				return
+			}
+		}
+	}()
+	return func() { close(done) }
 }
 
 func (s *Service) runMedia(ctx context.Context, task models.TaskPayload) error {
@@ -594,9 +626,9 @@ func (s *Service) runASRSmart(ctx context.Context, task models.TaskPayload) erro
 }
 
 // runSegmentReview is the pipeline stage that sits between asr_smart and translate.
-// It runs the LLM segmentation-review agent and stores suggestions, then sets the
-// job status to awaiting_review so HandleTask does NOT auto-advance to translate.
-// The job resumes when the user calls POST /jobs/:id/confirm-segmentation.
+// It runs the LLM segmentation-review agent and stores suggestions. By default
+// it auto-applies high-confidence safe merges and lets HandleTask advance to
+// translate; SEGMENT_REVIEW_REQUIRE_HUMAN restores the awaiting_review UI gate.
 func (s *Service) runSegmentReview(ctx context.Context, task models.TaskPayload) error {
 	if !s.cfg.SegmentReviewEnabled {
 		slog.Info("segment_review disabled by config, skipping", "job_id", task.JobID)
@@ -640,8 +672,9 @@ func (s *Service) runSegmentReview(ctx context.Context, task models.TaskPayload)
 	slog.Info("segment_review starting LLM review", "job_id", task.JobID, "segment_count", len(segments))
 	suggestions, err := s.llm.ReviewSegmentation(ctx, job.SourceLanguage, segInfos)
 	if err != nil {
-		// Non-fatal: log and continue with zero suggestions so the user still gets
-		// the manual-review UI even without LLM suggestions.
+		// Non-fatal: log and continue with zero suggestions. Auto mode then
+		// advances to translate; explicit human-gated mode still exposes the
+		// review UI even when the LLM returns nothing.
 		slog.Warn("segment_review LLM call failed, continuing without suggestions",
 			"job_id", task.JobID, "error", err)
 		suggestions = nil
@@ -684,6 +717,24 @@ func (s *Service) runSegmentReview(ctx context.Context, task models.TaskPayload)
 		return fmt.Errorf("segment_review: save suggestions: %w", err)
 	}
 
+	if !s.cfg.SegmentReviewRequireHuman {
+		savedSuggestions, err := s.store.ListSuggestions(ctx, task.JobID)
+		if err != nil {
+			slog.Warn("segment_review: list saved suggestions failed; auto-advancing without apply",
+				"job_id", task.JobID, "error", err)
+			return nil
+		}
+		stats := s.autoApplySegmentReviewSuggestions(ctx, task.JobID, savedSuggestions, segments)
+		slog.Info("segment_review: auto mode complete; continuing to translate",
+			"job_id", task.JobID,
+			"suggestions", len(savedSuggestions),
+			"applied", stats.Applied,
+			"rejected", stats.Rejected,
+			"failed", stats.Failed,
+		)
+		return nil
+	}
+
 	// Mark the job as awaiting_review — HandleTask will see this and skip auto-advance.
 	if err := s.store.UpdateJobState(ctx, task.JobID, models.JobStatusAwaitingReview, models.StageSegmentReview, "", false); err != nil {
 		return fmt.Errorf("segment_review: set awaiting_review: %w", err)
@@ -691,6 +742,191 @@ func (s *Service) runSegmentReview(ctx context.Context, task models.TaskPayload)
 	slog.Info("segment_review: job is now awaiting user confirmation",
 		"job_id", task.JobID, "suggestions", len(dbSuggestions))
 	return nil
+}
+
+type segmentReviewAutoApplyStats struct {
+	Applied  int
+	Rejected int
+	Failed   int
+}
+
+type segmentReviewMergeCandidate struct {
+	SuggestionID uint
+	SegmentIDs   []uint
+	Confidence   float64
+	MinOrdinal   int
+	MaxOrdinal   int
+}
+
+func (s *Service) autoApplySegmentReviewSuggestions(
+	ctx context.Context,
+	jobID uint,
+	suggestions []models.SegmentSuggestion,
+	segments []models.Segment,
+) segmentReviewAutoApplyStats {
+	stats := segmentReviewAutoApplyStats{}
+	if len(suggestions) == 0 {
+		return stats
+	}
+
+	reject := func(suggestionID uint) {
+		if suggestionID == 0 {
+			return
+		}
+		if err := s.store.UpdateSuggestionStatus(ctx, suggestionID, "rejected"); err != nil {
+			slog.Warn("segment_review: reject suggestion status update failed",
+				"job_id", jobID, "suggestion_id", suggestionID, "error", err)
+		}
+		stats.Rejected++
+	}
+	accept := func(suggestionID uint) {
+		if suggestionID == 0 {
+			return
+		}
+		if err := s.store.UpdateSuggestionStatus(ctx, suggestionID, "accepted"); err != nil {
+			slog.Warn("segment_review: accept suggestion status update failed",
+				"job_id", jobID, "suggestion_id", suggestionID, "error", err)
+		}
+	}
+
+	if !s.cfg.SegmentReviewAutoApply {
+		for _, sug := range suggestions {
+			reject(sug.ID)
+		}
+		return stats
+	}
+
+	idToSegment := make(map[uint]models.Segment, len(segments))
+	for _, seg := range segments {
+		idToSegment[seg.ID] = seg
+	}
+	minConfidence := s.cfg.SegmentReviewAutoApplyMinConfidence
+	if minConfidence <= 0 || minConfidence > 1 {
+		minConfidence = 0.82
+	}
+	maxGapMs := s.cfg.SegmentReviewMaxMergeGapMs
+	if maxGapMs < 0 {
+		maxGapMs = 2000
+	}
+	maxDurationMs := s.cfg.SegmentReviewMaxMergedDurationMs
+	if maxDurationMs <= 0 {
+		maxDurationMs = 20000
+	}
+	maxSegments := s.cfg.SegmentReviewMaxMergeSegments
+	if maxSegments < 2 {
+		maxSegments = 4
+	}
+
+	candidates := make([]segmentReviewMergeCandidate, 0, len(suggestions))
+	for _, sug := range suggestions {
+		cand, ok := buildSegmentReviewMergeCandidate(sug, idToSegment, maxGapMs, maxDurationMs, maxSegments)
+		if !ok || sug.Confidence < minConfidence {
+			reject(sug.ID)
+			continue
+		}
+		candidates = append(candidates, cand)
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].Confidence == candidates[j].Confidence {
+			return candidates[i].MinOrdinal > candidates[j].MinOrdinal
+		}
+		return candidates[i].Confidence > candidates[j].Confidence
+	})
+
+	usedSegmentIDs := make(map[uint]struct{}, len(candidates)*2)
+	selected := make([]segmentReviewMergeCandidate, 0, len(candidates))
+	for _, cand := range candidates {
+		conflict := false
+		for _, id := range cand.SegmentIDs {
+			if _, ok := usedSegmentIDs[id]; ok {
+				conflict = true
+				break
+			}
+		}
+		if conflict {
+			reject(cand.SuggestionID)
+			continue
+		}
+		for _, id := range cand.SegmentIDs {
+			usedSegmentIDs[id] = struct{}{}
+		}
+		selected = append(selected, cand)
+	}
+
+	sort.SliceStable(selected, func(i, j int) bool {
+		return selected[i].MinOrdinal > selected[j].MinOrdinal
+	})
+	for _, cand := range selected {
+		if err := s.store.MergeSegments(ctx, jobID, cand.SegmentIDs); err != nil {
+			stats.Failed++
+			reject(cand.SuggestionID)
+			slog.Warn("segment_review: auto-apply merge failed",
+				"job_id", jobID,
+				"suggestion_id", cand.SuggestionID,
+				"segment_ids", cand.SegmentIDs,
+				"error", err,
+			)
+			continue
+		}
+		accept(cand.SuggestionID)
+		stats.Applied++
+	}
+	return stats
+}
+
+func buildSegmentReviewMergeCandidate(
+	sug models.SegmentSuggestion,
+	idToSegment map[uint]models.Segment,
+	maxGapMs int64,
+	maxDurationMs int64,
+	maxSegments int,
+) (segmentReviewMergeCandidate, bool) {
+	if sug.Action != "merge" || len(sug.SegmentIDs) < 2 || len(sug.SegmentIDs) > maxSegments {
+		return segmentReviewMergeCandidate{}, false
+	}
+	seen := make(map[uint]struct{}, len(sug.SegmentIDs))
+	segs := make([]models.Segment, 0, len(sug.SegmentIDs))
+	for _, id := range sug.SegmentIDs {
+		if _, ok := seen[id]; ok {
+			return segmentReviewMergeCandidate{}, false
+		}
+		seen[id] = struct{}{}
+		seg, ok := idToSegment[id]
+		if !ok {
+			return segmentReviewMergeCandidate{}, false
+		}
+		segs = append(segs, seg)
+	}
+	sort.SliceStable(segs, func(i, j int) bool {
+		return segs[i].Ordinal < segs[j].Ordinal
+	})
+	for i := 1; i < len(segs); i++ {
+		if segs[i].Ordinal != segs[i-1].Ordinal+1 {
+			return segmentReviewMergeCandidate{}, false
+		}
+		gap := segs[i].StartMs - segs[i-1].EndMs
+		if gap < 0 {
+			gap = 0
+		}
+		if gap > maxGapMs {
+			return segmentReviewMergeCandidate{}, false
+		}
+	}
+	duration := segs[len(segs)-1].EndMs - segs[0].StartMs
+	if duration <= 0 || duration > maxDurationMs {
+		return segmentReviewMergeCandidate{}, false
+	}
+	ids := make([]uint, len(segs))
+	for i, seg := range segs {
+		ids[i] = seg.ID
+	}
+	return segmentReviewMergeCandidate{
+		SuggestionID: sug.ID,
+		SegmentIDs:   ids,
+		Confidence:   sug.Confidence,
+		MinOrdinal:   segs[0].Ordinal,
+		MaxOrdinal:   segs[len(segs)-1].Ordinal,
+	}, true
 }
 
 func (s *Service) runTranslate(ctx context.Context, task models.TaskPayload) error {
@@ -720,7 +956,24 @@ func (s *Service) runTranslate(ctx context.Context, task models.TaskPayload) err
 	const seedFraction = 0.20   // translate this fraction first to bootstrap the summary
 	const contextWindowSize = 2 // preceding segments to pass as local context
 
-	total := len(segments)
+	speechIndices := make([]int, 0, len(segments))
+	skipped := make([]models.Segment, 0)
+	for idx := range segments {
+		if shouldSkipDubbing(segments[idx]) {
+			markSegmentSkipped(&segments[idx], skipReasonForSegment(segments[idx]))
+			skipped = append(skipped, segments[idx])
+			continue
+		}
+		speechIndices = append(speechIndices, idx)
+	}
+
+	if len(speechIndices) == 0 {
+		slog.Warn("translate: all segments classified as non-speech; skipping translation",
+			"job_id", job.ID, "segment_count", len(segments))
+		return s.store.UpdateSegmentTranslations(ctx, skipped)
+	}
+
+	total := len(speechIndices)
 	seedCount := int(math.Ceil(float64(total) * seedFraction))
 	if seedCount < 5 {
 		seedCount = 5 // always seed at least 5 segments
@@ -807,36 +1060,41 @@ func (s *Service) runTranslate(ctx context.Context, task models.TaskPayload) err
 	// buildContext returns the last min(contextWindowSize, n) translated segments as
 	// ContextSegment pairs, suitable for passing to TranslateTextWithDuration.
 	buildContext := func(upToIdx int) []llm.ContextSegment {
-		start := upToIdx - contextWindowSize
-		if start < 0 {
-			start = 0
-		}
-		window := make([]llm.ContextSegment, 0, upToIdx-start)
-		for i := start; i < upToIdx; i++ {
+		reversed := make([]llm.ContextSegment, 0, contextWindowSize)
+		for i := upToIdx - 1; i >= 0 && len(reversed) < contextWindowSize; i-- {
 			if segments[i].TargetText != "" {
-				window = append(window, llm.ContextSegment{
+				reversed = append(reversed, llm.ContextSegment{
 					SrcText: segments[i].SourceText,
 					TgtText: segments[i].TargetText,
 				})
 			}
 		}
+		window := make([]llm.ContextSegment, len(reversed))
+		for i := range reversed {
+			window[len(reversed)-1-i] = reversed[i]
+		}
 		return window
 	}
 
 	// ── Pass 1: seed translation (no summary yet, no context for very first segment) ──
-	for idx := 0; idx < seedCount; idx++ {
+	for _, idx := range speechIndices[:seedCount] {
 		if err := translateOne(idx, buildContext(idx), ""); err != nil {
 			return err
 		}
 	}
 
 	// Save seed translations so they're not lost if the summary call fails.
-	if err := s.store.UpdateSegmentTranslations(ctx, segments[:seedCount]); err != nil {
+	seedSegments := make([]models.Segment, 0, seedCount+len(skipped))
+	for _, idx := range speechIndices[:seedCount] {
+		seedSegments = append(seedSegments, segments[idx])
+	}
+	seedSegments = append(seedSegments, skipped...)
+	if err := s.store.UpdateSegmentTranslations(ctx, seedSegments); err != nil {
 		return err
 	}
 
 	// Generate episode reference card from the seed translations.
-	seedSample := buildTranslationSample(segments[:seedCount], 20)
+	seedSample := buildTranslationSample(seedSegments, 20)
 	if len(seedSample) > 0 {
 		summary, sumErr := s.llm.SummarizeTranslation(ctx, job.SourceLanguage, job.TargetLanguage, seedSample)
 		if sumErr != nil {
@@ -850,7 +1108,7 @@ func (s *Service) runTranslate(ctx context.Context, task models.TaskPayload) err
 	}
 
 	// ── Pass 2: translate remaining segments with summary + rolling context ──
-	for idx := seedCount; idx < total; idx++ {
+	for _, idx := range speechIndices[seedCount:] {
 		if err := translateOne(idx, buildContext(idx), translationSummary); err != nil {
 			return err
 		}
@@ -993,14 +1251,35 @@ func (s *Service) runMerge(ctx context.Context, task models.TaskPayload) error {
 	if err != nil {
 		return err
 	}
+	allSegments, err := s.store.ListSegments(ctx, job.ID, nil)
+	if err != nil {
+		return err
+	}
+	if len(segments) == 0 && len(allSegments) == 0 {
+		return errors.New("no segments to merge")
+	}
 	if len(segments) == 0 {
-		return errors.New("no synthesized segments to merge")
+		slog.Warn("merge: no TTS overlays; rendering background-only track",
+			"job_id", job.ID, "segment_count", len(allSegments))
 	}
 
 	var totalDurationMs int64
+	chapterTargetDurationMs := chapterMergeTargetDurationMs(job)
+	if chapterTargetDurationMs > 0 {
+		totalDurationMs = chapterTargetDurationMs
+	}
+	nextStartBySegmentID := make(map[uint]int64, len(allSegments))
+	for i, segment := range allSegments {
+		if chapterTargetDurationMs == 0 && segment.EndMs > totalDurationMs {
+			totalDurationMs = segment.EndMs
+		}
+		if i+1 < len(allSegments) {
+			nextStartBySegmentID[segment.ID] = allSegments[i+1].StartMs
+		}
+	}
 	overlays := make([]media.AudioOverlay, 0, len(segments))
-	for i, segment := range segments {
-		if segment.EndMs > totalDurationMs {
+	for _, segment := range segments {
+		if chapterTargetDurationMs == 0 && segment.EndMs > totalDurationMs {
 			totalDurationMs = segment.EndMs
 		}
 		// MaxDurationMs = available slot from this segment's start to the next
@@ -1009,8 +1288,8 @@ func (s *Service) runMerge(ctx context.Context, task models.TaskPayload) error {
 		// never bleeds into the following sentence.
 		const breathMarginMs int64 = 300
 		var maxDurationMs int64
-		if i+1 < len(segments) {
-			if slotMs := segments[i+1].StartMs - segment.StartMs - breathMarginMs; slotMs > 0 {
+		if nextStart, ok := nextStartBySegmentID[segment.ID]; ok {
+			if slotMs := nextStart - segment.StartMs - breathMarginMs; slotMs > 0 {
 				maxDurationMs = slotMs
 			}
 		}
@@ -1021,12 +1300,12 @@ func (s *Service) runMerge(ctx context.Context, task models.TaskPayload) error {
 			MaxDurationMs: maxDurationMs,
 		})
 	}
-	if job.BgmRelPath != "" {
+	if job.BgmRelPath != "" && chapterTargetDurationMs == 0 {
 		if bgmDurationMs, err := media.ProbeDurationMs(s.cfg.DataRoot, s.cfg.FFprobeBin, job.BgmRelPath); err == nil && bgmDurationMs > totalDurationMs {
 			totalDurationMs = bgmDurationMs
 		}
 	}
-	if inputDurationMs, err := media.ProbeDurationMs(s.cfg.DataRoot, s.cfg.FFprobeBin, job.InputRelPath); err == nil && inputDurationMs > totalDurationMs {
+	if inputDurationMs, err := media.ProbeDurationMs(s.cfg.DataRoot, s.cfg.FFprobeBin, job.InputRelPath); chapterTargetDurationMs == 0 && err == nil && inputDurationMs > totalDurationMs {
 		totalDurationMs = inputDurationMs
 	}
 
@@ -1035,7 +1314,11 @@ func (s *Service) runMerge(ctx context.Context, task models.TaskPayload) error {
 	// parent Episode is on layout v2. Falls back to the legacy
 	// jobs/{id}/output/... layout for v1 episodes (the 138 historical rows
 	// pre-back-fill).
-	dubRelPath, finalRelPath := s.chapterMergeOutputPaths(ctx, job, segments)
+	pathSegments := segments
+	if len(pathSegments) == 0 {
+		pathSegments = allSegments
+	}
+	dubRelPath, finalRelPath := s.chapterMergeOutputPaths(ctx, job, pathSegments)
 	if err := media.RenderDubTrack(s.cfg.DataRoot, s.cfg.FFmpegBin, dubRelPath, totalDurationMs, job.BgmRelPath, overlays); err != nil {
 		return fmt.Errorf("render dub track: %w", err)
 	}
@@ -1055,7 +1338,7 @@ func (s *Service) runMerge(ctx context.Context, task models.TaskPayload) error {
 	}
 
 	if media.IsVideoFile(job.InputRelPath) {
-		if err := media.MuxVideo(s.cfg.DataRoot, s.cfg.FFmpegBin, job.InputRelPath, dubRelPath, finalRelPath); err != nil {
+		if err := media.MuxVideoWithDuration(s.cfg.DataRoot, s.cfg.FFmpegBin, job.InputRelPath, dubRelPath, finalRelPath, totalDurationMs); err != nil {
 			return fmt.Errorf("mux final video: %w", err)
 		}
 		job.OutputRelPath = finalRelPath
@@ -1078,6 +1361,16 @@ func (s *Service) runMerge(ctx context.Context, task models.TaskPayload) error {
 	// is idempotent if already enqueued.
 	s.maybeEnqueueEpisodeMerge(ctx, job.EpisodeID)
 	return nil
+}
+
+func chapterMergeTargetDurationMs(job *models.Job) int64 {
+	if job == nil {
+		return 0
+	}
+	if job.ChapterEndMs > job.ChapterStartMs {
+		return job.ChapterEndMs - job.ChapterStartMs
+	}
+	return 0
 }
 
 // chapterMergeOutputPaths returns (dubTrackRelPath, finalVideoRelPath) for
@@ -1250,9 +1543,10 @@ func (s *Service) PreviewVoice(ctx context.Context, jobID uint, seg models.Segme
 	if text == "" {
 		text = seg.SourceText
 	}
+	spoken := spokenTextForTTS(text)
 
 	resp, ttsErr := s.ml.RunTTS(ctx, ml.TTSRequest{
-		Text:              text,
+		Text:              spoken.Text,
 		TargetDurationSec: targetSec,
 		MaxAllowedSec:     maxAllowedSec,
 		VoiceConfig:       voiceConfig,

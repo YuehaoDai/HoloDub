@@ -9,7 +9,7 @@
     "backend": "demucs",
     "package": "demucs",
     "version": "latest-compatible",
-    "weights": "htdemucs"
+    "weights": "mdx_q"
   },
   "asr": {
     "backend": "faster_whisper",

@@ -15,8 +15,6 @@ import (
 	"holodub/internal/ml"
 	"holodub/internal/models"
 	pipettstts "holodub/internal/pipeline/tts"
-
-	"gorm.io/gorm"
 )
 
 // runTTSDuration executes the tts_duration stage: synthesise audio for every
@@ -57,9 +55,19 @@ func (s *Service) runTTSDuration(ctx context.Context, task models.TaskPayload) e
 	var errMu sync.Mutex
 	var processedIdx []int
 	var processedMu sync.Mutex
+	var skippedSegments []models.Segment
 
+	s.refreshLongStageProgress(context.Background(), job.ID, task.Stage)
 	for idx := range segments {
 		if segments[idx].Status == models.SegmentStatusSynthesized {
+			continue
+		}
+		if segments[idx].Status == models.SegmentStatusSkipped {
+			continue
+		}
+		if shouldSkipDubbing(segments[idx]) {
+			markSegmentSkipped(&segments[idx], skipReasonForSegment(segments[idx]))
+			skippedSegments = append(skippedSegments, segments[idx])
 			continue
 		}
 		idx := idx
@@ -68,6 +76,24 @@ func (s *Service) runTTSDuration(ctx context.Context, task models.TaskPayload) e
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
+			cancelRequested, cancelErr := s.store.IsCancelRequested(ctx, job.ID)
+			if cancelErr != nil {
+				errMu.Lock()
+				if firstErr == nil {
+					firstErr = fmt.Errorf("check cancel before tts segment %d: %w", segments[idx].ID, cancelErr)
+				}
+				errMu.Unlock()
+				return
+			}
+			if cancelRequested {
+				errMu.Lock()
+				if firstErr == nil {
+					firstErr = fmt.Errorf("job %d cancel requested during tts_duration", job.ID)
+				}
+				errMu.Unlock()
+				return
+			}
+			s.refreshLongStageProgress(context.Background(), job.ID, task.Stage)
 			if err := s.processOneTTSSegmentWithHint(ctx, job, segments, idx, isInitial, effectiveSummary, task.ReworkHint); err != nil {
 				errMu.Lock()
 				if firstErr == nil {
@@ -79,10 +105,16 @@ func (s *Service) runTTSDuration(ctx context.Context, task models.TaskPayload) e
 				processedIdx = append(processedIdx, idx)
 				processedMu.Unlock()
 			}
+			s.refreshLongStageProgress(context.Background(), job.ID, task.Stage)
 		}()
 	}
 	wg.Wait()
 
+	if len(skippedSegments) > 0 {
+		if err := s.store.UpdateSegmentTranslations(ctx, skippedSegments); err != nil {
+			return err
+		}
+	}
 	if firstErr != nil {
 		return firstErr
 	}
@@ -102,7 +134,7 @@ func (s *Service) runTTSDuration(ctx context.Context, task models.TaskPayload) e
 		if seg.TTSDurationMs <= 0 || seg.TargetText == "" {
 			continue
 		}
-		chars := len([]rune(seg.TargetText))
+		chars := len([]rune(spokenTextForTTS(seg.TargetText).Text))
 		if chars == 0 {
 			continue
 		}
@@ -132,6 +164,23 @@ func (s *Service) runTTSDuration(ctx context.Context, task models.TaskPayload) e
 	return s.store.UpdateSegmentSynthResults(ctx, processed)
 }
 
+func (s *Service) refreshLongStageProgress(ctx context.Context, jobID uint, stage models.JobStage) {
+	if err := s.store.TouchJobHeartbeat(ctx, jobID); err != nil {
+		slog.Warn("refresh stage heartbeat failed",
+			"job_id", jobID,
+			"stage", stage,
+			"error", err,
+		)
+	}
+	if err := s.queue.RefreshStageLease(ctx, jobID, stage, s.cfg.StageLeaseTTL); err != nil {
+		slog.Warn("refresh stage lease failed",
+			"job_id", jobID,
+			"stage", stage,
+			"error", err,
+		)
+	}
+}
+
 // processOneTTSSegment runs the per-segment TTS synthesis loop with adaptive
 // duration alignment. The pure decision helpers used here live in
 // internal/pipeline/tts and are unit-tested independently.
@@ -159,24 +208,11 @@ func (s *Service) processOneTTSSegmentWithHint(ctx context.Context, job *models.
 		return s.runSegmentAgentV2WithHint(ctx, job, segments, idx, isInitial, translationSummary, hint)
 	}
 	seg := &segments[idx]
-	voiceConfig := map[string]any{}
-	profile, err := s.store.ResolveVoiceProfileForSegment(ctx, job.ID, *seg)
-	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-		return fmt.Errorf("resolve voice profile for segment %d: %w", seg.ID, err)
+	voiceConfig, profile, voiceSource, err := s.resolveVoiceConfigForSegment(ctx, job, *seg)
+	if err != nil {
+		return err
 	}
-	if profile != nil {
-		voiceConfig, err = buildVoiceConfig(*profile)
-		if err != nil {
-			return fmt.Errorf("build voice config for segment %d: %w", seg.ID, err)
-		}
-	} else if job.VocalsRelPath != "" {
-		// No voice profile assigned: fall back to the current job's separated
-		// vocals so TTS clones the actual speaker from this video, not the
-		// global test_ref.wav which belongs to an unrelated previous recording.
-		voiceConfig = map[string]any{
-			"sample_relpaths": []string{job.VocalsRelPath},
-		}
-	}
+	charsPerSecHint := s.charsPerSecHintForTTS(job.TargetLanguage, profile)
 
 	targetMs := seg.DurationMs()
 	targetSec := float64(targetMs) / 1000.0
@@ -274,6 +310,7 @@ func (s *Service) processOneTTSSegmentWithHint(ctx context.Context, job *models.
 	}
 
 	var response *ml.TTSResponse
+	var loraCandidateRuntime map[string]any
 	var retryHistory []llm.RetranslationAttempt
 	var prevActualSec float64
 	var prevTextChars int
@@ -289,26 +326,47 @@ func (s *Service) processOneTTSSegmentWithHint(ctx context.Context, job *models.
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("tts segment %d: %w", seg.ID, err)
 		}
-		response, err = s.ml.RunTTS(ctx, ml.TTSRequest{
-			Text:              text,
+		s.refreshLongStageProgress(context.Background(), job.ID, models.StageTTSDuration)
+		spoken := spokenTextForTTS(text)
+		timingCharsPerSec := charsPerSecHint
+		if observedCharsPerSec > 0 {
+			timingCharsPerSec = observedCharsPerSec
+		}
+		dubbingMeta := s.attachTemporalPlanToDubbingMeta(
+			extractDubbingMeta(seg),
+			spoken.Text,
+			job.TargetLanguage,
+			targetSec,
+			timingCharsPerSec,
+			job.ID,
+			seg.ID,
+		)
+		var runtime map[string]any
+		response, runtime, err = s.runTTSWithLoraCandidateFallback(ctx, ml.TTSRequest{
+			Text:              spoken.Text,
+			TargetLanguage:    job.TargetLanguage,
 			TargetDurationSec: targetSec,
 			MaxAllowedSec:     maxAllowedSec,
 			VoiceConfig:       voiceConfig,
 			OutputRelPath:     outputRelPath,
 			PrevActualSec:     prevActualSec,
 			PrevTextChars:     prevTextChars,
-			DubbingMeta:       extractDubbingMeta(seg),
+			DubbingMeta:       dubbingMeta,
 		})
+		if runtime != nil {
+			loraCandidateRuntime = runtime
+		}
 		if err != nil {
 			return fmt.Errorf("tts segment %d (attempt %d): %w", seg.ID, attempt, err)
 		}
+		s.refreshLongStageProgress(context.Background(), job.ID, models.StageTTSDuration)
 
 		actualMs := response.ActualDurationMs
 		actualSec := float64(actualMs) / 1000.0
 		overflowMs := actualMs - targetMs
 
 		// Update observed speaking rate with this run's data.
-		obsChars := len([]rune(text))
+		obsChars := len([]rune(spoken.Text))
 		if obsChars > 0 && actualSec > 0 {
 			totalObsChars += obsChars
 			totalObsSec += actualSec
@@ -448,7 +506,7 @@ func (s *Service) processOneTTSSegmentWithHint(ctx context.Context, job *models.
 		// default prior instead.
 		if actualSec >= targetSec {
 			prevActualSec = actualSec
-			prevTextChars = pipettstts.CountNonWhitespaceRunes(text)
+			prevTextChars = pipettstts.CountNonWhitespaceRunes(spoken.Text)
 		} else {
 			prevActualSec = 0
 			prevTextChars = 0
@@ -477,18 +535,37 @@ func (s *Service) processOneTTSSegmentWithHint(ctx context.Context, job *models.
 				"final_drift_sec", currentAbsDrift,
 				"best_actual_ms", bestActualMs,
 			)
-			bestResp, bestErr := s.ml.RunTTS(ctx, ml.TTSRequest{
-				Text:              bestText,
+			bestSpoken := spokenTextForTTS(bestText)
+			bestTimingCharsPerSec := charsPerSecHint
+			if observedCharsPerSec > 0 {
+				bestTimingCharsPerSec = observedCharsPerSec
+			}
+			bestDubbingMeta := s.attachTemporalPlanToDubbingMeta(
+				extractDubbingMeta(seg),
+				bestSpoken.Text,
+				job.TargetLanguage,
+				targetSec,
+				bestTimingCharsPerSec,
+				job.ID,
+				seg.ID,
+			)
+			bestResp, bestRuntime, bestErr := s.runTTSWithLoraCandidateFallback(ctx, ml.TTSRequest{
+				Text:              bestSpoken.Text,
+				TargetLanguage:    job.TargetLanguage,
 				TargetDurationSec: targetSec,
 				MaxAllowedSec:     maxAllowedSec,
 				VoiceConfig:       voiceConfig,
 				OutputRelPath:     outputRelPath,
-				DubbingMeta:       extractDubbingMeta(seg),
+				DubbingMeta:       bestDubbingMeta,
 			})
 			if bestErr == nil {
 				response = bestResp
+				if bestRuntime != nil {
+					loraCandidateRuntime = bestRuntime
+				}
 			}
 			seg.TargetText = bestText
+			text = bestText
 			if saveErr := s.store.UpdateSegmentTranslations(ctx, []models.Segment{*seg}); saveErr != nil {
 				slog.Warn("failed to persist best-attempt text",
 					"job_id", job.ID,
@@ -501,7 +578,16 @@ func (s *Service) processOneTTSSegmentWithHint(ctx context.Context, job *models.
 
 	seg.TTSAudioRelPath = response.AudioRelPath
 	seg.TTSDurationMs = response.ActualDurationMs
+	if err := s.auditFinalSynthFitBeforePersist(ctx, seg, targetMs, s.cfg.SegmentAgentMaxFitDelta, "legacy_tts"); err != nil {
+		return fmt.Errorf("tts segment %d: %w", seg.ID, err)
+	}
 	seg.Status = models.SegmentStatusSynthesized
+	finalDisplayText := seg.TargetText
+	if finalDisplayText == "" {
+		finalDisplayText = text
+	}
+	applyLoraCandidateRuntime(seg, loraCandidateRuntime)
+	s.persistTTSProvenance(ctx, seg, finalDisplayText, targetSec, voiceSource, voiceConfig)
 
 	if saveErr := s.store.UpdateSegmentSynthResults(ctx, []models.Segment{*seg}); saveErr != nil {
 		slog.Warn("failed to persist TTS result immediately; will retry at end",

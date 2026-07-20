@@ -22,6 +22,35 @@ func TestIsVideoFile(t *testing.T) {
 
 // ── OPT-403 helpers ────────────────────────────────────────────────────────
 
+func TestMuxVideoArgs_DefaultHasNoDurationLock(t *testing.T) {
+	args := muxVideoArgs("input.mp4", "dub.wav", "out.mp4", 0)
+	joined := " " + strings.Join(args, " ") + " "
+	if strings.Contains(joined, " -t ") {
+		t.Fatalf("legacy mux args should not force duration: %v", args)
+	}
+	if !strings.Contains(joined, " -shortest ") {
+		t.Fatalf("mux args should preserve shortest guard: %v", args)
+	}
+}
+
+func TestMuxVideoArgs_WithDurationLock(t *testing.T) {
+	args := muxVideoArgs("input.mp4", "dub.wav", "out.mp4", 1234)
+	joined := " " + strings.Join(args, " ") + " "
+	if !strings.Contains(joined, " -t 1.234 ") {
+		t.Fatalf("duration lock missing from mux args: %v", args)
+	}
+	if args[len(args)-1] != "out.mp4" {
+		t.Fatalf("output path should remain the last ffmpeg arg: %v", args)
+	}
+}
+
+func TestClampMuxedVideoDuration_RejectsInvalidDuration(t *testing.T) {
+	err := ClampMuxedVideoDuration(context.Background(), "ffmpeg", "input.mp4", 0)
+	if err == nil || !strings.Contains(err.Error(), "invalid duration") {
+		t.Fatalf("want invalid duration error, got %v", err)
+	}
+}
+
 func TestSliceVideoAtRange_RejectsInvalidRange(t *testing.T) {
 	cases := []struct {
 		name           string
@@ -120,6 +149,20 @@ func TestParseLoudnormJSON_RejectsMalformedJSON(t *testing.T) {
 	}
 }
 
+func TestLoudnormPass2ArgsMapsAudioOnly(t *testing.T) {
+	args := loudnormPass2Args("in.mp4", "out.m4a", "loudnorm=...")
+	joined := " " + strings.Join(args, " ") + " "
+
+	for _, want := range []string{" -map 0:a:0 ", " -vn ", " -sn ", " -dn "} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("pass2 args missing %q: %v", want, args)
+		}
+	}
+	if strings.Contains(joined, " -c:v ") {
+		t.Fatalf("pass2 args should not configure video encoding: %v", args)
+	}
+}
+
 func TestTruncateForLog(t *testing.T) {
 	short := truncateForLog("hello", 10)
 	if short != "hello" {
@@ -144,6 +187,40 @@ func ffmpegOnPath(t *testing.T) string {
 		t.Skipf("ffmpeg not on PATH; skipping integration test: %v", err)
 	}
 	return bin
+}
+
+func TestRenderDubTrack_NoOverlays_Integration(t *testing.T) {
+	bin := ffmpegOnPath(t)
+	dataRoot := t.TempDir()
+
+	t.Run("silence only", func(t *testing.T) {
+		outRel := filepath.Join("jobs", "no-overlays", "silence.m4a")
+		if err := RenderDubTrack(dataRoot, bin, outRel, 2000, "", nil); err != nil {
+			t.Fatalf("RenderDubTrack silence: %v", err)
+		}
+		assertNonEmptyFile(t, filepath.Join(dataRoot, outRel))
+	})
+
+	t.Run("bgm only", func(t *testing.T) {
+		bgmRel := filepath.Join("assets", "bgm.wav")
+		bgmPath := filepath.Join(dataRoot, bgmRel)
+		if err := os.MkdirAll(filepath.Dir(bgmPath), 0o755); err != nil {
+			t.Fatalf("mkdir bgm dir: %v", err)
+		}
+		gen := exec.Command(bin, "-y",
+			"-f", "lavfi", "-i", "sine=frequency=440:duration=3:sample_rate=48000",
+			"-ac", "1", bgmPath,
+		)
+		if out, err := gen.CombinedOutput(); err != nil {
+			t.Fatalf("generate bgm: %v\n%s", err, out)
+		}
+
+		outRel := filepath.Join("jobs", "no-overlays", "bgm.m4a")
+		if err := RenderDubTrack(dataRoot, bin, outRel, 2000, bgmRel, nil); err != nil {
+			t.Fatalf("RenderDubTrack bgm: %v", err)
+		}
+		assertNonEmptyFile(t, filepath.Join(dataRoot, outRel))
+	})
 }
 
 // TestLoudnormTwoPass_Integration round-trips a 2-second 1 kHz sine through
@@ -182,6 +259,17 @@ func TestLoudnormTwoPass_Integration(t *testing.T) {
 	}
 	if info, err := os.Stat(dst); err != nil || info.Size() < 1024 {
 		t.Errorf("normalised output missing or tiny: %v / %d bytes", err, sizeOf(info))
+	}
+}
+
+func assertNonEmptyFile(t *testing.T, path string) {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat output: %v", err)
+	}
+	if info.Size() < 1024 {
+		t.Fatalf("output file is unexpectedly small: %d bytes", info.Size())
 	}
 }
 

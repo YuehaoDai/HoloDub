@@ -32,20 +32,21 @@ import (
 // struct because passing 13 positional arguments to a parallel-fanout
 // function is unmaintainable.
 type EnsembleArgs struct {
-	SourceLanguage     string
-	TargetLanguage     string
-	SourceText         string
-	CurrentTrans       string
-	TargetSec          float64
-	ActualSec          float64
-	Attempt            int
-	MaxAttempts        int
-	DriftThresholdPct  float64
-	History            []RetranslationAttempt
+	SourceLanguage      string
+	TargetLanguage      string
+	SourceText          string
+	CurrentTrans        string
+	TargetSec           float64
+	ActualSec           float64
+	Attempt             int
+	MaxAttempts         int
+	DriftThresholdPct   float64
+	History             []RetranslationAttempt
 	ObservedCharsPerSec float64
-	ContextBefore      []ContextSegment
-	NextSourceText     string
-	TranslationSummary string
+	ContextBefore       []ContextSegment
+	NextSourceText      string
+	TranslationSummary  string
+	CompressionHint     *DurationCompressionHint
 
 	// EpisodeSummary is the smaller summary used by the inline judge
 	// step. Distinct from TranslationSummary because the judge prompt
@@ -122,6 +123,7 @@ func (c *Client) RetranslateEnsemble(ctx context.Context, args EnsembleArgs, mod
 				args.ContextBefore,
 				args.NextSourceText,
 				args.TranslationSummary,
+				args.CompressionHint,
 			)
 			candidates[i] = EnsembleCandidate{Model: m, Text: text, Err: err}
 		}()

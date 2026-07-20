@@ -6,27 +6,27 @@ import (
 
 // Decide is the OPT-407 pure decision function. It maps a DecideInput
 // (level, verdict, score, history, config) to a concrete Action. No I/O,
-// no time-of-day dependencies, no logging — exhaustively unit testable.
+// no time-of-day dependencies, no logging; exhaustively unit testable.
 //
 // Decision priority (first match wins):
 //
-//  1. EnabledLevel does NOT cover Level → ActionNoop("level_disabled")
-//  2. AccumulatedCostUSD > ceiling      → ActionHaltCost
-//  3. Oscillation detection             → ActionEscalateOscillation
+//  1. EnabledLevel does NOT cover Level -> ActionNoop("level_disabled")
+//  2. AccumulatedCostUSD > ceiling      -> ActionHaltCost
+//  3. Oscillation detection             -> ActionEscalateOscillation
 //  4. Verdict-level rules (per Level):
-//       Segment:
-//         verdict=accept    → ActionNoop("verdict_accept")
-//         verdict=retry     → ActionSegmentRetry (capped) → ActionEscalateToThinking → ActionAcceptWithBorrow
-//         verdict=split     → ActionSegmentSplit (MVP: marker only)
-//       Chapter:
-//         verdict=chapter_ready       → ActionNoop("verdict_chapter_ready")
-//         verdict=needs_revision      → ActionReviseWeakestSegments (capped) → ActionEscalateChapter
-//         verdict=needs_major_rework  → ActionEscalateChapter
-//       Episode:
-//         verdict=production_ready                      → ActionNoop("verdict_production_ready")
-//         verdict=needs_minor_revision + terminology<.85 → ActionBroadcastGlossary (capped) → ActionEscalateHumanReview
-//         verdict=needs_minor_revision (other axes)      → ActionNoop("verdict_minor_no_actionable_axis")
-//         verdict=needs_major_revision OR narrative<.8   → ActionEscalateHumanReview
+//     Segment:
+//     verdict=accept -> ActionNoop("verdict_accept")
+//     verdict=retry  -> ActionSegmentRetry (capped) -> ActionEscalateToThinking -> ActionAcceptWithBorrow
+//     verdict=split  -> ActionSegmentSplit (MVP: marker only)
+//     Chapter:
+//     verdict=chapter_ready      -> ActionNoop("verdict_chapter_ready")
+//     verdict=needs_revision     -> ActionReviseWeakestSegments (capped) -> ActionNoop
+//     verdict=needs_major_rework -> ActionReviseWeakestSegments when targets exist; otherwise ActionNoop
+//     Episode:
+//     verdict=production_ready                         -> ActionNoop("verdict_production_ready")
+//     verdict=needs_minor_revision + terminology < .85 -> ActionBroadcastGlossary once, then ActionNoop
+//     verdict=needs_minor_revision (other axes)         -> ActionNoop("verdict_minor_no_actionable_axis")
+//     verdict=needs_major_revision OR narrative < .8    -> ActionBroadcastGlossary once, then ActionNoop
 //
 // Caller responsibilities (Engine, not Decide):
 //   - Compute AccumulatedCostUSD from History before calling.
@@ -35,7 +35,7 @@ import (
 //     dispatch the side effect (RetryJob / EnqueueEpisodeStage / set
 //     Episode.ReworkStatus) as appropriate.
 func Decide(in DecideInput) Action {
-	// 1. Feature flag check — if the caller's level isn't covered by the
+	// 1. Feature flag check: if the caller's level isn't covered by the
 	//    operator-configured threshold, short-circuit with no work. We
 	//    still want the attempt persisted (caller decides) so observability
 	//    captures "we saw the verdict but were told to ignore it".
@@ -50,9 +50,9 @@ func Decide(in DecideInput) Action {
 		}
 	}
 
-	// 2. Cost ceiling — once an episode burns more than the budget, we
-	//    halt all further auto-rework regardless of verdict. Manual
-	//    intervention required.
+	// 2. Cost ceiling: once an episode burns more than the budget, halt
+	//    all further auto-rework regardless of verdict. This is a budget
+	//    guard, not a quality-review handoff.
 	if in.EpisodeReworkCostCeilingUSD > 0 && in.AccumulatedCostUSD > in.EpisodeReworkCostCeilingUSD {
 		return Action{
 			Type:         ActionHaltCost,
@@ -60,13 +60,13 @@ func Decide(in DecideInput) Action {
 			JobID:        in.JobID,
 			EpisodeID:    in.EpisodeID,
 			ReworkStatus: "halted_cost",
-			Note:         "rework engine refused dispatch because per-episode cost ceiling was exceeded; operator review required",
+			Note:         "rework engine refused dispatch because per-episode cost ceiling was exceeded",
 		}
 	}
 
-	// 3. Oscillation detection — same target + same verdict consecutive
+	// 3. Oscillation detection: same target + same verdict consecutive
 	//    in history >= threshold means our previous rework decisions are
-	//    not converging. Escalate to a manual review path.
+	//    not converging. Stop this automatic pass and record an audit row.
 	threshold := in.OscillationThreshold
 	if threshold <= 0 {
 		threshold = 2 // safety default
@@ -74,13 +74,12 @@ func Decide(in DecideInput) Action {
 	consecutive := CountConsecutiveSame(in.History, in.Level, in.TargetID, in.Verdict)
 	if consecutive >= threshold {
 		return Action{
-			Type:         ActionEscalateOscillation,
-			SkipReason:   fmt.Sprintf("oscillation_%d_consecutive_same_verdict", consecutive),
-			SegmentIDs:   nil,
-			JobID:        in.JobID,
-			EpisodeID:    in.EpisodeID,
-			ReworkStatus: "escalated_oscillation",
-			Note:         fmt.Sprintf("level=%s target=%d verdict=%s oscillated %d times — operator review required", in.Level, in.TargetID, in.Verdict, consecutive),
+			Type:       ActionEscalateOscillation,
+			SkipReason: fmt.Sprintf("oscillation_%d_consecutive_same_verdict", consecutive),
+			SegmentIDs: nil,
+			JobID:      in.JobID,
+			EpisodeID:  in.EpisodeID,
+			Note:       fmt.Sprintf("level=%s target=%d verdict=%s oscillated %d times; auto-rework is stopped for this pass", in.Level, in.TargetID, in.Verdict, consecutive),
 		}
 	}
 
@@ -100,7 +99,7 @@ func Decide(in DecideInput) Action {
 		original := in.Verdict
 		in.Verdict = "retry"
 		// Stash the override reason in a dedicated note prefix so the
-		// downstream Action carries it through to operator logs.
+		// downstream Action carries it through to automation logs.
 		ov := decideSegment(in)
 		ov.SkipReason = fmt.Sprintf("drift_override (orig_verdict=%s drift_sec=%+.2f over_limit=%.2f under_limit=%.2f)",
 			original, in.DriftSec, over, under)
@@ -266,22 +265,20 @@ func decideChapter(in DecideInput) Action {
 		}
 		if priorRounds >= maxRounds {
 			return Action{
-				Type:         ActionEscalateChapter,
-				JobID:        in.TargetID,
-				EpisodeID:    in.EpisodeID,
-				ReworkStatus: "escalated_chapter",
-				SkipReason:   fmt.Sprintf("max_chapter_rounds_%d_reached", maxRounds),
-				Note:         fmt.Sprintf("chapter job %d still needs_revision after %d rounds — operator review required", in.TargetID, priorRounds),
+				Type:       ActionNoop,
+				JobID:      in.TargetID,
+				EpisodeID:  in.EpisodeID,
+				SkipReason: fmt.Sprintf("max_chapter_rounds_%d_reached", maxRounds),
+				Note:       fmt.Sprintf("chapter job %d still needs_revision after %d rounds; no further automatic target is available", in.TargetID, priorRounds),
 			}
 		}
 		if len(in.WeakestSegmentIDs) == 0 {
 			return Action{
-				Type:         ActionEscalateChapter,
-				JobID:        in.TargetID,
-				EpisodeID:    in.EpisodeID,
-				ReworkStatus: "escalated_chapter",
-				SkipReason:   "no_weakest_segments_resolved",
-				Note:         fmt.Sprintf("chapter judge verdict=needs_revision but no weakest segment IDs were resolvable; escalating chapter %d", in.TargetID),
+				Type:       ActionNoop,
+				JobID:      in.TargetID,
+				EpisodeID:  in.EpisodeID,
+				SkipReason: "no_weakest_segments_resolved",
+				Note:       fmt.Sprintf("chapter judge verdict=needs_revision but no weakest segment IDs were resolvable for chapter %d", in.TargetID),
 			}
 		}
 		return Action{
@@ -294,13 +291,23 @@ func decideChapter(in DecideInput) Action {
 			Note:               fmt.Sprintf("revising %d weakest segments on chapter job %d (round %d/%d, score=%.2f)", len(in.WeakestSegmentIDs), in.TargetID, priorRounds+1, maxRounds, in.Score),
 		}
 	case "needs_major_rework":
+		if len(in.WeakestSegmentIDs) > 0 {
+			return Action{
+				Type:               ActionReviseWeakestSegments,
+				SegmentIDs:         in.WeakestSegmentIDs,
+				JobID:              in.TargetID,
+				EpisodeID:          in.EpisodeID,
+				Stage:              "translate",
+				DriftThresholdHint: 0.05,
+				Note:               fmt.Sprintf("chapter job %d needs_major_rework; revising %d weakest segments automatically (score=%.2f)", in.TargetID, len(in.WeakestSegmentIDs), in.Score),
+			}
+		}
 		return Action{
-			Type:         ActionEscalateChapter,
-			JobID:        in.TargetID,
-			EpisodeID:    in.EpisodeID,
-			ReworkStatus: "escalated_chapter",
-			SkipReason:   "verdict_needs_major_rework",
-			Note:         fmt.Sprintf("chapter job %d verdict=needs_major_rework score=%.2f — operator review required", in.TargetID, in.Score),
+			Type:       ActionNoop,
+			JobID:      in.TargetID,
+			EpisodeID:  in.EpisodeID,
+			SkipReason: "verdict_needs_major_rework_no_weakest_segments",
+			Note:       fmt.Sprintf("chapter job %d verdict=needs_major_rework score=%.2f but no automatic segment target was resolved", in.TargetID, in.Score),
 		}
 	default:
 		return Action{
@@ -323,9 +330,8 @@ func decideEpisode(in DecideInput) Action {
 			Note:       fmt.Sprintf("episode %d accepted (score=%.2f)", in.EpisodeID, in.Score),
 		}
 	case "needs_minor_revision":
-		// Sub-rule A: cross-chapter terminology drift → broadcast glossary.
-		// Sub-rule B: nothing actionable at the cross-chapter level → noop
-		// (operator may still drill into chapters).
+		// Sub-rule A: cross-chapter terminology drift -> broadcast glossary.
+		// Sub-rule B: nothing actionable at the cross-chapter level -> noop.
 		const terminologyDriftThreshold = 0.85
 		if in.TerminologyConsistency > 0 && in.TerminologyConsistency < terminologyDriftThreshold {
 			// Cap broadcast attempts: once per episode pass.
@@ -337,11 +343,10 @@ func decideEpisode(in DecideInput) Action {
 			}
 			if priorBroadcasts >= 1 {
 				return Action{
-					Type:         ActionEscalateHumanReview,
-					EpisodeID:    in.EpisodeID,
-					ReworkStatus: "escalated_human",
-					SkipReason:   "broadcast_glossary_already_attempted",
-					Note:         fmt.Sprintf("episode %d still has terminology drift (terminology=%.2f) after a glossary broadcast — operator review required", in.EpisodeID, in.TerminologyConsistency),
+					Type:       ActionNoop,
+					EpisodeID:  in.EpisodeID,
+					SkipReason: "broadcast_glossary_already_attempted",
+					Note:       fmt.Sprintf("episode %d still has terminology drift (terminology=%.2f) after a glossary broadcast; no further automatic episode-level action is available", in.EpisodeID, in.TerminologyConsistency),
 				}
 			}
 			return Action{
@@ -359,24 +364,54 @@ func decideEpisode(in DecideInput) Action {
 			Note:       fmt.Sprintf("episode %d minor revision but no axis crossed broadcast threshold (terminology=%.2f narrative=%.2f)", in.EpisodeID, in.TerminologyConsistency, in.NarrativeCoherence),
 		}
 	case "needs_major_revision":
+		priorBroadcasts := 0
+		for _, h := range in.History {
+			if h.Level == LevelEpisode && h.TargetID == in.EpisodeID && h.ActionType == ActionBroadcastGlossary {
+				priorBroadcasts++
+			}
+		}
+		if priorBroadcasts == 0 {
+			return Action{
+				Type:         ActionBroadcastGlossary,
+				EpisodeID:    in.EpisodeID,
+				EpisodeStage: "ep_glossary_broadcast",
+				ReworkStatus: "in_progress",
+				Note:         fmt.Sprintf("episode %d verdict=needs_major_revision score=%.2f; dispatching glossary broadcast as automatic LLM rework", in.EpisodeID, in.Score),
+			}
+		}
 		return Action{
-			Type:         ActionEscalateHumanReview,
-			EpisodeID:    in.EpisodeID,
-			ReworkStatus: "escalated_human",
-			SkipReason:   "verdict_needs_major_revision",
-			Note:         fmt.Sprintf("episode %d verdict=needs_major_revision score=%.2f — operator review required", in.EpisodeID, in.Score),
+			Type:       ActionNoop,
+			EpisodeID:  in.EpisodeID,
+			SkipReason: "verdict_needs_major_revision_auto_rework_exhausted",
+			Note:       fmt.Sprintf("episode %d verdict=needs_major_revision score=%.2f after glossary broadcast; no further automatic episode-level action is available", in.EpisodeID, in.Score),
 		}
 	default:
 		// Defensive: any other verdict (including "" if the LLM stripped
-		// it out) escalates rather than silently dropping the alert.
+		// it out) tries the remaining automatic episode-level repair before
+		// settling into a no-op audit row.
 		const narrativeFloor = 0.8
 		if in.NarrativeCoherence > 0 && in.NarrativeCoherence < narrativeFloor {
+			priorBroadcasts := 0
+			for _, h := range in.History {
+				if h.Level == LevelEpisode && h.TargetID == in.EpisodeID && h.ActionType == ActionBroadcastGlossary {
+					priorBroadcasts++
+				}
+			}
+			if priorBroadcasts == 0 {
+				return Action{
+					Type:         ActionBroadcastGlossary,
+					EpisodeID:    in.EpisodeID,
+					EpisodeStage: "ep_glossary_broadcast",
+					ReworkStatus: "in_progress",
+					SkipReason:   fmt.Sprintf("narrative_coherence_below_%.2f", narrativeFloor),
+					Note:         fmt.Sprintf("episode %d narrative_coherence=%.2f below floor; dispatching glossary broadcast as automatic LLM rework", in.EpisodeID, in.NarrativeCoherence),
+				}
+			}
 			return Action{
-				Type:         ActionEscalateHumanReview,
-				EpisodeID:    in.EpisodeID,
-				ReworkStatus: "escalated_human",
-				SkipReason:   fmt.Sprintf("narrative_coherence_below_%.2f", narrativeFloor),
-				Note:         fmt.Sprintf("episode %d narrative_coherence=%.2f below floor — operator review required", in.EpisodeID, in.NarrativeCoherence),
+				Type:       ActionNoop,
+				EpisodeID:  in.EpisodeID,
+				SkipReason: fmt.Sprintf("narrative_coherence_below_%.2f_auto_rework_exhausted", narrativeFloor),
+				Note:       fmt.Sprintf("episode %d narrative_coherence=%.2f below floor after glossary broadcast; no further automatic episode-level action is available", in.EpisodeID, in.NarrativeCoherence),
 			}
 		}
 		return Action{

@@ -110,6 +110,41 @@ func TestBuildChaptersManifest_OneChapterEpisode(t *testing.T) {
 	}
 }
 
+func TestEpisodeMergeTargetDuration_PrefersEpisodeDuration(t *testing.T) {
+	ep := &models.Episode{DurationMs: 12345}
+	chapters := []models.Job{
+		{ChapterStartMs: 0, ChapterEndMs: 1000},
+		{ChapterStartMs: 1000, ChapterEndMs: 2000},
+	}
+	if got := episodeMergeTargetDurationMs(ep, chapters); got != 12345 {
+		t.Fatalf("target duration should prefer episode duration; got %d", got)
+	}
+}
+
+func TestEpisodeMergeTargetDuration_FallsBackToChapterEnd(t *testing.T) {
+	chapters := []models.Job{
+		{ChapterStartMs: 0, ChapterEndMs: 1000},
+		{ChapterStartMs: 1000, ChapterEndMs: 2300},
+	}
+	if got := episodeMergeTargetDurationMs(&models.Episode{}, chapters); got != 2300 {
+		t.Fatalf("target duration should fall back to max chapter end; got %d", got)
+	}
+}
+
+func TestChapterMergeTargetDuration_UsesChapterRange(t *testing.T) {
+	job := &models.Job{ChapterStartMs: 500, ChapterEndMs: 1750}
+	if got := chapterMergeTargetDurationMs(job); got != 1250 {
+		t.Fatalf("chapter target duration mismatch: got %d", got)
+	}
+}
+
+func TestChapterMergeTargetDuration_StandaloneJobHasNoOverride(t *testing.T) {
+	job := &models.Job{}
+	if got := chapterMergeTargetDurationMs(job); got != 0 {
+		t.Fatalf("standalone job should not force target duration; got %d", got)
+	}
+}
+
 func TestBuildChaptersManifest_AppendsMasterStatsAtFlatKey(t *testing.T) {
 	ep := &models.Episode{Name: "Ep 2"}
 	ep.ID = 200
@@ -143,5 +178,46 @@ func TestBuildChaptersManifest_PreservesFlatChapterStats(t *testing.T) {
 	m := buildChaptersManifest(ep, chapters, "out", nil)
 	if _, ok := m.LoudnormStats["vp0_ch01"]; !ok {
 		t.Fatalf("vp0_ch01 chapter stats stripped during manifest build: %#v", m.LoudnormStats)
+	}
+}
+
+func TestEpisodeMergeEnqueueReason_TerminalEpisodeRebuild(t *testing.T) {
+	tests := []struct {
+		name   string
+		status models.EpisodeStatus
+		want   string
+	}{
+		{
+			name:   "completed episode refresh",
+			status: models.EpisodeStatusCompleted,
+			want:   "chapter_merge_rebuilt_terminal_episode",
+		},
+		{
+			name:   "failed episode refresh",
+			status: models.EpisodeStatusFailed,
+			want:   "chapter_merge_rebuilt_terminal_episode",
+		},
+		{
+			name:   "active episode first merge",
+			status: models.EpisodeStatusRunning,
+			want:   "all_chapters_completed",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := episodeMergeEnqueueReason(tc.status); got != tc.want {
+				t.Fatalf("episodeMergeEnqueueReason(%q): got %q, want %q", tc.status, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestEpisodeMergeShouldUpdateCompletedStatus_SkipsAlreadyCompleted(t *testing.T) {
+	if episodeMergeShouldUpdateCompletedStatus(models.EpisodeStatusCompleted) {
+		t.Fatal("completed episode refresh should not issue completed -> completed status update")
+	}
+	if !episodeMergeShouldUpdateCompletedStatus(models.EpisodeStatusRunning) {
+		t.Fatal("active episode merge should still mark episode completed")
 	}
 }

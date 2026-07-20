@@ -72,6 +72,26 @@ type Decision struct {
 	// models in parallel; "thinking" is a single-model concept that
 	// would only confuse the fan-out cost accounting).
 	UseEnsemble bool
+
+	// HardCapExceeded (OPT-201-followup-2) is set on DecisionAccept
+	// decisions when the accepted observation's absolute drift exceeded
+	// Config.HardMaxOverDriftSec / HardMaxUnderDriftSec. This only
+	// happens on the explicit "escape" branches (no_more_attempts /
+	// clip_overflow / over_short_gap_stuck / retranslation_disabled /
+	// retranslate_failed) because the regular acceptance branches
+	// (within_threshold / borrow_from_gap / judge_veto_drift) refuse
+	// to accept under cap violation and force another retranslate.
+	//
+	// emit() reads this field to write the structured log field
+	// hard_cap_exceeded=true and to increment
+	// holodub_hard_drift_cap_violations_total{direction,reason}.
+	HardCapExceeded bool
+
+	// HardCapDirection is "over" or "under" when HardCapExceeded is
+	// true, empty otherwise. Mirrors the sign of OverflowMs at the
+	// time of the cap check; "over" = audio exceeded the slot,
+	// "under" = audio left trailing silence.
+	HardCapDirection string
 }
 
 // Observation is what one Synthesize call produced. Computed from the
@@ -126,10 +146,15 @@ type State struct {
 	Text string
 
 	// BestText / BestActualMs / BestAbsDrift track the lowest-drift
-	// attempt seen so far. Used by ShouldRestoreBest after the loop ends.
-	BestText     string
-	BestActualMs int64
-	BestAbsDrift float64
+	// attempt seen so far. BestAudioRelPath points at the actual audio
+	// file from that attempt; restoring by path avoids re-synthesizing a
+	// non-deterministic TTS sample and accidentally making it worse.
+	BestText                 string
+	BestAudioRelPath         string
+	BestActualMs             int64
+	BestAbsDrift             float64
+	BestDiagnostics          []string
+	BestLoraCandidateRuntime map[string]any
 
 	// History is the sequence of (text, actualSec) pairs the LLM has
 	// already produced and we've already synthesized. Threaded into
@@ -289,6 +314,53 @@ type Config struct {
 	// pipeline code can flip it for chapter-opener / chapter-closer
 	// segments where translation quality matters most.
 	EnsembleImportant bool
+
+	// HardMaxUnderDriftSec / HardMaxOverDriftSec (OPT-201-followup-2)
+	// are absolute drift caps in seconds. They are layered ON TOP of
+	// the percentage-based DriftThreshold / MaxBorrowDriftPct /
+	// AdaptiveMaxAcceptableDrift gates; every acceptance path in
+	// Decide() must satisfy BOTH the percentage gate AND the absolute
+	// cap to ship the audio.
+	//
+	// Asymmetric defaults (when wired from config: 0.7 / 0.3):
+	//
+	//   - over-run cap (0.3s by default): clipping audio that exceeds
+	//     the segment slot is audible. We want a hard ceiling so the
+	//     merge stage never has to clip more than 0.3s, regardless of
+	//     how long the source segment is.
+	//
+	//   - under-run cap (0.7s by default): trailing silence is less
+	//     audible than clipped tails so we allow more headroom here.
+	//     Past 0.7s the gap becomes obvious; before that it usually
+	//     blends with natural breathing pauses.
+	//
+	// Set EITHER value to 0 to disable that direction's cap (pure
+	// percentage behaviour for that direction). Disabling both makes
+	// the agent behave exactly as before OPT-201-followup-2.
+	//
+	// Escape paths (no_more_attempts, clip_overflow, over_short_gap_stuck,
+	// retranslation_disabled, retranslate_failed) still accept on cap
+	// violation but the agent emits an observability counter
+	// (holodub_hard_drift_cap_violations_total) and a structured log
+	// field (hard_cap_exceeded=true, hard_cap_direction=over|under)
+	// so operators can see how often the cap was bypassed by an escape.
+	HardMaxUnderDriftSec float64
+	HardMaxOverDriftSec  float64
+
+	// RejectHardCapEscape turns the marked escape above into a hard error
+	// at the end of the segment. This is intended for production-quality
+	// course dubbing runs where a clipped tail or dragged timing fit should
+	// stop the run and enter review/training, not silently ship with only
+	// observability metadata.
+	RejectHardCapEscape bool
+
+	// MaxImpliedFitDelta is the largest tempo change that would be needed
+	// to force the accepted audio onto the target slot. The main TTS path
+	// does not apply this post-fit, but treating the implied value as a
+	// gate catches the same audible failure mode: a segment only "passes"
+	// because speech has been stretched or compressed too far. A value <= 0
+	// disables this audit for legacy tests.
+	MaxImpliedFitDelta float64
 
 	// EnsembleMaxPerSegment is the per-segment ensemble call cap.
 	// Default 2 (raised from 1 in OPT-202-followup-1, B3). One ensemble

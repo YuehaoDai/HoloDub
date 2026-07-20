@@ -30,28 +30,48 @@ type realDubbingTools struct {
 }
 
 func (t *realDubbingTools) Synthesize(ctx context.Context, args agents.TTSArgs) (agents.TTSResult, error) {
-	resp, err := t.svc.ml.RunTTS(ctx, ml.TTSRequest{
+	spoken := spokenTextForTTS(args.Text)
+	args.Text = spoken.Text
+	dubbingMeta := t.svc.attachTemporalPlanToDubbingMeta(
+		args.DubbingMeta,
+		args.Text,
+		args.TargetLanguage,
+		args.TargetDurationSec,
+		args.CharsPerSecHint,
+		args.JobID,
+		args.SegmentID,
+	)
+	dubbingMeta = t.svc.maybeEscalateLoraCandidateForRetry(
+		dubbingMeta,
+		args.Text,
+		args.TargetDurationSec,
+		args.Attempt,
+	)
+	dubbingMeta = applyLoraCandidateAttemptLimit(dubbingMeta, args.PriorLoraCandidateCount)
+	resp, runtime, err := t.svc.runTTSWithLoraCandidateFallback(ctx, ml.TTSRequest{
 		Text:              args.Text,
+		TargetLanguage:    args.TargetLanguage,
 		TargetDurationSec: args.TargetDurationSec,
 		MaxAllowedSec:     args.MaxAllowedSec,
 		VoiceConfig:       args.VoiceConfig,
 		OutputRelPath:     args.OutputRelPath,
 		PrevActualSec:     args.PrevActualSec,
 		PrevTextChars:     args.PrevTextChars,
-		DubbingMeta:       args.DubbingMeta,
+		DubbingMeta:       dubbingMeta,
 	})
 	if err != nil {
 		return agents.TTSResult{}, err
 	}
 	return agents.TTSResult{
-		AudioRelPath:     resp.AudioRelPath,
-		ActualDurationMs: resp.ActualDurationMs,
-		Diagnostics:      resp.Diagnostics,
+		AudioRelPath:         resp.AudioRelPath,
+		ActualDurationMs:     resp.ActualDurationMs,
+		Diagnostics:          resp.Diagnostics,
+		LoraCandidateRuntime: runtime,
 	}, nil
 }
 
 func (t *realDubbingTools) RetranslateWithConstraint(ctx context.Context, args agents.RetranslateArgs) (agents.RetranslateResult, error) {
-	newText, err := t.svc.llm.RetranslateWithConstraint(
+	newText, err := t.svc.llm.RetranslateWithConstraintHint(
 		ctx,
 		args.SourceLanguage, args.TargetLanguage,
 		args.SourceText, args.CurrentTrans,
@@ -64,6 +84,7 @@ func (t *realDubbingTools) RetranslateWithConstraint(ctx context.Context, args a
 		args.ContextBefore,
 		args.NextSourceText,
 		args.TranslationSummary,
+		args.CompressionHint,
 	)
 	if err != nil {
 		return agents.RetranslateResult{}, err
@@ -99,6 +120,7 @@ func (t *realDubbingTools) RetranslateEnsemble(ctx context.Context, args agents.
 		NextSourceText:      args.NextSourceText,
 		TranslationSummary:  args.TranslationSummary,
 		EpisodeSummary:      args.TranslationSummary,
+		CompressionHint:     args.CompressionHint,
 	}, t.svc.cfg.EnsembleModels, t.svc.cfg.EnsembleJudgeModel)
 	if err != nil {
 		return agents.EnsembleResult{}, err
@@ -159,10 +181,11 @@ func (s *Service) runSegmentAgentV2(ctx context.Context, job *models.Job, segmen
 func (s *Service) runSegmentAgentV2WithHint(ctx context.Context, job *models.Job, segments []models.Segment, idx int, isInitial bool, translationSummary string, hint *models.ReworkHint) error {
 	seg := &segments[idx]
 
-	voiceConfig, profile, err := s.resolveVoiceConfigForSegment(ctx, job, *seg)
+	voiceConfig, profile, voiceSource, err := s.resolveVoiceConfigForSegment(ctx, job, *seg)
 	if err != nil {
 		return err
 	}
+	charsPerSecHint := s.charsPerSecHintForTTS(job.TargetLanguage, profile)
 
 	targetMs := seg.DurationMs()
 	targetSec := float64(targetMs) / 1000.0
@@ -248,6 +271,19 @@ func (s *Service) runSegmentAgentV2WithHint(ctx context.Context, job *models.Job
 		EnsembleJudgeScoreTrigger:     0.7,
 		EnsembleMaxPerSegment:         s.cfg.EnsembleMaxPerSegment,
 		EnsembleImportant:             segmentImportant(seg),
+
+		// OPT-201-followup-2: thread absolute drift ceilings into
+		// every Decide() call. The cap participates in every
+		// acceptance branch (within_threshold / borrow_from_gap /
+		// judge_veto_drift) so segments that pass the percentage
+		// gate but exceed the operator's hard target (0.7s under /
+		// 0.3s over by default) are forced into another retranslate.
+		// Set either env to 0 to disable that direction's cap and
+		// fall back to pure percentage behaviour.
+		HardMaxUnderDriftSec: s.cfg.HardMaxUnderDriftSec,
+		HardMaxOverDriftSec:  s.cfg.HardMaxOverDriftSec,
+		RejectHardCapEscape:  s.cfg.SegmentAgentRejectHardCapEscape,
+		MaxImpliedFitDelta:   s.cfg.SegmentAgentMaxFitDelta,
 	}
 
 	// Local context window (prev 2 segments) and forward hint (next 1 source).
@@ -303,22 +339,34 @@ func (s *Service) runSegmentAgentV2WithHint(ctx context.Context, job *models.Job
 	)
 
 	out, err := agent.Run(ctx, agents.RunInput{
-		JobID:              job.ID,
-		SegmentID:          seg.ID,
-		SourceLanguage:     job.SourceLanguage,
-		TargetLanguage:     job.TargetLanguage,
-		SourceText:         seg.SourceText,
-		InitialText:        text,
-		VoiceConfig:        voiceConfig,
-		OutputRelPath:      outputRelPath,
-		MaxAllowedSec:      maxAllowedSec,
-		ContextBefore:      contextBefore,
-		NextSourceText:     nextSrcText,
-		TranslationSummary: translationSummary,
-		EpisodeSummary:     job.TranslationSummary,
-		DubbingMeta:        extractDubbingMeta(seg),
+		JobID:                   job.ID,
+		SegmentID:               seg.ID,
+		SourceLanguage:          job.SourceLanguage,
+		TargetLanguage:          job.TargetLanguage,
+		SourceText:              seg.SourceText,
+		InitialText:             text,
+		CharsPerSecHint:         charsPerSecHint,
+		PriorLoraCandidateCount: loraCandidateRuntimeCountFromSegment(seg),
+		VoiceConfig:             voiceConfig,
+		OutputRelPath:           outputRelPath,
+		MaxAllowedSec:           maxAllowedSec,
+		ContextBefore:           contextBefore,
+		NextSourceText:          nextSrcText,
+		TranslationSummary:      translationSummary,
+		EpisodeSummary:          job.TranslationSummary,
+		DubbingMeta:             extractDubbingMeta(seg),
 	}, cfg)
 	if err != nil {
+		updates := buildSegmentAgentFailureMeta(out, targetMs, s.cfg.SegmentAgentMaxFitDelta, err)
+		if len(out.FinalLoraCandidateRuntime) > 0 {
+			updates[ttsLoraCandidateRuntimeMetaKey] = out.FinalLoraCandidateRuntime
+		}
+		applySegmentMetaUpdates(seg, updates)
+		if saveErr := s.store.UpdateSegmentMeta(ctx, seg.ID, updates); saveErr != nil {
+			slog.Warn("segment_agent: failed to persist failure meta",
+				"job_id", job.ID, "segment_id", seg.ID, "error", saveErr,
+			)
+		}
 		return fmt.Errorf("tts segment %d (agent): %w", seg.ID, err)
 	}
 
@@ -332,7 +380,15 @@ func (s *Service) runSegmentAgentV2WithHint(ctx context.Context, job *models.Job
 	seg.TargetText = out.FinalText
 	seg.TTSAudioRelPath = out.FinalAudioRelPath
 	seg.TTSDurationMs = out.FinalActualMs
+	if err := s.auditFinalSynthFitBeforePersist(ctx, seg, targetMs, s.cfg.SegmentAgentMaxFitDelta, "segment_agent"); err != nil {
+		return fmt.Errorf("tts segment %d (agent): %w", seg.ID, err)
+	}
 	seg.Status = models.SegmentStatusSynthesized
+	if len(out.FinalLoraCandidateRuntime) > 0 {
+		applyLoraCandidateRuntime(seg, out.FinalLoraCandidateRuntime)
+	}
+	applySegmentAgentDecisionMeta(seg, out, targetMs, s.cfg.SegmentAgentMaxFitDelta)
+	s.persistTTSProvenance(ctx, seg, seg.TargetText, targetSec, voiceSource, voiceConfig)
 
 	if saveErr := s.store.UpdateSegmentTranslations(ctx, []models.Segment{*seg}); saveErr != nil {
 		slog.Warn("segment_agent: failed to persist final translation",
@@ -379,6 +435,100 @@ func extractDubbingMeta(seg *models.Segment) map[string]any {
 	return out
 }
 
+func applySegmentAgentDecisionMeta(seg *models.Segment, out agents.RunOutput, targetMs int64, maxImpliedFitDelta float64) {
+	if seg == nil {
+		return
+	}
+	finalDriftMs := out.FinalActualMs - targetMs
+	finalImpliedFitDelta := 0.0
+	if targetMs > 0 {
+		finalImpliedFitDelta = absFloat64(float64(out.FinalActualMs)/float64(targetMs) - 1.0)
+	}
+	meta := map[string]any{
+		"schema_version":                  "holodub.tts_agent.v1",
+		"final_decision":                  out.FinalDecision.Kind.String(),
+		"final_reason":                    out.FinalDecision.Reason,
+		"hard_cap_exceeded":               out.FinalDecision.HardCapExceeded,
+		"hard_cap_direction":              out.FinalDecision.HardCapDirection,
+		"final_actual_ms":                 out.FinalActualMs,
+		"target_ms":                       targetMs,
+		"final_drift_ms":                  finalDriftMs,
+		"final_abs_drift_ms":              absInt64(finalDriftMs),
+		"final_implied_fit_delta":         finalImpliedFitDelta,
+		"max_implied_fit_delta":           maxImpliedFitDelta,
+		"attempt":                         out.State.Attempt,
+		"attempts_without_improvement":    out.State.AttemptsWithoutImprovement,
+		"restored_from_best":              out.RestoredFromBest,
+		"restored_best_hard_cap_exceeded": out.RestoredBestHardCapExceeded,
+	}
+	if out.RestoredBestHardCapExceeded {
+		meta["restored_best_hard_cap_direction"] = out.RestoredBestHardCapDirection
+	}
+	if out.State.BestAbsDrift < 1e300 {
+		meta["best_abs_drift_ms"] = int64(out.State.BestAbsDrift * 1000)
+	}
+	if len(out.FinalLoraCandidateRuntime) > 0 {
+		meta["lora_selected_family"] = out.FinalLoraCandidateRuntime["selected_family"]
+		meta["lora_audio_selection_mode"] = out.FinalLoraCandidateRuntime["audio_selection_mode"]
+		meta["lora_fallback_reason"] = out.FinalLoraCandidateRuntime["fallback_reason"]
+	}
+	if seg.Meta == nil {
+		seg.Meta = map[string]any{}
+	}
+	seg.Meta["tts_agent"] = meta
+	delete(seg.Meta, "tts_agent_failure")
+}
+
+func buildSegmentAgentFailureMeta(out agents.RunOutput, targetMs int64, maxImpliedFitDelta float64, runErr error) map[string]any {
+	finalDriftMs := out.FinalActualMs - targetMs
+	finalImpliedFitDelta := 0.0
+	if targetMs > 0 && out.FinalActualMs > 0 {
+		finalImpliedFitDelta = absFloat64(float64(out.FinalActualMs)/float64(targetMs) - 1.0)
+	}
+	meta := map[string]any{
+		"schema_version":                  "holodub.tts_agent_failure.v1",
+		"error":                           "",
+		"output_not_persisted":            true,
+		"final_decision":                  out.FinalDecision.Kind.String(),
+		"final_reason":                    out.FinalDecision.Reason,
+		"hard_cap_exceeded":               out.FinalDecision.HardCapExceeded,
+		"hard_cap_direction":              out.FinalDecision.HardCapDirection,
+		"final_actual_ms":                 out.FinalActualMs,
+		"target_ms":                       targetMs,
+		"final_drift_ms":                  finalDriftMs,
+		"final_abs_drift_ms":              absInt64(finalDriftMs),
+		"final_implied_fit_delta":         finalImpliedFitDelta,
+		"max_implied_fit_delta":           maxImpliedFitDelta,
+		"attempt":                         out.State.Attempt,
+		"rejected_output_relpath":         out.FinalAudioRelPath,
+		"restored_from_best":              out.RestoredFromBest,
+		"restored_best_hard_cap_exceeded": out.RestoredBestHardCapExceeded,
+	}
+	if runErr != nil {
+		meta["error"] = runErr.Error()
+	}
+	if len(out.FinalLoraCandidateRuntime) > 0 {
+		meta["lora_selected_family"] = out.FinalLoraCandidateRuntime["selected_family"]
+		meta["lora_audio_selection_mode"] = out.FinalLoraCandidateRuntime["audio_selection_mode"]
+		meta["lora_fallback_reason"] = out.FinalLoraCandidateRuntime["fallback_reason"]
+	}
+	return map[string]any{"tts_agent_failure": meta}
+}
+
+func absInt64(v int64) int64 {
+	if v < 0 {
+		return -v
+	}
+	return v
+}
+
+func absFloat64(v float64) float64 {
+	if v < 0 {
+		return -v
+	}
+	return v
+}
+
 // segmentImportant reads seg.Meta["important"] and returns true when
 // it is the boolean true OR the string "true". Anything else (missing,
 // false, non-bool) returns false. The lenient string handling lets
@@ -411,23 +561,64 @@ func segmentImportant(seg *models.Segment) bool {
 // the voice profile + build the voice_config map. Pulled out so the
 // resolution logic stays in one place — diverging copies have caused
 // production bugs in the past (see lessons-learned.mdc#1).
-func (s *Service) resolveVoiceConfigForSegment(ctx context.Context, job *models.Job, seg models.Segment) (map[string]any, *models.VoiceProfile, error) {
+func (s *Service) resolveVoiceConfigForSegment(ctx context.Context, job *models.Job, seg models.Segment) (map[string]any, *models.VoiceProfile, string, error) {
 	voiceConfig := map[string]any{}
-	profile, err := s.store.ResolveVoiceProfileForSegment(ctx, job.ID, seg)
+	var jobID uint
+	if job != nil {
+		jobID = job.ID
+	}
+	profile, err := s.store.ResolveVoiceProfileForSegment(ctx, jobID, seg)
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, nil, fmt.Errorf("resolve voice profile for segment %d: %w", seg.ID, err)
+		return nil, nil, "", fmt.Errorf("resolve voice profile for segment %d: %w", seg.ID, err)
 	}
 	if profile != nil {
 		voiceConfig, err = buildVoiceConfig(*profile)
 		if err != nil {
-			return nil, nil, fmt.Errorf("build voice config for segment %d: %w", seg.ID, err)
+			return nil, nil, "", fmt.Errorf("build voice config for segment %d: %w", seg.ID, err)
 		}
-	} else if job.VocalsRelPath != "" {
+		return voiceConfig, profile, voiceConfigSourceProfile, nil
+	}
+	if job != nil && job.EpisodeID != 0 {
+		chapters, err := s.store.GetEpisodeChapters(ctx, job.EpisodeID)
+		if err != nil {
+			slog.Warn("resolve episode vocals fallback failed; trying job vocals",
+				"episode_id", job.EpisodeID,
+				"job_id", jobID,
+				"segment_id", seg.ID,
+				"error", err,
+			)
+		} else {
+			samples := make([]string, 0, len(chapters))
+			seen := map[string]struct{}{}
+			for _, chapter := range chapters {
+				if chapter.VocalsRelPath == "" {
+					continue
+				}
+				if _, ok := seen[chapter.VocalsRelPath]; ok {
+					continue
+				}
+				seen[chapter.VocalsRelPath] = struct{}{}
+				samples = append(samples, chapter.VocalsRelPath)
+			}
+			if len(samples) > 1 {
+				voiceConfig = map[string]any{
+					"sample_relpaths": samples,
+				}
+				return voiceConfig, nil, voiceConfigSourceEpisodeVocals, nil
+			}
+		}
+	}
+	if job != nil && job.VocalsRelPath != "" {
 		voiceConfig = map[string]any{
 			"sample_relpaths": []string{job.VocalsRelPath},
 		}
+		return voiceConfig, nil, voiceConfigSourceJobVocals, nil
 	}
-	return voiceConfig, profile, nil
+	slog.Warn("tts voice config falling back to ml-service default",
+		"job_id", jobID,
+		"segment_id", seg.ID,
+	)
+	return voiceConfig, nil, voiceConfigSourceGlobalDefault, nil
 }
 
 // translationPersistingTools wraps a real DubbingTools and writes the
@@ -438,14 +629,46 @@ func (s *Service) resolveVoiceConfigForSegment(ctx context.Context, job *models.
 //
 // All other methods delegate transparently to inner.
 type translationPersistingTools struct {
-	inner agents.DubbingTools
-	store *store.Store
-	seg   *models.Segment
-	jobID uint
+	inner                        agents.DubbingTools
+	store                        *store.Store
+	seg                          *models.Segment
+	jobID                        uint
+	lastRealLoraCandidateRuntime map[string]any
 }
 
 func (t *translationPersistingTools) Synthesize(ctx context.Context, args agents.TTSArgs) (agents.TTSResult, error) {
-	return t.inner.Synthesize(ctx, args)
+	res, err := t.inner.Synthesize(ctx, args)
+	if err != nil {
+		return res, err
+	}
+	if t.seg != nil && len(res.LoraCandidateRuntime) > 0 {
+		res.LoraCandidateRuntime = t.withLoraCandidateRuntimeHistory(res.LoraCandidateRuntime)
+		applyLoraCandidateRuntime(t.seg, res.LoraCandidateRuntime)
+		if t.store != nil {
+			if saveErr := t.store.UpdateSegmentMeta(ctx, t.seg.ID, map[string]any{
+				ttsLoraCandidateRuntimeMetaKey: res.LoraCandidateRuntime,
+			}); saveErr != nil {
+				slog.Warn("segment_agent: failed to persist lora candidate runtime",
+					"job_id", t.jobID, "segment_id", t.seg.ID, "error", saveErr,
+				)
+			}
+		}
+	}
+	return res, nil
+}
+
+func (t *translationPersistingTools) withLoraCandidateRuntimeHistory(runtime map[string]any) map[string]any {
+	next := withLoraCandidateRuntimeCount(t.seg, runtime)
+	if next["execution_skipped_by_attempt_limit"] == true {
+		if _, ok := next["previous_candidate_runtime"]; !ok && len(t.lastRealLoraCandidateRuntime) > 0 {
+			next["previous_candidate_runtime"] = copyAnyMap(t.lastRealLoraCandidateRuntime)
+		}
+		return next
+	}
+	if loraCandidateRuntimeHasCandidates(next) {
+		t.lastRealLoraCandidateRuntime = copyAnyMap(next)
+	}
+	return next
 }
 
 func (t *translationPersistingTools) RetranslateWithConstraint(ctx context.Context, args agents.RetranslateArgs) (agents.RetranslateResult, error) {

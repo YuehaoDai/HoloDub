@@ -127,6 +127,31 @@ var (
 		Name: "holodub_llm_recovered_parse_total",
 		Help: "Times a strict tool JSON parse failed but was recovered by a defensive helper.",
 	}, []string{"operation"})
+
+	// OPT-201-followup-2: count of acceptance decisions where the
+	// SegmentAgent shipped audio that exceeded the operator's absolute
+	// drift ceiling (Config.HardMaxUnderDriftSec / HardMaxOverDriftSec).
+	//
+	// This only fires on the escape branches — the regular acceptance
+	// branches (within_threshold / borrow_from_gap / judge_veto_drift)
+	// refuse the accept under cap violation, so a "0" value on this
+	// counter is the steady state when the prompt + retry loop are
+	// converging. A growing value means the agent burned all its
+	// MaxAttempts and still couldn't satisfy the cap — operators
+	// should investigate (lower the percentage gate? raise MaxAttempts?
+	// or relax the cap).
+	//
+	// Labels:
+	//   direction = "over" | "under"
+	//   reason    = "no_more_attempts" | "clip_overflow" |
+	//               "over_short_gap_stuck" | "retranslation_disabled" |
+	//               "retranslate_failed" | "within_threshold"
+	//   (the latter two appear when the cap is violated on a final
+	//    attempt that the agent has no further retry budget for)
+	hardDriftCapViolations = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "holodub_hard_drift_cap_violations_total",
+		Help: "OPT-201-followup-2: SegmentAgent acceptances that shipped audio outside the absolute over/under drift ceilings.",
+	}, []string{"direction", "reason"})
 )
 
 // ObserveExternalCall records the outcome of an outbound HTTP call to a
@@ -199,6 +224,23 @@ func IncLLMRecoveredParse(operation string) {
 		operation = "unknown"
 	}
 	llmRecoveredParseTotal.WithLabelValues(operation).Inc()
+}
+
+// IncHardDriftCapViolation (OPT-201-followup-2) records one accepted
+// SegmentAgent decision that shipped audio outside the operator's
+// absolute drift ceiling. Direction is "over" or "under"; reason is
+// the Decision.Reason that triggered the (escape-path) acceptance.
+//
+// Defensive: empty direction is logged as "unknown" so a buggy caller
+// surfaces in metrics instead of dropping the event silently.
+func IncHardDriftCapViolation(direction, reason string) {
+	if direction == "" {
+		direction = "unknown"
+	}
+	if reason == "" {
+		reason = "unknown"
+	}
+	hardDriftCapViolations.WithLabelValues(direction, reason).Inc()
 }
 
 // AddLLMCostUSD records the estimated dollar cost of one LLM call. usdCost
