@@ -161,6 +161,8 @@ tokens_per_char = max(0.6 * observed + 0.4 * PRIOR_TOKENS_PER_CHAR,
 现状 piecewise 表（23.4375/30/32.5）来自 6-16 probe（无 LoRA adapter 的基座模型）。
 v7 durationpos adapter 改变了速率行为。需要用"adapter 装载态"重跑 probe，
 为候选路由单独维护一张 rate 表（与 default 路由的 constant-50 分开）。
+> **更新（§16/17）**：后证实真问题在 default 路由 constant=50（过产 1.67×），
+> 已直接标定为 30 落地（4e4a5060）。split 表维持不动（生产 0.999×）。
 
 ### F3（中风险，Go）：ensemble 时长感知选择（P1 落地）
 `internal/llm/ensemble.go`：评判前用 `chars/observed_cps` 预测时长，
@@ -417,6 +419,20 @@ v7 durationpos adapter 改变了速率行为。需要用"adapter 装载态"重�
 - **L2（job 364）**：worker 热更新重启导致 tts 任务 context canceled（3/25 已合成保留），
   已用 **F4 advance=true** 恢复重跑（F4 首个实战用例）。
 - **验收覆盖路径 dry-run 验证通过**（dry_run_acceptance_ready）—— 给用户的接受命令可直接用。
+
+## 23. 验证期顺手修复（P6/P4/P8，全部已提交）
+
+| 修复 | commit | 内容 |
+|---|---|---|
+| P6 | f215777a | agent 在无候选执行的 default accept 清除陈旧候选 payload（fit_audit 误报根因） |
+| P4 | ab86fd98 | ASR resume 按 episode_id 隔离（跨集污染根因） |
+| P8 | 84e73035 | 非章节化单章 episode 的 manifest 边界回填（invalid range 修复） |
+
+- P8 暂未部署（避免再次打断 L2 tts），与其余变更一起下轮热更新。
+- L2（job 364）在跑：25 段（avg 22-26s），慢但正常推进。
+- **L3（79min）正式决定放弃今晚跑**：按 L2 实测节奏（长段多、候选慢），
+  79min 需 10h+，超出会话预算。L1/L2 结果已足够支撑 F1-F4 的健康度结论；
+  L3 留给 OPT-201/202/204 的正式灰度（TaskMaster #5）。
 
 ## 待续
 
