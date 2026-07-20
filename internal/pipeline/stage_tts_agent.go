@@ -386,6 +386,13 @@ func (s *Service) runSegmentAgentV2WithHint(ctx context.Context, job *models.Job
 	seg.Status = models.SegmentStatusSynthesized
 	if len(out.FinalLoraCandidateRuntime) > 0 {
 		applyLoraCandidateRuntime(seg, out.FinalLoraCandidateRuntime)
+	} else {
+		// Plain default accept with no candidate execution this run: any
+		// pre-existing candidate runtime describes superseded audio — drop it
+		// so downstream audits (fit_audit) do not flag the fresh default audio
+		// with a rejected candidate's fit. Runtime history still survives in
+		// per-attempt files and job stage runs.
+		clearSupersededLoraCandidateRuntime(seg)
 	}
 	applySegmentAgentDecisionMeta(seg, out, targetMs, s.cfg.SegmentAgentMaxFitDelta)
 	s.persistTTSProvenance(ctx, seg, seg.TargetText, targetSec, voiceSource, voiceConfig)

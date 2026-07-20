@@ -544,3 +544,45 @@ func loraCandidateTestRequest() ml.TTSRequest {
 		},
 	}
 }
+
+// ── clearSupersededLoraCandidateRuntime (2026-07-21 fit_audit stale-fit fix) ──
+//
+// A default-route re-synthesis that runs no candidates must drop the
+// previous candidate runtime; otherwise fit_audit keeps flagging the fresh
+// default audio with a stale rejected candidate's fit (production case:
+// ep183 segment 16277).
+
+func TestClearSupersededLoraCandidateRuntime(t *testing.T) {
+	t.Run("drops stored runtime via nil delete convention", func(t *testing.T) {
+		seg := &models.Segment{
+			Meta: map[string]any{
+				ttsLoraCandidateRuntimeMetaKey: map[string]any{
+					"audio_selection_mode": "default_audio",
+					"candidates":           []any{map[string]any{"fit_tempo_delta": 0.45}},
+				},
+				"other_key": "kept",
+			},
+		}
+		clearSupersededLoraCandidateRuntime(seg)
+		v, ok := seg.Meta[ttsLoraCandidateRuntimeMetaKey]
+		if !ok {
+			t.Fatal("key should be present as nil (delete convention), not missing")
+		}
+		if v != nil {
+			t.Fatalf("expected nil value after clearing, got %#v", v)
+		}
+		if seg.Meta["other_key"] != "kept" {
+			t.Fatal("unrelated meta keys must be preserved")
+		}
+	})
+
+	t.Run("no-ops without runtime or meta", func(t *testing.T) {
+		clearSupersededLoraCandidateRuntime(nil)
+		clearSupersededLoraCandidateRuntime(&models.Segment{})
+		seg := &models.Segment{Meta: map[string]any{"other_key": 1}}
+		clearSupersededLoraCandidateRuntime(seg)
+		if _, ok := seg.Meta[ttsLoraCandidateRuntimeMetaKey]; ok {
+			t.Fatal("must not create the key when absent")
+		}
+	})
+}

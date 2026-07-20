@@ -175,6 +175,24 @@ func applyLoraCandidateRuntime(seg *models.Segment, runtime map[string]any) {
 	})
 }
 
+// clearSupersededLoraCandidateRuntime drops a segment's stored candidate
+// runtime when the final accepted audio came from a plain default-route
+// synthesis with no candidate execution in the same run. The old runtime
+// (including any rejected candidate with a high fit delta) describes
+// superseded audio, and downstream audits such as fit_audit would
+// otherwise flag the fresh default audio with a stale rejected candidate's
+// fit. Uses the nil-value delete convention honoured by
+// UpdateSegmentTranslations / UpdateSegmentMeta merges.
+func clearSupersededLoraCandidateRuntime(seg *models.Segment) {
+	if seg == nil || seg.Meta == nil {
+		return
+	}
+	if _, ok := seg.Meta[ttsLoraCandidateRuntimeMetaKey]; !ok {
+		return
+	}
+	seg.Meta[ttsLoraCandidateRuntimeMetaKey] = nil
+}
+
 func withLoraCandidateRuntimeCount(seg *models.Segment, runtime map[string]any) map[string]any {
 	if len(runtime) == 0 {
 		return runtime
