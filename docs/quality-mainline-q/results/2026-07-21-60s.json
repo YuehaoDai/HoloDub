@@ -1,0 +1,54 @@
+{
+  "generated_at": "2026-07-20T20:54:34.704641+00:00",
+  "baseline_captured_at": "2026-05-10T02:32:08Z",
+  "current_captured_at": "2026-07-20T20:54:34.704553+00:00",
+  "baseline_job_id": 124,
+  "current_job_id": 363,
+  "overall_status": "PASS",
+  "diffs": [
+    {
+      "metric": "cost_usd_total",
+      "baseline": null,
+      "current": 0.0,
+      "status": "n/a"
+    },
+    {
+      "metric": "drift_p50_sec",
+      "baseline": 0.163,
+      "current": 0.003,
+      "regression_pct": -98.16,
+      "threshold_pct": 20.0,
+      "status": "PASS"
+    },
+    {
+      "metric": "drift_p95_sec",
+      "baseline": 0.6722,
+      "current": 0.1452,
+      "regression_pct": -78.4,
+      "threshold_pct": 20.0,
+      "status": "PASS"
+    },
+    {
+      "metric": "judge_score_mean",
+      "baseline": null,
+      "current": 0.96,
+      "status": "n/a"
+    },
+    {
+      "metric": "max_segment_drift_sec",
+      "baseline": 0.72,
+      "current": 0.179,
+      "regression_pct": -75.14,
+      "threshold_pct": 20.0,
+      "status": "PASS"
+    },
+    {
+      "metric": "wall_time_sec",
+      "baseline": 559,
+      "current": 0,
+      "regression_pct": -100.0,
+      "threshold_pct": 20.0,
+      "status": "PASS"
+    }
+  ]
+}
