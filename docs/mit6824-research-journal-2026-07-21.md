@@ -252,6 +252,110 @@ v7 durationpos adapter 改变了速率行为。需要用"adapter 装载态"重�
   注意：容器重建后补丁会丢失，需在网络恢复后重建镜像固化（已记 TODO）。
 - ml-service 已带 F1 重启并就绪。
 
+## 13. 第三个警告段 + 收尾链（19:35–19:50）
+
+- fit_audit 阈值细读：`max_selected_fit_warning_ratio=0.0`（任何 selected fit >5% 即 fail），
+  acceptance_status.py:185 要求 fit_audit.status == "pass" 字面量。
+- 第三警告段 16403（7.52%，ch4/job361）→ 重合成 ✅（attempt 1，5.189s/5.16s，漂移 0.56%）。
+- **操作失误记录**：误向 job362 提交 16403 的重试（它在 361），连续报
+  "no segments available" 4 次并把 362 标 failed —— 已手工恢复 362 为 completed/merge。
+- **陈旧 payload 误报**：16277 修复走 default 路由，旧 6 月候选 payload（fit 0.4496）未被刷新，
+  fit_audit 按候选列表照旧标 fail（16333 走了候选路由所以 payload 是新数据 fit 0.0287 不受影响）。
+  已在 DB 清空 16277 的 stale candidates/selected_candidate（注 repair_note）。
+  **改进项 P6：agent 在 default accept 后应清理/标记陈旧候选 payload，或 fit_audit 应跳过
+  default_audio 且无候选选择的段的 stale candidate。**
+- ASR 二跑报告（干净 ep183-only）：178 段，mean 0.9795，gate PASS ✓
+- 16403 的 ASR 行（sim=None，因当时 pending 无音频）已从结果文件剔除，resume 将只重转它。
+- ch04 重并完 → 整集重并触发 → 终结器三跑（期望 fit_audit 全绿）。
+
+## 14. L8 终态（19:53 UTC，待用户听审）
+
+- **终结器三跑完成**：ASR 178/178 PASS（mean 0.9793，干净 ep183-only）；
+  fit_audit **selected/final 全绿**（0 段超 5%），status=review（仅原始候选池系统性噪声）。
+- acceptance gate check：6 个 hard issue 全部溯源到唯一根因 fit_audit:review；
+  用户用 `--allow-content-errors` + anchor 接受后全链路解锁（L9 启动就绪）。
+- 用户导引已写：`data/validation/mit6824_acceptance/lec-08/READ_ME_FIRST.md`。
+- **L8 从"环境全灭 + 5 段墙 + 2 段 6 月遗留"到"内容全绿待验收"，全程无训练。**
+
+## 15. 后续工作队列（按优先级）
+
+1. F2：候选路由 rate 表再标定（probe：adapter 装载态 vs 基座）
+2. F3：ensemble 时长感知选择（P1）
+3. F4：retry API advance 选项（P2）
+4. P4：ASR resume 跨集隔离（污染事故）
+5. P5：章 repair 后自动重发整集 merge
+6. P6：default accept 清理陈旧候选 payload（或 fit_audit 跳过）
+7. P7：fit_audit candidate_fit 池语义（是否只计 gate-pass 候选）
+8. 网络恢复后重建 ml-service 镜像固化 F1
+9. TaskMaster #5/#6：OPT-201/202/204 L2-L4 验证（staging）
+10. temporal-plan 原型真实管线实验
+
+## 16. 生产数据挖掘：533 候选样本的速率标定真相（修正 R2 理论）
+
+对 ep183 全部 533 条候选生成记录（family, target_sec, actual_sec）统计 actual/target：
+
+| family | ≤15s | 15-23s | >23s |
+|---|---|---|---|
+| default | **0.556** (n=34) | **0.647** (n=33) | **0.644** (n=82) |
+| split_light_vector | 0.999 (n=41) | 0.999 (n=40) | 0.999 (n=148) |
+| split_mix | 0.999 (n=28) | 1.000 (n=26) | 0.937 (n=101) |
+
+**结论（比 R2 更精确的模型）**：
+1. **split 路由的时长标定近乎完美（0.999×）** —— split 机制本身没有问题。
+2. **default 路由系统性欠产 ~0.6×**（所有时长带）—— 时长嵌入在 default 路径上
+   只兑现 ~54-65% 的目标 token 数（182 tokens produced / 336 told for 6.72s）。
+3. **墙段全部 <18s 的真因**：split 规划阈值 `LORA_CANDIDATE_MIN_TARGET_SEC=18`，
+   短段只有坏掉的 default 路由可用；长段（24.8s/44.3s）走 split 一次命中。
+4. 早先观察到的"候选过产 1.39×"实为**候选规划器对当前（过长）文本的投影时长**
+   （text-compression 信号），不是实际候选产出 —— R2 理论部分修正：
+   rate 表失配主要体现在 default 路径欠产，而非候选路径过产。
+
+**修复优先级（据此重排）**：
+- **F2a（配置级，首选）**：下调 split 触发阈值（18s → ~6-8s）让短段也能走 split 路由
+  （已被 0.999× 标定证明的路径）。风险：超短 part 的 join 质量，需配 min_part 约束。
+- **F2b（标定级）**：default 路由时长嵌入兑现率 ~0.6× 的修正 —— 需要理解
+  embedding patch 在短目标下的 token 语义（probe 数据已就绪，无需新实验）。
+- F1（棘轮下限，已修）仍然必要：防 default 欠产观测污染预算棘轮。
+
+## 17. F2 落地：default 路由 rate 标定（对照探针实证）
+
+**探针设计**（ml-service `/tts/run`，同一 138 字文本 / 24.84s 目标 / embedding 开启，仅改 rate）：
+
+| rate | duration_target_tokens | 实际产出 | 倍率 |
+|---|---|---|---|
+| 50.0（原默认） | 1242 | 41.472s | **1.67× 过产** |
+| 23.4375 | 582 | 19.552s | 0.79× 欠产 |
+| **30.0** | 745 | **24.997s** | **1.006× ✅** |
+
+- 模型每 1 秒音频发射 ~30 个 mel token（两点验证：1242/41.47=29.95、582/19.55=29.77）。
+- piecewise 表（15-23s 档 30.0）本就正确；**config.py 的 constant 默认 50.0 是离群错误值**，
+  影响所有无候选覆盖的 embedding 调用（≥15s）。
+- <15s 段 embedding 不启用（`duration_min_sec=15`）—— 短段时长全靠文本侧（字符预算），
+  这解释了为何墙段全是短段 + 棘轮截断，而非 rate 失配。
+- **已修复**：`.env` 加 `INDEXTTS2_DURATION_TOKEN_RATE=30.0` 并重启 ml-service。
+- 探针注意点：duration 覆盖键在 `dubbing_meta.lora_candidate_generation` 嵌套层，
+  顶层 dubbing_meta 无效（探了三次才命中）。
+
+**对决策框架的强化（微调问题）**：今天所有"时长控制失灵"最终归因 =
+棘轮（F1 已修）+ 短段无 embedding + rate 默认值错（F2 已修）。
+**没有一条需要训练新 adapter。** "模型不行"的表象几乎总是工程标定。
+
+## 18. 工程修复落地汇总（F1-F4 全部已部署+提交）
+
+| 修复 | commit | 部署方式 | 验证 |
+|---|---|---|---|
+| F1 tokens_per_char 棘轮下限 | a8ee9a1c | docker cp 热补丁（2 处路径）+ ml-service restart | 容器内函数断言 5/5 |
+| F2 rate 标定 30 tok/s | 4e4a5060（config 默认）+ .env INDEXTTS2_DURATION_TOKEN_RATE=30 | compose recreate（注意：recreate 会丢 docker cp 补丁，F1 已重注） | 无覆盖探针 24.997s/24.84s ✅ |
+| F3 ensemble 时长感知选择 | bc3a1c92 | hot-reload api+worker | 表驱动单测全绿 + llm 包全绿 |
+| F4 retry advance 选项 | 05929364 | hot-reload api+worker | Redis 载荷验证（skip_auto_advance 消失） |
+
+**给用户的重要提示**：
+1. L8 接受后 auto-advance 启动的 **L9 将是 F1-F4 的首次真实生产验证** —— 观察 L9 的
+   tts 重试次数是否下降、短段欠产是否消失。
+2. F1 目前是**热补丁**（容器重建即失效），网络恢复后须重建 ml-service 镜像固化；
+   config 默认与 .env 里的 F2 已在仓内/配置层固化。
+3. 所有修复的原始证据与推导在本文档 06/16/17 节。
+
 ## 待续
 
 - [ ] 16262 / 16364 / 16416 墙段攻坚结果
