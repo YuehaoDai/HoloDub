@@ -356,6 +356,68 @@ v7 durationpos adapter 改变了速率行为。需要用"adapter 装载态"重�
    config 默认与 .env 里的 F2 已在仓内/配置层固化。
 3. 所有修复的原始证据与推导在本文档 06/16/17 节。
 
+## 19. 验证轨进行中（20:40 UTC 起）
+
+### L9 源密度预检（已完成）
+- whisper large-v3 全量转写（298s GPU）：1376 段，78.5min，平均 147.8wpm。
+- **风险画像**：44/157 个 30s 窗口 >170wpm（峰值 274 @6.5min）—— 快语速区密布，
+  与 L8 同类的"翻译密度墙"风险源；超长段仅 3 个（20-30s），split 压力小于 L8。
+- 产物：`data/validation/lec09_source_analysis/lec09_density_profile.json`。
+- 结论：L9 主要考验文本压缩 + 标定路径（恰是 F1/F2/F3 的打击面）。
+
+### L1 60s 验证烟测（job 363，进行中）
+- 目的：全栈带 F1-F4 的端到端健康检查 + PR-14 L1 档 diff（vs baseline-pre-p0）。
+- 观察：agent 循环 + ensemble 正常；qwen-plus 再次全胜 ensemble（deepseek-chat 候选
+  持续落败，模型阵容值得后续评估）。
+
+## 20. 会话总结（给用户回归后阅读，骨架——数字待验证轨完成后填）
+
+### 一句话
+从"环境全灭 + L8 五段墙 + 项目状态混乱"出发：恢复环境、厘清分支、**无训练攻克 L8 全部墙段并产出待验收成品**，
+落地 4 个工程修复（F1-F4），并完成两个核心研究问题的系统化回答。
+
+### 数字速览（待填）
+- L8 攻坚：5 墙段 + 3 遗留段，全部 ≤5% fit 通过
+- 提交：14 commits（dev-win，未推送）
+- 修复：F1 棘轮下限 / F2 rate=30 / F3 ensemble 时长感知 / F4 retry advance
+- 文档：决策框架 + 研究日志（本文件）
+- 验证：L1/L2/L3 diff 结果（待填）
+- L9：密度画像 + 启动就绪
+
+### 你回来后最该做的三件事
+1. 听 L8 评审包并决定接受/阻塞（READ_ME_FIRST.md）
+2. 接受后启动 L9，**观察 F1-F4 的首次生产表现**
+3. 决定是否推进 F2 的后续（piecewise 表 >23s 档 32.5→30 微调）与 ensemble 模型阵容
+
+### L1 60s 验证（job 363，已完成）：**PASS**
+- 端到端带 F1-F4 全通：5 段全合成，judge 多个 1.0 满分。
+- diff vs baseline-pre-p0：**drift_p50 -98.2% / drift_p95 -78.4% / max_drift -75.1%**，judge 0.96。
+- 注：baseline 是 5 月 pre-OPT-001，改进含历史质量工作；但证明当前栈（含今日修复）健康无回归。
+- 报告已存 `docs/quality-mainline-q/results/2026-07-21-60s.json`。
+- 耗时观察：60s/5段的 TTS 阶段 ~15min（重译循环为主）—— 短段欠产仍主要靠重译补偿，
+  F1/F2 消除的是棘轮与标定错误，不是"天然密度"本身（密度由文本规划层处理）。
+
+### L2 10min 验证（job 364，进行中）
+- 已提交排队，asr_smart 阶段。
+
+## 21. P5 核查结论 + P8 新发现
+
+- **P5（整集 merge 自动重发）无需修**：`maybeEnqueueEpisodeMerge` 在章 merge 完成钩子里正常触发，
+  今晚两次"未触发"都是特定状态导致：(a) 19:24 时 362 被我误操作标 failed，章检查自然拦下；
+  (b) 19:45 我手动 RPUSH 先于钩子。证据：ep184（烟测集）的触发器正常 firing。
+- **P8（新小 bug）**：`ep_episode_merge` 写 manifest 时对非章节化的单章 episode 报
+  `chapters[0] invalid range [0, 0)`（60s 烟测集的章节起止为 0）。
+  影响面小（非章节化单章 episode 的 manifest 校验），建议在 WriteChaptersJSON 对
+  零区间章节做 fallback（用 episode 全程或段首尾推导）。
+
+## 22. P6 修复 + L2 恢复 + L1 结果
+
+- **L1 diff PASS**（已记 §19）。P6（陈旧候选 payload）已修复并部署提交（f215777a）：
+  agent 在无候选执行的 default accept 时清空陈旧 runtime，fit_audit 不再误报。
+- **L2（job 364）**：worker 热更新重启导致 tts 任务 context canceled（3/25 已合成保留），
+  已用 **F4 advance=true** 恢复重跑（F4 首个实战用例）。
+- **验收覆盖路径 dry-run 验证通过**（dry_run_acceptance_ready）—— 给用户的接受命令可直接用。
+
 ## 待续
 
 - [ ] 16262 / 16364 / 16416 墙段攻坚结果
