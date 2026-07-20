@@ -1,0 +1,15 @@
+lecture,title,official_page,youtube_url
+7,Fault Tolerance: Raft (2),http://nil.csail.mit.edu/6.824/2020/video/7.html,https://www.youtube.com/watch?v=4r8Mz3MMivY
+8,Zookeeper,http://nil.csail.mit.edu/6.824/2020/video/8.html,https://www.youtube.com/watch?v=pbmyrNjzdDk
+9,More Replication CRAQ,http://nil.csail.mit.edu/6.824/2020/video/9.html,https://www.youtube.com/watch?v=IXHzbCuADt0
+10,Cloud Replicated DB Aurora,http://nil.csail.mit.edu/6.824/2020/video/10.html,https://www.youtube.com/watch?v=jJSh54J1s5o
+11,Cache Consistency Frangipani,http://nil.csail.mit.edu/6.824/2020/video/11.html,https://www.youtube.com/watch?v=-pKNCjUhPjQ
+12,Distributed Transactions,http://nil.csail.mit.edu/6.824/2020/video/12.html,https://www.youtube.com/watch?v=aDp99WDIM_4
+13,Spanner,http://nil.csail.mit.edu/6.824/2020/video/13.html,https://www.youtube.com/watch?v=4eW5SWBi7vs
+14,Optimistic Concurrency Control,http://nil.csail.mit.edu/6.824/2020/video/14.html,https://www.youtube.com/watch?v=Cw6Nj2evjSs
+15,Big Data Spark,http://nil.csail.mit.edu/6.824/2020/video/15.html,https://www.youtube.com/watch?v=mzIoSW-cInA
+16,Cache Consistency Memcached at Facebook,http://nil.csail.mit.edu/6.824/2020/video/16.html,https://www.youtube.com/watch?v=Myp8z0ybdzM
+17,Causal Consistency COPS,http://nil.csail.mit.edu/6.824/2020/video/17.html,https://www.youtube.com/watch?v=fR_NB714EAI
+18,Fork Consistency Certificate Transparency,http://nil.csail.mit.edu/6.824/2020/video/18.html,https://www.youtube.com/watch?v=UKdLJ7-0iFM
+19,Peer-to-peer Bitcoin,http://nil.csail.mit.edu/6.824/2020/video/19.html,https://www.youtube.com/watch?v=K_euhRou98Y
+20,Blockstack,http://nil.csail.mit.edu/6.824/2020/video/20.html,https://www.youtube.com/watch?v=XvXK_vZ0BNw

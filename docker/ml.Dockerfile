@@ -1,3 +1,5 @@
+# syntax=docker/dockerfile:1.7
+
 # CUDA 12.8 devel image includes nvcc, all CUDA headers, and development libs
 # needed to compile third-party CUDA extensions (e.g. BigVGAN anti-alias kernel).
 # The image is ~1 GB larger than the runtime variant but that is acceptable given
@@ -9,7 +11,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     DEBIAN_FRONTEND=noninteractive \
     PIP_DEFAULT_TIMEOUT=1200 \
-    PIP_RETRIES=10
+    PIP_RETRIES=10 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_ROOT_USER_ACTION=ignore \
+    HF_HOME=/root/.cache/huggingface \
+    TORCH_HOME=/root/.cache/torch \
+    XDG_CACHE_HOME=/root/.cache
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -23,24 +30,61 @@ RUN apt-get update \
 WORKDIR /app
 
 COPY ml_service/pyproject.toml /app/ml_service/pyproject.toml
-COPY ml_service/app /app/ml_service/app
-COPY ml_service/tests /app/ml_service/tests
-COPY config /app/config
+COPY ml_service/README.md /app/ml_service/README.md
 
 ARG PYTHON_EXTRAS=
 # When ML_PYTHON_EXTRAS=real, install PyTorch first with the CUDA 12.8 index so
 # the correct GPU wheels are pulled (avoids falling back to CPU-only torch).
-RUN python -m pip install --no-cache-dir ninja
+# Keep torch/torchaudio/torchcodec as a tested set: torchaudio.save() imports
+# TorchCodec, and newer TorchCodec CUDA wheels can require CUDA 13 libnvrtc even
+# inside this CUDA 12.8 image.
+ARG TORCH_VERSION=2.11.0
+ARG TORCHAUDIO_VERSION=2.11.0
+RUN --mount=type=cache,target=/root/.cache/pip \
+    python -m pip install --upgrade pip setuptools wheel \
+    && python -m pip install ninja
 
 # Large CUDA wheels come from PyPI mirrors; default pip read timeout is too short on slow links.
-RUN if [ -n "$PYTHON_EXTRAS" ]; then \
-        pip install --no-cache-dir --retries 10 \
-            torch torchaudio --index-url https://download.pytorch.org/whl/cu128 \
-        && python -m pip install --no-cache-dir --retries 10 \
-            "/app/ml_service[$PYTHON_EXTRAS]"; \
-       else \
-        python -m pip install --no-cache-dir --retries 10 /app/ml_service; \
-       fi
+RUN --mount=type=cache,target=/root/.cache/pip \
+    if [ -n "$PYTHON_EXTRAS" ]; then \
+        python -m pip install --retries 10 \
+            torch==${TORCH_VERSION} torchaudio==${TORCHAUDIO_VERSION} \
+            --index-url https://download.pytorch.org/whl/cu128; \
+    fi
+
+# Install third-party dependencies from pyproject metadata before copying source
+# code. This keeps app/config/test edits from invalidating the multi-GB ML wheel
+# layers; the local app package itself is installed later with --no-deps.
+RUN PYTHON_EXTRAS="$PYTHON_EXTRAS" python - <<'PY'
+import os
+import re
+import tomllib
+from pathlib import Path
+
+project = tomllib.loads(Path("/app/ml_service/pyproject.toml").read_text())
+requirements = list(project["project"].get("dependencies", []))
+extras = os.environ.get("PYTHON_EXTRAS", "").strip()
+if extras:
+    requirements.extend(project["project"].get("optional-dependencies", {}).get(extras, []))
+
+# Torch/TorchAudio are installed from the CUDA-specific index above. Keeping
+# them out of the generic PyPI pass prevents accidental CPU-wheel resolution if
+# a future edit changes the resolver state.
+skip = {"torch", "torchaudio"}
+filtered: list[str] = []
+for req in requirements:
+    name = re.split(r"[<>=!~;\[]", req, maxsplit=1)[0].strip().lower().replace("_", "-")
+    if name in skip:
+        continue
+    filtered.append(req)
+
+Path("/tmp/ml-requirements.txt").write_text("\n".join(filtered) + ("\n" if filtered else ""))
+PY
+
+RUN --mount=type=cache,target=/root/.cache/pip \
+    if [ -s /tmp/ml-requirements.txt ]; then \
+        python -m pip install --retries 10 -r /tmp/ml-requirements.txt; \
+    fi
 
 # Patch BigVGAN CUDA sources: remove the unused #include <cuda_profiler_api.h>
 # that some package versions include but which is not strictly required.
@@ -74,5 +118,12 @@ RUN if [ -n "$PYTHON_EXTRAS" ]; then \
     fi
 
 WORKDIR /app/ml_service
+COPY ml_service/app /app/ml_service/app
+COPY ml_service/tests /app/ml_service/tests
+COPY config /app/config
+COPY tools/lora_train_indextts2_smoke.py /app/tools/lora_train_indextts2_smoke.py
+RUN --mount=type=cache,target=/root/.cache/pip \
+    python -m pip install --no-deps --no-build-isolation /app/ml_service
+
 ENV DATA_ROOT=/data
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

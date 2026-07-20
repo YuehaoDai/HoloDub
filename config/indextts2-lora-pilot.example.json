@@ -1,0 +1,129 @@
+{
+  "schema_version": "holodub.indextts2_lora_pilot.v1",
+  "status": "pilot",
+  "base_model": {
+    "family": "IndexTTS2",
+    "package": "indextts2-inference",
+    "train_target": "gpt_v2_text_to_semantic_tokens",
+    "frozen_modules": [
+      "semantic_codec",
+      "s2mel",
+      "bigvgan",
+      "speaker_conditioning_encoder",
+      "emotion_conditioning_encoder"
+    ]
+  },
+  "adapter": {
+    "type": "lora",
+    "rank": 4,
+    "alpha": 16,
+    "dropout": 0.05,
+    "target_module_policy": "gpt_transformer_conv1d_attention_and_mlp",
+    "initial_target_name_hints": [
+      "c_attn",
+      "c_proj",
+      "c_fc",
+      "attn",
+      "mlp"
+    ]
+  },
+  "duration_conditioning": {
+    "enabled": true,
+    "token_rate_policy": "piecewise",
+    "token_rate_candidates": [
+      23.4375,
+      25.0,
+      30.0,
+      32.5
+    ],
+    "piecewise_token_rates": [
+      {
+        "target_sec_lt": 15.0,
+        "rate": 23.4375
+      },
+      {
+        "target_sec_lt": 23.0,
+        "rate": 30.0
+      },
+      {
+        "target_sec_gte": 23.0,
+        "rate": 32.5
+      }
+    ],
+    "min_target_sec": 15.0,
+    "duration_dropout": 0.3
+  },
+  "duration_fit": {
+    "enabled": true,
+    "filter": "atempo",
+    "min_fit_drift_ms": 300,
+    "max_tempo_delta": 0.03,
+    "reject_when_asr_similarity_drops": true
+  },
+  "prosody_conditioning": {
+    "enabled": true,
+    "primary_candidate": {
+      "mode": "use_emo_text",
+      "emo_alpha": 0.5,
+      "duration_fit_max_tempo_delta": 0.07
+    },
+    "safe_fallback_candidate": {
+      "mode": "emo_vector",
+      "emo_vector": [
+        0.12,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0.08,
+        0.15
+      ],
+      "duration_fit_max_tempo_delta": 0.05
+    },
+    "reject_if": {
+      "mean_f0_range_semitones_10_90_below": 5.5,
+      "mean_asr_similarity_below": 0.97,
+      "min_asr_similarity_below": 0.95,
+      "mean_abs_drift_ms_above": 300
+    }
+  },
+  "data": {
+    "gold_manifest_dir": "",
+    "silver_manifest_dir": "data/training/lora_corpus/<run>",
+    "min_gold_hours_for_real_train": 2.0,
+    "min_total_hours_for_cloud_pilot": 20.0,
+    "silver_usage": "smoke_test_and_duration_calibration_only"
+  },
+  "training": {
+    "device": "cuda",
+    "precision": "bf16_or_fp16",
+    "batch_size_local_16gb": 1,
+    "grad_accumulation_local_16gb": 16,
+    "learning_rate": 0.00002,
+    "weight_decay": 0.01,
+    "warmup_steps": 200,
+    "max_steps_smoke": 20,
+    "max_steps_pilot": 2000,
+    "save_every_steps": 250
+  },
+  "selection_gate": {
+    "enabled": true,
+    "min_lora_target_sec": 15.0,
+    "min_drift_gain_ms": 250,
+    "max_similarity_drop": 0.015,
+    "min_lora_similarity": 0.95,
+    "short_max_lora_drift_ms": 500
+  },
+  "gates": {
+    "smoke_train_loss_must_decrease": true,
+    "validation_asr_similarity_min": 0.92,
+    "critical_term_recall_min": 0.98,
+    "prosody_f0_range_semitones_10_90_mean_min": 5.5,
+    "prosody_f0_std_semitones_mean_min": 2.4,
+    "human_mos_min": 4.0,
+    "duration_abs_drift_mean_ms_max": 300,
+    "duration_abs_drift_p95_ms_max": 900,
+    "short_segment_embedding_disabled": true
+  }
+}

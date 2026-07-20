@@ -1,0 +1,7 @@
+services:
+  ml-service:
+    build:
+      context: .
+      dockerfile: docker/ml.app.Dockerfile
+      args:
+        ML_APP_BASE_IMAGE: ${ML_APP_BASE_IMAGE:-holodub-ml-service:latest}

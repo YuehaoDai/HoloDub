@@ -20,6 +20,7 @@ from app.observability import (  # noqa: E402
 from app.routes.admin import router as admin_router  # noqa: E402
 from app.routes.asr import router as asr_router  # noqa: E402
 from app.routes.health import router as health_router  # noqa: E402
+from app.routes.lora_training import router as lora_training_router  # noqa: E402
 from app.routes.media import router as media_router  # noqa: E402
 from app.routes.tts import router as tts_router  # noqa: E402
 from app.runtime import ServiceContainer  # noqa: E402
@@ -109,7 +110,7 @@ def _spawn_indextts2_warmup(services: ServiceContainer) -> None:
             status = services.tts.get_indextts2_warmup_status()
             alive = warm_thread.is_alive()
 
-            if status in ("ready", "error"):
+            if status in ("idle", "ready", "error"):
                 logger.info(
                     "IndexTTS2 warm-up watchdog stopping (final status=%s after %.1fs)",
                     status,
@@ -186,6 +187,7 @@ def create_app() -> FastAPI:
     app.include_router(media_router)
     app.include_router(asr_router)
     app.include_router(tts_router)
+    app.include_router(lora_training_router)
     app.include_router(admin_router)
 
     @app.get("/metrics", include_in_schema=False)

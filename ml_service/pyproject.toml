@@ -19,17 +19,29 @@ dependencies = [
 
 [project.optional-dependencies]
 # Packages required for real ML backends (ASR, VAD, TTS, separation).
-# PyTorch 2.6+ is required for Blackwell (RTX 5080 / sm_120) support.
+# PyTorch 2.11+ is required for the current CUDA 12.8 / Blackwell
+# (RTX 5080 / sm_120) deployment. TorchAudio 2.11 routes audio writes through
+# TorchCodec, so keep TorchCodec pinned to the CPU wheel that is compatible
+# with torch 2.11 and does not require CUDA 13 libnvrtc at runtime.
 # Install torch separately with the correct CUDA index URL before this group:
-#   pip install torch --index-url https://download.pytorch.org/whl/cu128
+#   pip install torch==2.11.0 torchaudio==2.11.0 --index-url https://download.pytorch.org/whl/cu128
 real = [
-  "torch>=2.6.0",
+  "torch==2.11.0",
+  "torchaudio==2.11.0",
+  "torchcodec==0.11.1",
   "faster-whisper>=1.1.0",
   "ctranslate2>=4.5.0",
   "pyannote.audio>=3.3.0",
   "demucs",
+  "diffq",
   "soundfile",
   "indextts2-inference",
+]
+train = [
+  "peft>=0.15.0",
+  "tensorboard>=2.18.0",
+  "omegaconf>=2.3.0",
+  "numpy",
 ]
 dev = [
   "pytest",
@@ -91,4 +103,3 @@ follow_imports = "silent"
 [[tool.mypy.overrides]]
 module = "indextts.*"
 ignore_missing_imports = true
-

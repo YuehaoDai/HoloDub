@@ -89,6 +89,7 @@ func TestEpisodeStatus_Transition(t *testing.T) {
 		{"chaptering -> dispatched", EpisodeStatusChaptering, EpisodeStatusDispatched, false},
 		{"chaptering -> failed", EpisodeStatusChaptering, EpisodeStatusFailed, false},
 		{"dispatched -> running", EpisodeStatusDispatched, EpisodeStatusRunning, false},
+		{"dispatched -> completed", EpisodeStatusDispatched, EpisodeStatusCompleted, false},
 		{"dispatched -> failed", EpisodeStatusDispatched, EpisodeStatusFailed, false},
 
 		// running terminal/branches
@@ -104,6 +105,8 @@ func TestEpisodeStatus_Transition(t *testing.T) {
 		{"judging -> failed", EpisodeStatusJudging, EpisodeStatusFailed, false},
 		{"reworking -> running", EpisodeStatusReworking, EpisodeStatusRunning, false},
 		{"reworking -> failed", EpisodeStatusReworking, EpisodeStatusFailed, false},
+		{"failed -> dispatched (explicit retry recovery)", EpisodeStatusFailed, EpisodeStatusDispatched, false},
+		{"failed -> completed (late successful merge recovery)", EpisodeStatusFailed, EpisodeStatusCompleted, false},
 
 		// illegal transitions
 		{"empty -> running (skips pending)", "", EpisodeStatusRunning, true},
@@ -114,7 +117,7 @@ func TestEpisodeStatus_Transition(t *testing.T) {
 		{"running -> judging (must merge first)", EpisodeStatusRunning, EpisodeStatusJudging, true},
 		{"merging -> completed (must judge first)", EpisodeStatusMerging, EpisodeStatusCompleted, true},
 		{"completed -> running (terminal)", EpisodeStatusCompleted, EpisodeStatusRunning, true},
-		{"failed -> pending (terminal)", EpisodeStatusFailed, EpisodeStatusPending, true},
+		{"failed -> pending (retry must resume to an active stage)", EpisodeStatusFailed, EpisodeStatusPending, true},
 		{"unknown source", EpisodeStatus("bogus"), EpisodeStatusPending, true},
 	}
 	for _, tt := range tests {

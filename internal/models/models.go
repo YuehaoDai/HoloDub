@@ -10,13 +10,13 @@ import (
 type JobStage string
 
 const (
-	StageMedia          JobStage = "media"
-	StageSeparate       JobStage = "separate"
-	StageASRSmart       JobStage = "asr_smart"
-	StageSegmentReview  JobStage = "segment_review"
-	StageTranslate      JobStage = "translate"
-	StageTTSDuration    JobStage = "tts_duration"
-	StageMerge          JobStage = "merge"
+	StageMedia         JobStage = "media"
+	StageSeparate      JobStage = "separate"
+	StageASRSmart      JobStage = "asr_smart"
+	StageSegmentReview JobStage = "segment_review"
+	StageTranslate     JobStage = "translate"
+	StageTTSDuration   JobStage = "tts_duration"
+	StageMerge         JobStage = "merge"
 )
 
 var StageOrder = []JobStage{
@@ -32,10 +32,10 @@ var StageOrder = []JobStage{
 type JobStatus string
 
 const (
-	JobStatusPending         JobStatus = "pending"
-	JobStatusQueued          JobStatus = "queued"
-	JobStatusRunning         JobStatus = "running"
-	JobStatusAwaitingReview  JobStatus = "awaiting_review"
+	JobStatusPending        JobStatus = "pending"
+	JobStatusQueued         JobStatus = "queued"
+	JobStatusRunning        JobStatus = "running"
+	JobStatusAwaitingReview JobStatus = "awaiting_review"
 	// JobStatusAwaitingChapterize is the transitional state OPT-403 puts chapter 1
 	// into between "ASR/glossary done" and "fan-out chapter 2..N created". Chapter 1
 	// stays here while runFanOutChapters slices media + reassigns segments + creates
@@ -50,20 +50,20 @@ const (
 )
 
 type Job struct {
-	ID                uint              `json:"id" gorm:"primaryKey"`
-	TenantKey         string            `json:"tenant_key" gorm:"size:128;index"`
-	ExternalID        string            `json:"external_id" gorm:"size:128;index"`
-	Name              string            `json:"name"`
-	Status            JobStatus         `json:"status" gorm:"size:32;index"`
-	CurrentStage      JobStage          `json:"current_stage" gorm:"size:32;index"`
-	SourceLanguage    string            `json:"source_language" gorm:"size:16"`
-	TargetLanguage    string            `json:"target_language" gorm:"size:16"`
-	InputRelPath      string            `json:"input_relpath"`
-	VocalsRelPath     string            `json:"vocals_relpath"`
-	BgmRelPath        string            `json:"bgm_relpath"`
-	OutputRelPath     string            `json:"output_relpath"`
-	Config            datatypes.JSONMap `json:"config" gorm:"type:jsonb"`
-	ErrorMessage      string            `json:"error_message" gorm:"type:text"`
+	ID             uint              `json:"id" gorm:"primaryKey"`
+	TenantKey      string            `json:"tenant_key" gorm:"size:128;index"`
+	ExternalID     string            `json:"external_id" gorm:"size:128;index"`
+	Name           string            `json:"name"`
+	Status         JobStatus         `json:"status" gorm:"size:32;index"`
+	CurrentStage   JobStage          `json:"current_stage" gorm:"size:32;index"`
+	SourceLanguage string            `json:"source_language" gorm:"size:16"`
+	TargetLanguage string            `json:"target_language" gorm:"size:16"`
+	InputRelPath   string            `json:"input_relpath"`
+	VocalsRelPath  string            `json:"vocals_relpath"`
+	BgmRelPath     string            `json:"bgm_relpath"`
+	OutputRelPath  string            `json:"output_relpath"`
+	Config         datatypes.JSONMap `json:"config" gorm:"type:jsonb"`
+	ErrorMessage   string            `json:"error_message" gorm:"type:text"`
 	// TranslationSummary is a compact LLM-generated reference card produced after the
 	// initial batch translation. It captures topic, characters, key terminology and
 	// register so that later TTS retranslations maintain global coherence.
@@ -83,10 +83,10 @@ type Job struct {
 	// chapterize after the LLM Pass 3 review (see internal/llm/chapter_review.go). Empty
 	// strings on 1-chapter shortcut paths and on every historical Job. The translated
 	// title is what the EpisodeDetail UI shows by default; the source title is preserved
-	// for downstream search / human review.
-	ChapterTitle           string        `json:"chapter_title" gorm:"size:256"`
-	ChapterTitleTranslated string        `json:"chapter_title_translated" gorm:"size:256"`
-	ChapterSummaryMD       string        `json:"chapter_summary_md" gorm:"type:text"`
+	// for downstream search / automated review.
+	ChapterTitle           string `json:"chapter_title" gorm:"size:256"`
+	ChapterTitleTranslated string `json:"chapter_title_translated" gorm:"size:256"`
+	ChapterSummaryMD       string `json:"chapter_summary_md" gorm:"type:text"`
 	// ChapterJudgeScore + ChapterJudgeMeta are populated asynchronously by the
 	// OPT-409 chapter-level judge that runs after runMerge completes a chapter.
 	// Both nil when chapter judging is disabled (CHAPTER_JUDGE_MODEL="") or
@@ -99,21 +99,21 @@ type Job struct {
 	// top-3 weakest segments, observed glossary, verdict enum).
 	ChapterJudgeScore *float64       `json:"chapter_judge_score,omitempty" gorm:"type:numeric"`
 	ChapterJudgeMeta  datatypes.JSON `json:"chapter_judge_meta,omitempty" gorm:"type:jsonb"`
-	RetryCount             int           `json:"retry_count"`
-	MaxRetries             int           `json:"max_retries"`
-	WebhookURL             string        `json:"webhook_url"`
-	WebhookSecret          string        `json:"-" gorm:"type:text"`
-	HeartbeatAt            *time.Time    `json:"heartbeat_at"`
-	StartedAt              *time.Time    `json:"started_at"`
-	CompletedAt            *time.Time    `json:"completed_at"`
-	DeadlineAt             *time.Time    `json:"deadline_at"`
-	CancelRequestedAt      *time.Time    `json:"cancel_requested_at"`
-	CancelledAt            *time.Time    `json:"cancelled_at"`
-	CreatedAt              time.Time     `json:"created_at"`
-	UpdatedAt              time.Time     `json:"updated_at"`
-	Segments               []Segment     `json:"segments,omitempty"`
-	Speakers               []Speaker     `json:"speakers,omitempty"`
-	StageRuns              []JobStageRun `json:"stage_runs,omitempty"`
+	RetryCount        int            `json:"retry_count"`
+	MaxRetries        int            `json:"max_retries"`
+	WebhookURL        string         `json:"webhook_url"`
+	WebhookSecret     string         `json:"-" gorm:"type:text"`
+	HeartbeatAt       *time.Time     `json:"heartbeat_at"`
+	StartedAt         *time.Time     `json:"started_at"`
+	CompletedAt       *time.Time     `json:"completed_at"`
+	DeadlineAt        *time.Time     `json:"deadline_at"`
+	CancelRequestedAt *time.Time     `json:"cancel_requested_at"`
+	CancelledAt       *time.Time     `json:"cancelled_at"`
+	CreatedAt         time.Time      `json:"created_at"`
+	UpdatedAt         time.Time      `json:"updated_at"`
+	Segments          []Segment      `json:"segments,omitempty"`
+	Speakers          []Speaker      `json:"speakers,omitempty"`
+	StageRuns         []JobStageRun  `json:"stage_runs,omitempty"`
 }
 
 type VoiceProfile struct {
@@ -135,9 +135,9 @@ type VoiceProfile struct {
 	// EstCharsPerSec is an empirically calibrated speaking rate for the target language.
 	// Populated automatically from TTS synthesis results via exponential moving average.
 	// nil means no data yet; use language-based default instead.
-	EstCharsPerSec    *float64          `json:"est_chars_per_sec,omitempty"`
-	CreatedAt         time.Time         `json:"created_at"`
-	UpdatedAt         time.Time         `json:"updated_at"`
+	EstCharsPerSec *float64  `json:"est_chars_per_sec,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 type Speaker struct {
@@ -178,6 +178,10 @@ const (
 	SegmentStatusPending     SegmentStatus = "pending"
 	SegmentStatusTranslated  SegmentStatus = "translated"
 	SegmentStatusSynthesized SegmentStatus = "synthesized"
+	// SegmentStatusSkipped marks a timeline range that should keep original
+	// background audio but must not enter translation or TTS, usually because
+	// ASR classified it as non-speech noise.
+	SegmentStatusSkipped SegmentStatus = "skipped"
 )
 
 // Transition validates a segment status change. It returns the next state
@@ -186,10 +190,11 @@ const (
 // persist the new status themselves once Transition succeeds.
 func (s SegmentStatus) Transition(to SegmentStatus) (SegmentStatus, error) {
 	allowed := map[SegmentStatus]map[SegmentStatus]bool{
-		"":                       {SegmentStatusPending: true, SegmentStatusTranslated: true},
-		SegmentStatusPending:     {SegmentStatusPending: true, SegmentStatusTranslated: true},
-		SegmentStatusTranslated:  {SegmentStatusPending: true, SegmentStatusTranslated: true, SegmentStatusSynthesized: true},
-		SegmentStatusSynthesized: {SegmentStatusPending: true, SegmentStatusSynthesized: true, SegmentStatusTranslated: true},
+		"":                       {SegmentStatusPending: true, SegmentStatusTranslated: true, SegmentStatusSkipped: true},
+		SegmentStatusPending:     {SegmentStatusPending: true, SegmentStatusTranslated: true, SegmentStatusSkipped: true},
+		SegmentStatusTranslated:  {SegmentStatusPending: true, SegmentStatusTranslated: true, SegmentStatusSynthesized: true, SegmentStatusSkipped: true},
+		SegmentStatusSynthesized: {SegmentStatusPending: true, SegmentStatusSynthesized: true, SegmentStatusTranslated: true, SegmentStatusSkipped: true},
+		SegmentStatusSkipped:     {SegmentStatusPending: true, SegmentStatusTranslated: true, SegmentStatusSkipped: true},
 	}
 	next, ok := allowed[s]
 	if !ok || !next[to] {
@@ -201,14 +206,14 @@ func (s SegmentStatus) Transition(to SegmentStatus) (SegmentStatus, error) {
 // IsTerminal reports whether no further automatic stage will modify the
 // segment. Used by reset/retry helpers.
 func (s SegmentStatus) IsTerminal() bool {
-	return s == SegmentStatusSynthesized
+	return s == SegmentStatusSynthesized || s == SegmentStatusSkipped
 }
 
 type Segment struct {
-	ID                 uint              `json:"id" gorm:"primaryKey"`
-	JobID              uint              `json:"job_id" gorm:"index"`
-	SpeakerID          *uint             `json:"speaker_id" gorm:"index"`
-	SpeakerLabel       string            `json:"speaker_label" gorm:"size:64;index"`
+	ID           uint   `json:"id" gorm:"primaryKey"`
+	JobID        uint   `json:"job_id" gorm:"index"`
+	SpeakerID    *uint  `json:"speaker_id" gorm:"index"`
+	SpeakerLabel string `json:"speaker_label" gorm:"size:64;index"`
 	// VoiceProfileID is an optional per-segment voice override.
 	// When set, it takes priority over the speaker-level SpeakerVoiceBinding.
 	VoiceProfileID     *uint             `json:"voice_profile_id,omitempty" gorm:"index"`
@@ -228,15 +233,15 @@ type Segment struct {
 	// or when the judge call has not yet run for this segment.
 	// JudgeScore is the overall scalar (currently equal to Fidelity 0..1);
 	// JudgeMeta carries the full structured verdict (issues, sub-scores).
-	JudgeScore         *float64          `json:"judge_score,omitempty" gorm:"type:numeric"`
-	JudgeMeta          datatypes.JSON    `json:"judge_meta,omitempty" gorm:"type:jsonb"`
+	JudgeScore *float64       `json:"judge_score,omitempty" gorm:"type:numeric"`
+	JudgeMeta  datatypes.JSON `json:"judge_meta,omitempty" gorm:"type:jsonb"`
 	// ParentSegmentID is the OPT-407-followup-1 split provenance link.
 	// Non-nil when this row was produced by splitting another segment.
 	// Used by the SegmentAgent's split_segment decision to record
 	// parent/child relationships for audit + future re-merge logic.
-	ParentSegmentID    *uint             `json:"parent_segment_id,omitempty" gorm:"index"`
-	CreatedAt          time.Time         `json:"created_at"`
-	UpdatedAt          time.Time         `json:"updated_at"`
+	ParentSegmentID *uint     `json:"parent_segment_id,omitempty" gorm:"index"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }
 
 type JobStageRun struct {
@@ -271,31 +276,90 @@ type TenantQuota struct {
 	UpdatedAt         time.Time         `json:"updated_at"`
 }
 
+type LoraTrainingJobStatus string
+
+const (
+	LoraTrainingJobStatusPlanned   LoraTrainingJobStatus = "planned"
+	LoraTrainingJobStatusQueued    LoraTrainingJobStatus = "queued"
+	LoraTrainingJobStatusRunning   LoraTrainingJobStatus = "running"
+	LoraTrainingJobStatusCompleted LoraTrainingJobStatus = "completed"
+	LoraTrainingJobStatusFailed    LoraTrainingJobStatus = "failed"
+	LoraTrainingJobStatusCancelled LoraTrainingJobStatus = "cancelled"
+)
+
+// LoraTrainingJob records a reproducible adapter-training plan. The first
+// implementation deliberately persists command plans only; GPU execution is
+// a later opt-in runner so the UI cannot accidentally start a long training
+// job from a normal HTTP request.
+type LoraTrainingJob struct {
+	ID                         uint                  `json:"id" gorm:"primaryKey"`
+	TenantKey                  string                `json:"tenant_key" gorm:"size:128;index"`
+	Name                       string                `json:"name" gorm:"size:256;index"`
+	Status                     LoraTrainingJobStatus `json:"status" gorm:"size:32;index"`
+	RunID                      string                `json:"run_id" gorm:"size:256;index"`
+	SourceTier                 string                `json:"source_tier" gorm:"size:32;index"`
+	TrainFeaturesRelPath       string                `json:"train_features_relpath" gorm:"size:512"`
+	ValFeaturesRelPath         string                `json:"val_features_relpath" gorm:"size:512"`
+	CanaryFeaturesRelPath      string                `json:"canary_features_relpath" gorm:"size:512"`
+	OutputRootRelPath          string                `json:"output_root_relpath" gorm:"size:512"`
+	OutputDirRelPath           string                `json:"output_dir_relpath" gorm:"size:512;index"`
+	AdapterRelPath             string                `json:"adapter_relpath" gorm:"size:512;index"`
+	VoicePromptRelPath         string                `json:"voice_prompt_relpath" gorm:"size:512"`
+	Rank                       int                   `json:"rank"`
+	Alpha                      float64               `json:"alpha"`
+	Dropout                    float64               `json:"dropout"`
+	LearningRate               float64               `json:"learning_rate"`
+	MaxSteps                   int                   `json:"max_steps"`
+	SaveEvery                  int                   `json:"save_every"`
+	EvalInterval               int                   `json:"eval_interval"`
+	TextLossWeight             float64               `json:"text_loss_weight"`
+	MelLossWeight              float64               `json:"mel_loss_weight"`
+	DurationControl            bool                  `json:"duration_control"`
+	DurationSource             string                `json:"duration_source" gorm:"size:16"`
+	DurationDropout            float64               `json:"duration_dropout"`
+	MelStopLossWeight          float64               `json:"mel_stop_loss_weight"`
+	MelEndLossWeight           float64               `json:"mel_end_loss_weight"`
+	MelEndWindow               int                   `json:"mel_end_window"`
+	DurationStopBCEWeight      float64               `json:"duration_stop_bce_weight"`
+	DurationPositionLossWeight float64               `json:"duration_position_loss_weight"`
+	DurationPositionLossWindow int                   `json:"duration_position_loss_window"`
+	GradientCheckpointing      bool                  `json:"gradient_checkpointing"`
+	Precision                  string                `json:"precision" gorm:"size:16"`
+	ExecutionMode              string                `json:"execution_mode" gorm:"size:32;index"`
+	Commands                   datatypes.JSONMap     `json:"commands" gorm:"type:jsonb"`
+	GateConfig                 datatypes.JSONMap     `json:"gate_config" gorm:"type:jsonb"`
+	Artifacts                  datatypes.JSONMap     `json:"artifacts" gorm:"type:jsonb"`
+	ErrorMessage               string                `json:"error_message" gorm:"type:text"`
+	CreatedAt                  time.Time             `json:"created_at"`
+	UpdatedAt                  time.Time             `json:"updated_at"`
+}
+
 // SegmentSuggestion represents a single merge or split recommendation produced
 // by the LLM segmentation-review agent during the segment_review stage.
-// Actions are applied by the user (accept / reject) through the UI before
-// the pipeline advances to translate.
+// High-confidence safe merge actions are auto-applied by segment_review before
+// the pipeline advances to translate. The UI accept / reject path remains for
+// jobs that explicitly opt into SEGMENT_REVIEW_REQUIRE_HUMAN=true.
 type SegmentSuggestion struct {
-	ID             uint                     `json:"id" gorm:"primaryKey"`
-	JobID          uint                     `json:"job_id" gorm:"index"`
-	Ordinal        int                      `json:"ordinal"`
-	Action         string                   `json:"action" gorm:"size:32"` // "merge" | "split"
+	ID             uint                      `json:"id" gorm:"primaryKey"`
+	JobID          uint                      `json:"job_id" gorm:"index"`
+	Ordinal        int                       `json:"ordinal"`
+	Action         string                    `json:"action" gorm:"size:32"` // "merge" | "split"
 	SegmentIDs     datatypes.JSONSlice[uint] `json:"segment_ids" gorm:"type:jsonb"`
-	SplitCharIndex int                      `json:"split_char_index"`
-	Reason         string                   `json:"reason" gorm:"type:text"`
-	Confidence     float64                  `json:"confidence"`
-	Status         string                   `json:"status" gorm:"size:32"` // "pending" | "accepted" | "rejected"
-	CreatedAt      time.Time                `json:"created_at"`
-	UpdatedAt      time.Time                `json:"updated_at"`
+	SplitCharIndex int                       `json:"split_char_index"`
+	Reason         string                    `json:"reason" gorm:"type:text"`
+	Confidence     float64                   `json:"confidence"`
+	Status         string                    `json:"status" gorm:"size:32"` // "pending" | "accepted" | "rejected"
+	CreatedAt      time.Time                 `json:"created_at"`
+	UpdatedAt      time.Time                 `json:"updated_at"`
 }
 
 type TaskPayload struct {
-	JobID           uint     `json:"job_id"`
-	Stage           JobStage `json:"stage"`
-	Attempt         int      `json:"attempt"`
-	SegmentIDs      []uint   `json:"segment_ids,omitempty"`
-	RequestedBy     string   `json:"requested_by,omitempty"`
-	Reason          string   `json:"reason,omitempty"`
+	JobID       uint     `json:"job_id"`
+	Stage       JobStage `json:"stage"`
+	Attempt     int      `json:"attempt"`
+	SegmentIDs  []uint   `json:"segment_ids,omitempty"`
+	RequestedBy string   `json:"requested_by,omitempty"`
+	Reason      string   `json:"reason,omitempty"`
 	// SkipAutoAdvance prevents HandleTask from automatically enqueueing the next
 	// pipeline stage when this task succeeds.  Set to true for manual retries so
 	// the user controls when to proceed to merge.
@@ -437,8 +501,9 @@ func (s EpisodeStatus) Transition(to EpisodeStatus) (EpisodeStatus, error) {
 			EpisodeStatusFailed:     true,
 		},
 		EpisodeStatusDispatched: {
-			EpisodeStatusRunning: true,
-			EpisodeStatusFailed:  true,
+			EpisodeStatusRunning:   true,
+			EpisodeStatusCompleted: true,
+			EpisodeStatusFailed:    true,
 		},
 		EpisodeStatusRunning: {
 			EpisodeStatusMerging:   true,
@@ -458,6 +523,13 @@ func (s EpisodeStatus) Transition(to EpisodeStatus) (EpisodeStatus, error) {
 			EpisodeStatusRunning: true,
 			EpisodeStatusFailed:  true,
 		},
+		EpisodeStatusFailed: {
+			EpisodeStatusChaptering: true,
+			EpisodeStatusDispatched: true,
+			EpisodeStatusRunning:    true,
+			EpisodeStatusMerging:    true,
+			EpisodeStatusCompleted:  true,
+		},
 	}
 	next, ok := allowed[s]
 	if !ok || !next[to] {
@@ -467,7 +539,8 @@ func (s EpisodeStatus) Transition(to EpisodeStatus) (EpisodeStatus, error) {
 }
 
 // IsTerminal reports whether the episode has reached a final resting state and
-// no further pipeline work will be performed on it.
+// no further pipeline work will be performed on it unless an operator or
+// retry task explicitly resumes the episode.
 func (s EpisodeStatus) IsTerminal() bool {
 	return s == EpisodeStatusCompleted || s == EpisodeStatusFailed
 }
@@ -499,14 +572,14 @@ func (s EpisodeStatus) IsActive() bool {
 // later OPTs populate (glossary, reference card, episode-judge meta, output
 // path) are pre-declared here so subsequent migrations stay additive.
 type Episode struct {
-	ID                 uint              `json:"id" gorm:"primaryKey"`
-	TenantKey          string            `json:"tenant_key" gorm:"size:128;index"`
-	Name               string            `json:"name"`
-	SourceVideoRelPath string            `json:"source_video_relpath"`
-	SourceLanguage     string            `json:"source_language" gorm:"size:16"`
-	TargetLanguage     string            `json:"target_language" gorm:"size:16"`
-	DurationMs         int64             `json:"duration_ms"`
-	TotalChapters      int               `json:"total_chapters" gorm:"default:1"`
+	ID                 uint   `json:"id" gorm:"primaryKey"`
+	TenantKey          string `json:"tenant_key" gorm:"size:128;index"`
+	Name               string `json:"name"`
+	SourceVideoRelPath string `json:"source_video_relpath"`
+	SourceLanguage     string `json:"source_language" gorm:"size:16"`
+	TargetLanguage     string `json:"target_language" gorm:"size:16"`
+	DurationMs         int64  `json:"duration_ms"`
+	TotalChapters      int    `json:"total_chapters" gorm:"default:1"`
 	// VocalsRelPath / BgmRelPath are produced by the OPT-402 episode-level
 	// `ep_separate` stage on the FULL video (so the GPU runs once per
 	// episode, not once per chapter). 1-chapter shortcut also writes the
@@ -538,12 +611,11 @@ type Episode struct {
 	// per-level retry caps. Nil / empty means "no rework engine activity
 	// yet on this episode" (typical of any pre-OPT-407 row).
 	ReworkAttempts datatypes.JSON `json:"rework_attempts,omitempty" gorm:"type:jsonb"`
-	// ReworkStatus is the OPT-407 escalation flag. Empty means "no
-	// special state" (default and the only state the rework engine sets
-	// when it is happily dispatching). Non-empty values: in_progress,
-	// escalated_human, escalated_oscillation, escalated_chapter,
-	// halted_cost — each blocks any further auto-rework dispatch on this
-	// episode until an operator clears the column.
+	// ReworkStatus is the OPT-407 state flag. Empty means "no special state".
+	// Current automatic decisions set "in_progress" while an episode repair
+	// stage is queued/running and "halted_cost" when the budget hard stop is
+	// reached. Older databases may still contain legacy escalated_* values,
+	// but only halted_cost blocks further auto-rework dispatch.
 	ReworkStatus string `json:"rework_status,omitempty" gorm:"size:64;index"`
 	// AccumulatedCostUSD is the running total of estimated LLM cost the
 	// rework engine has dispatched against this episode (sum of the
@@ -551,9 +623,9 @@ type Episode struct {
 	// EPISODE_REWORK_COST_CEILING_USD before each new dispatch decision —
 	// once exceeded, the rework engine emits ActionHaltCost and stops.
 	// Nil = never charged; *0 = charged but ledger reset by an operator.
-	AccumulatedCostUSD *float64       `json:"accumulated_cost_usd,omitempty" gorm:"type:numeric"`
-	Status        EpisodeStatus `json:"status" gorm:"size:32;index"`
-	OutputRelPath string        `json:"output_relpath"`
+	AccumulatedCostUSD *float64      `json:"accumulated_cost_usd,omitempty" gorm:"type:numeric"`
+	Status             EpisodeStatus `json:"status" gorm:"size:32;index"`
+	OutputRelPath      string        `json:"output_relpath"`
 	// OutputLayoutVersion distinguishes pre-OPT-403 layout (1 = jobs/{id}/output/...)
 	// from the unified OPT-403 layout (2 = episodes/{ep_id}/{chapters,output}/...).
 	// New episodes default to 2; the cmd/migrate-output one-shot tool back-fills every
@@ -580,12 +652,12 @@ type Episode struct {
 	// guardrails are applied. Empty / NULL means "fall back to the legacy
 	// deterministic DP algorithm" — which happens when the LLM is disabled,
 	// the call failed, or the episode is short enough to short-circuit.
-	LLMChapters datatypes.JSON `json:"llm_chapters,omitempty" gorm:"type:jsonb"`
-	ErrorMessage  string         `json:"error_message" gorm:"type:text"`
-	CompletedAt   *time.Time     `json:"completed_at"`
-	CreatedAt     time.Time      `json:"created_at"`
-	UpdatedAt     time.Time      `json:"updated_at"`
-	Chapters      []Job          `json:"chapters,omitempty" gorm:"foreignKey:EpisodeID"`
+	LLMChapters  datatypes.JSON `json:"llm_chapters,omitempty" gorm:"type:jsonb"`
+	ErrorMessage string         `json:"error_message" gorm:"type:text"`
+	CompletedAt  *time.Time     `json:"completed_at"`
+	CreatedAt    time.Time      `json:"created_at"`
+	UpdatedAt    time.Time      `json:"updated_at"`
+	Chapters     []Job          `json:"chapters,omitempty" gorm:"foreignKey:EpisodeID"`
 }
 
 // GetEpisodeOutputRelPath returns the relpath of the episode-level final video for

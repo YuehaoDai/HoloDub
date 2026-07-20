@@ -21,10 +21,14 @@ type Client struct {
 }
 
 func New(baseURL string) *Client {
+	return NewWithTimeout(baseURL, 30*time.Minute)
+}
+
+func NewWithTimeout(baseURL string, timeout time.Duration) *Client {
 	return &Client{
 		baseURL: strings.TrimRight(baseURL, "/"),
 		httpClient: &http.Client{
-			Timeout: 30 * time.Minute,
+			Timeout: timeout,
 		},
 	}
 }
@@ -42,12 +46,12 @@ type SeparateResponse struct {
 }
 
 type SmartSplitRequest struct {
-	AudioRelPath       string  `json:"audio_relpath"`
-	SourceLanguage     string  `json:"source_language,omitempty"`
-	MinSegmentSec      float64 `json:"min_segment_sec"`
-	MaxSegmentSec      float64 `json:"max_segment_sec"`
-	HardMaxSegmentSec  float64 `json:"hard_max_segment_sec"`
-	CloseGapMs         int     `json:"close_gap_ms"`
+	AudioRelPath      string  `json:"audio_relpath"`
+	SourceLanguage    string  `json:"source_language,omitempty"`
+	MinSegmentSec     float64 `json:"min_segment_sec"`
+	MaxSegmentSec     float64 `json:"max_segment_sec"`
+	HardMaxSegmentSec float64 `json:"hard_max_segment_sec"`
+	CloseGapMs        int     `json:"close_gap_ms"`
 }
 
 type SmartSegment struct {
@@ -81,14 +85,15 @@ type TranscribeSegmentResponse struct {
 }
 
 type TTSRequest struct {
-	Text              string         `json:"text"`
-	TargetDurationSec float64        `json:"target_duration_sec"`
+	Text              string  `json:"text"`
+	TargetLanguage    string  `json:"target_language,omitempty"`
+	TargetDurationSec float64 `json:"target_duration_sec"`
 	// MaxAllowedSec is target + trailing gap; the adapter uses it as the hard
 	// token ceiling so audio never exceeds (target+gap) and re-translation is
 	// only triggered for genuine overflow beyond the available silence.
-	MaxAllowedSec     float64        `json:"max_allowed_sec,omitempty"`
-	VoiceConfig       map[string]any `json:"voice_config"`
-	OutputRelPath     string         `json:"output_relpath"`
+	MaxAllowedSec float64        `json:"max_allowed_sec,omitempty"`
+	VoiceConfig   map[string]any `json:"voice_config"`
+	OutputRelPath string         `json:"output_relpath"`
 	// Adaptive token budget feedback (scheme 2).
 	// PrevActualSec and PrevTextChars carry the observed duration and char count
 	// from the previous TTS attempt so the adapter can correct tokens_per_char.
@@ -106,9 +111,113 @@ type TTSRequest struct {
 }
 
 type TTSResponse struct {
-	AudioRelPath     string   `json:"audio_relpath"`
-	ActualDurationMs int64    `json:"actual_duration_ms"`
+	AudioRelPath     string         `json:"audio_relpath"`
+	ActualDurationMs int64          `json:"actual_duration_ms"`
+	Diagnostics      []string       `json:"diagnostics,omitempty"`
+	CandidateResult  map[string]any `json:"candidate_result,omitempty"`
+}
+
+type LoraTrainingRunRequest struct {
+	TrainFeaturesRelPath       string  `json:"train_features_relpath"`
+	ValFeaturesRelPath         string  `json:"val_features_relpath"`
+	OutputDirRelPath           string  `json:"output_dir_relpath"`
+	Rank                       int     `json:"rank"`
+	Alpha                      float64 `json:"alpha"`
+	Dropout                    float64 `json:"dropout"`
+	LearningRate               float64 `json:"learning_rate"`
+	MaxSteps                   int     `json:"max_steps"`
+	SaveEvery                  int     `json:"save_every"`
+	EvalInterval               int     `json:"eval_interval"`
+	TextLossWeight             float64 `json:"text_loss_weight"`
+	MelLossWeight              float64 `json:"mel_loss_weight"`
+	DurationControl            bool    `json:"duration_control"`
+	DurationSource             string  `json:"duration_source"`
+	DurationDropout            float64 `json:"duration_dropout"`
+	MelStopLossWeight          float64 `json:"mel_stop_loss_weight"`
+	MelEndLossWeight           float64 `json:"mel_end_loss_weight"`
+	MelEndWindow               int     `json:"mel_end_window"`
+	DurationStopBCEWeight      float64 `json:"duration_stop_bce_weight"`
+	DurationPositionLossWeight float64 `json:"duration_position_loss_weight"`
+	DurationPositionLossWindow int     `json:"duration_position_loss_window"`
+	GradientCheckpointing      bool    `json:"gradient_checkpointing"`
+	Precision                  string  `json:"precision"`
+}
+
+type LoraTrainingRunResponse struct {
+	Status           string   `json:"status"`
+	ExitCode         *int     `json:"exit_code,omitempty"`
+	OutputDirRelPath string   `json:"output_dir_relpath"`
+	AdapterRelPath   string   `json:"adapter_relpath,omitempty"`
+	SummaryRelPath   string   `json:"summary_relpath,omitempty"`
+	MetricsRelPath   string   `json:"metrics_relpath,omitempty"`
+	StdoutLogRelPath string   `json:"stdout_log_relpath"`
+	StderrLogRelPath string   `json:"stderr_log_relpath"`
+	Command          []string `json:"command,omitempty"`
 	Diagnostics      []string `json:"diagnostics,omitempty"`
+}
+
+type LoraCanaryRunRequest struct {
+	FeaturesRelPath         string  `json:"features_relpath"`
+	RunDirRelPath           string  `json:"run_dir_relpath"`
+	AdapterRelPath          string  `json:"adapter_relpath"`
+	ExistingRunRootRelPath  string  `json:"existing_run_root_relpath,omitempty"`
+	VoicePromptRelPath      string  `json:"voice_prompt_relpath"`
+	CandidateFamilies       string  `json:"candidate_families"`
+	SpokenTextPolicy        string  `json:"spoken_text_policy"`
+	DurationTokenRatePolicy string  `json:"duration_token_rate_policy"`
+	MaxFitDelta             float64 `json:"max_fit_delta"`
+	MaxDriftMs              float64 `json:"max_drift_ms"`
+	MinSimilarity           float64 `json:"min_similarity"`
+	TargetSimilarity        float64 `json:"target_similarity"`
+	MinF0Range              float64 `json:"min_f0_range"`
+	TargetF0Range           float64 `json:"target_f0_range"`
+	SkipInference           bool    `json:"skip_inference"`
+	Resume                  bool    `json:"resume"`
+	SampleIDs               string  `json:"sample_ids,omitempty"`
+}
+
+type LoraCanaryRunResponse struct {
+	Status                     string         `json:"status"`
+	ExitCode                   *int           `json:"exit_code,omitempty"`
+	RunDirRelPath              string         `json:"run_dir_relpath"`
+	LoopSummaryRelPath         string         `json:"loop_summary_relpath,omitempty"`
+	CandidateGateReportRelPath string         `json:"candidate_gate_report_relpath,omitempty"`
+	ListeningPackRelPath       string         `json:"listening_pack_relpath,omitempty"`
+	QualityBaselineRelPath     string         `json:"quality_baseline_relpath,omitempty"`
+	HumanReviewReportRelPath   string         `json:"human_review_report_relpath,omitempty"`
+	RiskQueueRelPath           string         `json:"risk_queue_relpath,omitempty"`
+	StdoutLogRelPath           string         `json:"stdout_log_relpath"`
+	StderrLogRelPath           string         `json:"stderr_log_relpath"`
+	Command                    []string       `json:"command,omitempty"`
+	Diagnostics                []string       `json:"diagnostics,omitempty"`
+	Metrics                    map[string]any `json:"metrics,omitempty"`
+}
+
+type LoraRegressionRunRequest struct {
+	SummaryRelPath         string   `json:"summary_relpath"`
+	GateReportRelPath      string   `json:"gate_report_relpath"`
+	RiskQueueRelPath       string   `json:"risk_queue_relpath,omitempty"`
+	ReportRelPath          string   `json:"report_relpath"`
+	MinCount               int      `json:"min_count"`
+	MaxMeanDriftMs         float64  `json:"max_mean_drift_ms"`
+	MaxMaxDriftMs          float64  `json:"max_max_drift_ms"`
+	MinMeanSimilarity      float64  `json:"min_mean_similarity"`
+	MinMinSimilarity       float64  `json:"min_min_similarity"`
+	MaxJoinQualityFailures int      `json:"max_join_quality_failures"`
+	ExpectChain            []string `json:"expect_chain,omitempty"`
+	ForbidChain            []string `json:"forbid_chain,omitempty"`
+	ExpectRiskSample       []string `json:"expect_risk_sample,omitempty"`
+}
+
+type LoraRegressionRunResponse struct {
+	Status           string         `json:"status"`
+	ExitCode         *int           `json:"exit_code,omitempty"`
+	ReportRelPath    string         `json:"report_relpath"`
+	StdoutLogRelPath string         `json:"stdout_log_relpath"`
+	StderrLogRelPath string         `json:"stderr_log_relpath"`
+	Command          []string       `json:"command,omitempty"`
+	Diagnostics      []string       `json:"diagnostics,omitempty"`
+	Metrics          map[string]any `json:"metrics,omitempty"`
 }
 
 func (c *Client) Health(ctx context.Context) (map[string]any, error) {
@@ -149,6 +258,38 @@ func (c *Client) TranscribeSegment(ctx context.Context, request TranscribeSegmen
 func (c *Client) RunTTS(ctx context.Context, request TTSRequest) (*TTSResponse, error) {
 	var response TTSResponse
 	if err := c.doJSON(ctx, http.MethodPost, "/tts/run", request, &response); err != nil {
+		return nil, err
+	}
+	return &response, nil
+}
+
+func (c *Client) RunLoraTrainingSmoke(ctx context.Context, request LoraTrainingRunRequest) (*LoraTrainingRunResponse, error) {
+	var response LoraTrainingRunResponse
+	if err := c.doJSON(ctx, http.MethodPost, "/lora-training/run-smoke", request, &response); err != nil {
+		return nil, err
+	}
+	return &response, nil
+}
+
+func (c *Client) RunLoraTrainingFull(ctx context.Context, request LoraTrainingRunRequest) (*LoraTrainingRunResponse, error) {
+	var response LoraTrainingRunResponse
+	if err := c.doJSON(ctx, http.MethodPost, "/lora-training/run-full", request, &response); err != nil {
+		return nil, err
+	}
+	return &response, nil
+}
+
+func (c *Client) RunLoraTrainingCanary(ctx context.Context, request LoraCanaryRunRequest) (*LoraCanaryRunResponse, error) {
+	var response LoraCanaryRunResponse
+	if err := c.doJSON(ctx, http.MethodPost, "/lora-training/run-canary", request, &response); err != nil {
+		return nil, err
+	}
+	return &response, nil
+}
+
+func (c *Client) RunLoraTrainingRegression(ctx context.Context, request LoraRegressionRunRequest) (*LoraRegressionRunResponse, error) {
+	var response LoraRegressionRunResponse
+	if err := c.doJSON(ctx, http.MethodPost, "/lora-training/run-regression", request, &response); err != nil {
 		return nil, err
 	}
 	return &response, nil

@@ -9,61 +9,61 @@ import (
 )
 
 type Config struct {
-	AppName             string
-	Environment         string
-	HTTPAddr            string
-	LogLevel            string
-	LogFormat           string
-	DataRoot            string
-	DatabaseDriver      string
-	DatabaseDSN         string
-	RedisAddr           string
-	RedisPassword       string
-	RedisDB             int
-	QueueKey            string
-	DelayedQueueKey     string
-	DeadLetterQueueKey  string
-	StageLeasePrefix    string
-	WorkerID            string
-	WorkerPollInterval  time.Duration
-	StageTimeout        time.Duration
-	StageLeaseTTL       time.Duration
-	MaxJobRetries       int
-	RetryBaseDelay      time.Duration
-	DefaultTenantKey    string
-	TrustedProxies      []string
-	APIAuthToken        string
-	RequestRateLimitRPS float64
+	AppName               string
+	Environment           string
+	HTTPAddr              string
+	LogLevel              string
+	LogFormat             string
+	DataRoot              string
+	DatabaseDriver        string
+	DatabaseDSN           string
+	RedisAddr             string
+	RedisPassword         string
+	RedisDB               int
+	QueueKey              string
+	DelayedQueueKey       string
+	DeadLetterQueueKey    string
+	StageLeasePrefix      string
+	WorkerID              string
+	WorkerPollInterval    time.Duration
+	StageTimeout          time.Duration
+	StageLeaseTTL         time.Duration
+	MaxJobRetries         int
+	RetryBaseDelay        time.Duration
+	DefaultTenantKey      string
+	TrustedProxies        []string
+	APIAuthToken          string
+	RequestRateLimitRPS   float64
 	RequestRateLimitBurst int
-	EnableMetrics       bool
-	ModelManifestPath   string
-	NotificationTimeout time.Duration
-	AutoMigrateOnStart  bool
-	MLServiceURL        string
-	TranslationProvider string
-	OpenAIBaseURL       string
-	OpenAIAPIKey        string
-	OpenAIModel         string
-	OpenAITemperature   float64
-	OpenAITimeout       time.Duration
+	EnableMetrics         bool
+	ModelManifestPath     string
+	NotificationTimeout   time.Duration
+	AutoMigrateOnStart    bool
+	MLServiceURL          string
+	TranslationProvider   string
+	OpenAIBaseURL         string
+	OpenAIAPIKey          string
+	OpenAIModel           string
+	OpenAITemperature     float64
+	OpenAITimeout         time.Duration
 
 	// Re-translation: triggered when TTS output drifts too far from target duration.
-	RetranslationEnabled        bool
-	RetranslationDriftThreshold float64 // relative threshold, e.g. 0.06 = 6%
-	RetranslationAbsMaxDriftSec float64 // absolute cap in seconds, e.g. 0.8; effective threshold = min(rel, abs/targetSec)
+	RetranslationEnabled           bool
+	RetranslationDriftThreshold    float64 // relative threshold, e.g. 0.06 = 6%
+	RetranslationAbsMaxDriftSec    float64 // absolute cap in seconds, e.g. 0.8; effective threshold = min(rel, abs/targetSec)
 	RetranslationMinDriftThreshold float64 // minimum relative threshold floor, e.g. 0.03 = 3%; prevents impossibly strict targets for very long segments
-	RetranslationMaxAttempts    int
+	RetranslationMaxAttempts       int
 	RetranslationMaxBorrowDriftPct float64 // max over-run drift allowed to borrow from gap without re-translating, e.g. 0.12 = 12%
-	RetranslationModel          string // e.g. "kimi-k2.5"; reuses OPENAI_BASE_URL/API_KEY
-	RetranslationTemperature    float64 // temperature for retranslation calls; 0 falls back to OpenAITemperature
+	RetranslationModel             string  // e.g. "kimi-k2.5"; reuses OPENAI_BASE_URL/API_KEY
+	RetranslationTemperature       float64 // temperature for retranslation calls; 0 falls back to OpenAITemperature
 	// Thinking-mode fallback: activated when the LLM returns identical text for
 	// RetranslationStuckThreshold consecutive attempts.
-	RetranslationThinkingModel          string        // e.g. "kimi-k2-thinking"; MUST support stream=true
-	RetranslationThinkingTimeoutSeconds int           // timeout in seconds for thinking-mode calls (default 600)
-	RetranslationStuckThreshold         int           // consecutive same-char attempts before switching (default 2)
-	RetranslationNonConvergenceWindow   int           // trigger thinking after N attempts without drift improvement (default 3)
-	RetranslationInitialMaxAttempts     int           // max retranslation attempts for pipeline-triggered (initial) synthesis (default 50)
-	RetranslationInitialAbsMaxDriftSec  float64       // stricter absolute drift ceiling for initial synthesis, e.g. 0.75 s
+	RetranslationThinkingModel          string  // e.g. "kimi-k2-thinking"; MUST support stream=true
+	RetranslationThinkingTimeoutSeconds int     // timeout in seconds for thinking-mode calls (default 600)
+	RetranslationStuckThreshold         int     // consecutive same-char attempts before switching (default 2)
+	RetranslationNonConvergenceWindow   int     // trigger thinking after N attempts without drift improvement (default 3)
+	RetranslationInitialMaxAttempts     int     // max retranslation attempts for pipeline-triggered (initial) synthesis (default 50)
+	RetranslationInitialAbsMaxDriftSec  float64 // stricter absolute drift ceiling for initial synthesis, e.g. 0.75 s
 	// VoiceProfileRateAlpha: weight given to new observations when updating EstCharsPerSec
 	// via exponential moving average. 0.3 means 30% new data, 70% old estimate.
 	VoiceProfileRateAlpha float64
@@ -77,8 +77,31 @@ type Config struct {
 	SegmentReviewModel   string // model name; falls back to RetranslationModel then OpenAIModel
 	// SegmentReviewUseTools: OPT-003. When true, ReviewSegmentation uses
 	// strict-schema function calling instead of "describe JSON in prompt
-	// + json.Unmarshal" fallback. Default false during gradual rollout.
+	// + json.Unmarshal" fallback.
 	SegmentReviewUseTools bool
+	// SegmentReviewRequireHuman parks the job in awaiting_review after the
+	// LLM pass. Default false so the mainline is fully automated; operators
+	// can opt back into the old UI-edit lane when they need it.
+	SegmentReviewRequireHuman bool
+	// SegmentReviewAutoApply applies high-confidence merge suggestions before
+	// auto-advancing to translate. Low-confidence suggestions remain recorded
+	// as rejected audit rows.
+	SegmentReviewAutoApply bool
+	// SegmentReviewAutoApplyMinConfidence is the minimum LLM confidence needed
+	// to auto-apply a merge suggestion.
+	SegmentReviewAutoApplyMinConfidence float64
+	// SegmentReviewMaxMergeGapMs is the largest silence gap allowed inside an
+	// auto-merged group. Larger gaps are treated as intentional boundaries.
+	SegmentReviewMaxMergeGapMs int64
+	// SegmentReviewMaxMergedDurationMs caps the duration of one auto-merged
+	// segment so downstream translation/TTS timing stays bounded.
+	SegmentReviewMaxMergedDurationMs int64
+	// SegmentReviewShortSegmentMs is passed to the LLM policy as the short-row
+	// heuristic for accidental tiny splits.
+	SegmentReviewShortSegmentMs int64
+	// SegmentReviewMaxMergeSegments limits how many adjacent segments one LLM
+	// suggestion may merge.
+	SegmentReviewMaxMergeSegments int
 
 	// JudgeModel: OPT-002. Empty = LLM-as-Judge disabled. When non-empty,
 	// every TTS segment is scored asynchronously after synthesis.
@@ -245,7 +268,7 @@ type Config struct {
 	// EpisodeReworkCostCeilingUSD: OPT-407 cost-ceiling guard. Once the
 	// accumulated rework LLM cost on one episode exceeds this value, the
 	// engine emits ActionHaltCost and refuses further dispatch until the
-	// rework_status column is manually cleared. Default 2.0 USD.
+	// budget flag is cleared. Default 2.0 USD.
 	EpisodeReworkCostCeilingUSD float64
 	// SegmentRetryMaxAttempts: OPT-407 cap on the number of times the
 	// rework engine will dispatch ActionSegmentRetry on a single segment
@@ -255,7 +278,7 @@ type Config struct {
 	// ChapterReworkMaxRounds: OPT-407 cap on the number of full chapter
 	// rework rounds (each dispatches the top-3 weakest segments). Default
 	// 1 — a chapter that still flags needs_revision after one round
-	// escalates to operator review.
+	// records a no-op audit entry instead of blocking the pipeline.
 	ChapterReworkMaxRounds int
 	// ReworkOscillationThreshold: OPT-407 oscillation cut-off. Same target
 	// returning the same verdict N consecutive times triggers
@@ -367,6 +390,105 @@ type Config struct {
 	// Env: DUBBING_PLAN_ENABLED.
 	DubbingPlanEnabled bool
 
+	// TemporalPlanEnabled enables the experimental pre-TTS temporal
+	// planning path. When true, the worker builds a timing plan before
+	// each synthesis call and forwards it inside dubbing_meta.timing so
+	// the TTS adapter can budget chunks before audio is generated.
+	//
+	// Env: TEMPORAL_PLAN_ENABLED.
+	TemporalPlanEnabled bool
+
+	// TemporalPlanMinTargetSec keeps the experimental timing plan off
+	// very short segments, where chunk-level budgeting can be noisier
+	// than the legacy single-call path.
+	//
+	// Env: TEMPORAL_PLAN_MIN_TARGET_SEC.
+	TemporalPlanMinTargetSec float64
+
+	// TemporalPlanCharsPerSec optionally overrides the language default
+	// when no calibrated voice-profile rate is available. 0 means use
+	// profile calibration first, then language default.
+	//
+	// Env: TEMPORAL_PLAN_CHARS_PER_SEC.
+	TemporalPlanCharsPerSec float64
+
+	// LoraCandidateLoopEnabled enables the experimental LoRA candidate
+	// strategy in the TTS path. Default false: production keeps the
+	// current single synthesis / retry behaviour unless explicitly opted in.
+	//
+	// Env: LORA_CANDIDATE_LOOP_ENABLED.
+	LoraCandidateLoopEnabled bool
+
+	// LoraCandidateExecutionEnabled lets the main TTS path actually attempt
+	// candidate audio selection for eligible segments. It is separate from
+	// LoraCandidateLoopEnabled so operators can emit shadow provenance without
+	// changing the audio path. Default false.
+	//
+	// Env: LORA_CANDIDATE_EXECUTION_ENABLED.
+	LoraCandidateExecutionEnabled bool
+
+	// LoraSplitPlanningEnabled allows long/high-risk segments to use
+	// split-planned LoRA candidates when the candidate loop is also enabled.
+	//
+	// Env: LORA_SPLIT_PLANNING_ENABLED.
+	LoraSplitPlanningEnabled bool
+
+	// LoraCandidateMinTargetSec / LoraCandidateMinTextChars keep the
+	// experimental path off short segments. The dense trigger catches segments
+	// that are shorter than the long-segment threshold but carry enough target
+	// text to repeatedly miss the slot in the default path.
+	//
+	// Env: LORA_CANDIDATE_MIN_TARGET_SEC / LORA_CANDIDATE_MIN_TEXT_CHARS /
+	//      LORA_CANDIDATE_DENSE_MIN_TARGET_SEC /
+	//      LORA_CANDIDATE_DENSE_MIN_CHARS_PER_SEC /
+	//      LORA_CANDIDATE_NEAR_LONG_MIN_TARGET_SEC /
+	//      LORA_CANDIDATE_NEAR_LONG_MIN_TEXT_CHARS /
+	//      LORA_CANDIDATE_SHORT_DENSE_MIN_TARGET_SEC /
+	//      LORA_CANDIDATE_SHORT_DENSE_MAX_TARGET_SEC /
+	//      LORA_CANDIDATE_SHORT_DENSE_MIN_CHARS_PER_SEC /
+	//      LORA_CANDIDATE_SHORT_TRANSITION_MIN_TARGET_SEC /
+	//      LORA_CANDIDATE_SHORT_TRANSITION_MAX_TARGET_SEC /
+	//      LORA_CANDIDATE_SHORT_TRANSITION_MIN_CHARS_PER_SEC /
+	//      LORA_CANDIDATE_SHORT_TERM_NUMBER_MIN_TARGET_SEC /
+	//      LORA_CANDIDATE_SHORT_TERM_NUMBER_MAX_TARGET_SEC /
+	//      LORA_CANDIDATE_SHORT_TERM_NUMBER_MIN_CHARS_PER_SEC.
+	LoraCandidateMinTargetSec                  float64
+	LoraCandidateMinTextChars                  int
+	LoraCandidateDenseMinTargetSec             float64
+	LoraCandidateDenseMinCharsPerSec           float64
+	LoraCandidateNearLongMinTargetSec          float64
+	LoraCandidateNearLongMinTextChars          int
+	LoraCandidateShortDenseMinTargetSec        float64
+	LoraCandidateShortDenseMaxTargetSec        float64
+	LoraCandidateShortDenseMinCharsPerSec      float64
+	LoraCandidateShortTransitionMinTargetSec   float64
+	LoraCandidateShortTransitionMaxTargetSec   float64
+	LoraCandidateShortTransitionMinCharsPerSec float64
+	LoraCandidateShortTermNumberMinTargetSec   float64
+	LoraCandidateShortTermNumberMaxTargetSec   float64
+	LoraCandidateShortTermNumberMinCharsPerSec float64
+	LoraCandidateMaxPerSegment                 int
+	LoraCandidateRetryEscalationEnabled        bool
+	LoraCandidateRetryEscalationMinAttempt     int
+	LoraCandidateRetryEscalationMinTargetSec   float64
+	LoraCandidateRetryEscalationMaxTargetSec   float64
+	LoraCandidateRetryEscalationMinTextChars   int
+	LoraCandidateRetryEscalationMinCharsPerSec float64
+
+	// LoraTrainingFullRunnerEnabled exposes the long-running adapter training
+	// background runner in the API/UI. Default false: operators must opt in
+	// before a saved plan can write the official adapter output directory.
+	//
+	// Env: LORA_TRAINING_FULL_RUNNER_ENABLED.
+	LoraTrainingFullRunnerEnabled bool
+
+	// LoraTrainingValidationRunnerEnabled exposes canary/regression validation
+	// runners for saved adapter training plans. Default false because canary
+	// can launch TTS/ASR-heavy subprocesses and writes review artifacts.
+	//
+	// Env: LORA_TRAINING_VALIDATION_RUNNER_ENABLED.
+	LoraTrainingValidationRunnerEnabled bool
+
 	// EnsembleJudgeModel is the model used to score ensemble candidates
 	// pairwise. Defaults to "kimi-k2.5" (thinking-class) because the
 	// candidates are typically close in quality and a weak judge cannot
@@ -374,6 +496,65 @@ type Config struct {
 	//
 	// Env: ENSEMBLE_JUDGE_MODEL.
 	EnsembleJudgeModel string
+
+	// HardMaxUnderDriftSec / HardMaxOverDriftSec (OPT-201-followup-2)
+	// are *absolute* drift ceilings (in seconds) that override every
+	// percentage-based acceptance path in the SegmentAgent.
+	//
+	// Why we need an absolute cap on top of the percentage thresholds:
+	// the existing acceptance machinery (DriftThreshold, MaxBorrowDriftPct,
+	// AdaptiveMaxAcceptableDrift for the judge VETO) is all expressed
+	// as a fraction of TargetSec. That means a long segment (≥ 20s)
+	// can legitimately ship with > 1s of drift even under "tight"
+	// settings — 8% of 25s is 2 seconds. Chapter 2 of job 154 shipped
+	// 23/45 segments outside the operator's target window because of
+	// this: the agent's percentage checks were satisfied even though
+	// the audio drifted multiple seconds.
+	//
+	// The two limits are asymmetric on purpose:
+	//
+	//   over-run (cap default 0.3s):  audio that exceeds the slot will
+	//     bleed into the next segment unless the merge stage clips it.
+	//     Clipping cuts off the speaker's tail — a noticeable artifact.
+	//     A 0.3s ceiling is enough room to clean up with a tiny apad
+	//     while keeping the rest of the line intact.
+	//
+	//   under-run (cap default 0.7s): a too-short audio leaves trailing
+	//     silence inside the slot — much less noticeable. We allow more
+	//     headroom here because attempting to expand the translation
+	//     further (re-asking the LLM) has steep diminishing returns
+	//     past a certain point on very short source phrases.
+	//
+	// The cap participates in *every* acceptance branch (within_threshold,
+	// borrow_from_gap, judge_veto_drift) — once exceeded the agent
+	// forces another retranslate. Only the explicit "escape" branches
+	// (no_more_attempts, clip_overflow, over_short_gap_stuck, retranslate
+	// disabled / retranslate_failed) bypass the cap, but those flips are
+	// logged + counted via observability.IncHardDriftCapViolation so
+	// operators can see how often we shipped over-cap audio anyway.
+	//
+	// Set either value to 0 to disable that direction's cap (back to
+	// pure percentage behaviour). 0 / 0 fully matches pre-OPT-201-followup-2
+	// behaviour.
+	//
+	// Env: HARD_MAX_UNDER_DRIFT_SEC (float seconds, default 0.7),
+	//      HARD_MAX_OVER_DRIFT_SEC  (float seconds, default 0.3).
+	HardMaxUnderDriftSec float64
+	HardMaxOverDriftSec  float64
+	// SegmentAgentRejectHardCapEscape refuses to ship segment-agent escape
+	// outputs that still exceed the absolute drift cap. Default false for
+	// backwards compatibility; production course profiles should enable it.
+	//
+	// Env: SEGMENT_AGENT_REJECT_HARD_CAP_ESCAPE (bool, default false).
+	SegmentAgentRejectHardCapEscape bool
+
+	// SegmentAgentMaxFitDelta rejects final accepted audio whose duration
+	// would need a post-TTS tempo fit above this ratio to land on the target
+	// slot. This carries the offline LoRA fit audit into the main flow; set
+	// to 0 for legacy comparison runs.
+	//
+	// Env: SEGMENT_AGENT_MAX_FIT_DELTA (float, default 0.05).
+	SegmentAgentMaxFitDelta float64
 
 	// EnsembleMaxPerSegment (OPT-202-followup-1, B3) is the per-segment
 	// cap on how many ensemble fan-outs the agent can dispatch. Default
@@ -566,9 +747,37 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("parse SEGMENT_REVIEW_ENABLED: %w", err)
 	}
 	cfg.SegmentReviewModel = getEnv("SEGMENT_REVIEW_MODEL", "")
-	cfg.SegmentReviewUseTools, err = getEnvBool("SEGMENT_REVIEW_USE_TOOLS", false)
+	cfg.SegmentReviewUseTools, err = getEnvBool("SEGMENT_REVIEW_USE_TOOLS", true)
 	if err != nil {
 		return Config{}, fmt.Errorf("parse SEGMENT_REVIEW_USE_TOOLS: %w", err)
+	}
+	cfg.SegmentReviewRequireHuman, err = getEnvBool("SEGMENT_REVIEW_REQUIRE_HUMAN", false)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse SEGMENT_REVIEW_REQUIRE_HUMAN: %w", err)
+	}
+	cfg.SegmentReviewAutoApply, err = getEnvBool("SEGMENT_REVIEW_AUTO_APPLY", true)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse SEGMENT_REVIEW_AUTO_APPLY: %w", err)
+	}
+	cfg.SegmentReviewAutoApplyMinConfidence, err = getEnvFloat("SEGMENT_REVIEW_AUTO_APPLY_MIN_CONFIDENCE", 0.82)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse SEGMENT_REVIEW_AUTO_APPLY_MIN_CONFIDENCE: %w", err)
+	}
+	cfg.SegmentReviewMaxMergeGapMs, err = getEnvInt64("SEGMENT_REVIEW_MAX_MERGE_GAP_MS", 2000)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse SEGMENT_REVIEW_MAX_MERGE_GAP_MS: %w", err)
+	}
+	cfg.SegmentReviewMaxMergedDurationMs, err = getEnvInt64("SEGMENT_REVIEW_MAX_MERGED_DURATION_MS", 20000)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse SEGMENT_REVIEW_MAX_MERGED_DURATION_MS: %w", err)
+	}
+	cfg.SegmentReviewShortSegmentMs, err = getEnvInt64("SEGMENT_REVIEW_SHORT_SEGMENT_MS", 1000)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse SEGMENT_REVIEW_SHORT_SEGMENT_MS: %w", err)
+	}
+	cfg.SegmentReviewMaxMergeSegments, err = getEnvInt("SEGMENT_REVIEW_MAX_MERGE_SEGMENTS", 4)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse SEGMENT_REVIEW_MAX_MERGE_SEGMENTS: %w", err)
 	}
 	cfg.SegmentAgentEnabled, err = getEnvBool("SEGMENT_AGENT_ENABLED", false)
 	if err != nil {
@@ -596,9 +805,234 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("parse ENSEMBLE_MAX_PER_SEGMENT: %w", err)
 	}
+	cfg.HardMaxUnderDriftSec, err = getEnvFloat("HARD_MAX_UNDER_DRIFT_SEC", 0.7)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse HARD_MAX_UNDER_DRIFT_SEC: %w", err)
+	}
+	cfg.HardMaxOverDriftSec, err = getEnvFloat("HARD_MAX_OVER_DRIFT_SEC", 0.3)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse HARD_MAX_OVER_DRIFT_SEC: %w", err)
+	}
+	cfg.SegmentAgentRejectHardCapEscape, err = getEnvBool("SEGMENT_AGENT_REJECT_HARD_CAP_ESCAPE", false)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse SEGMENT_AGENT_REJECT_HARD_CAP_ESCAPE: %w", err)
+	}
+	cfg.SegmentAgentMaxFitDelta, err = getEnvFloat("SEGMENT_AGENT_MAX_FIT_DELTA", 0.05)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse SEGMENT_AGENT_MAX_FIT_DELTA: %w", err)
+	}
 	cfg.DubbingPlanEnabled, err = getEnvBool("DUBBING_PLAN_ENABLED", false)
 	if err != nil {
 		return Config{}, fmt.Errorf("parse DUBBING_PLAN_ENABLED: %w", err)
+	}
+	cfg.TemporalPlanEnabled, err = getEnvBool("TEMPORAL_PLAN_ENABLED", false)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse TEMPORAL_PLAN_ENABLED: %w", err)
+	}
+	cfg.TemporalPlanMinTargetSec, err = getEnvFloat("TEMPORAL_PLAN_MIN_TARGET_SEC", 15.0)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse TEMPORAL_PLAN_MIN_TARGET_SEC: %w", err)
+	}
+	if cfg.TemporalPlanMinTargetSec < 0 {
+		return Config{}, fmt.Errorf("TEMPORAL_PLAN_MIN_TARGET_SEC must be >= 0")
+	}
+	cfg.TemporalPlanCharsPerSec, err = getEnvFloat("TEMPORAL_PLAN_CHARS_PER_SEC", 0)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse TEMPORAL_PLAN_CHARS_PER_SEC: %w", err)
+	}
+	if cfg.TemporalPlanCharsPerSec < 0 {
+		return Config{}, fmt.Errorf("TEMPORAL_PLAN_CHARS_PER_SEC must be >= 0")
+	}
+	cfg.LoraCandidateLoopEnabled, err = getEnvBool("LORA_CANDIDATE_LOOP_ENABLED", false)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse LORA_CANDIDATE_LOOP_ENABLED: %w", err)
+	}
+	cfg.LoraCandidateExecutionEnabled, err = getEnvBool("LORA_CANDIDATE_EXECUTION_ENABLED", false)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse LORA_CANDIDATE_EXECUTION_ENABLED: %w", err)
+	}
+	cfg.LoraSplitPlanningEnabled, err = getEnvBool("LORA_SPLIT_PLANNING_ENABLED", false)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse LORA_SPLIT_PLANNING_ENABLED: %w", err)
+	}
+	cfg.LoraCandidateMinTargetSec, err = getEnvFloat("LORA_CANDIDATE_MIN_TARGET_SEC", 18.0)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse LORA_CANDIDATE_MIN_TARGET_SEC: %w", err)
+	}
+	if cfg.LoraCandidateMinTargetSec < 0 {
+		return Config{}, fmt.Errorf("LORA_CANDIDATE_MIN_TARGET_SEC must be >= 0")
+	}
+	cfg.LoraCandidateMinTextChars, err = getEnvInt("LORA_CANDIDATE_MIN_TEXT_CHARS", 180)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse LORA_CANDIDATE_MIN_TEXT_CHARS: %w", err)
+	}
+	if cfg.LoraCandidateMinTextChars < 0 {
+		return Config{}, fmt.Errorf("LORA_CANDIDATE_MIN_TEXT_CHARS must be >= 0")
+	}
+	cfg.LoraCandidateDenseMinTargetSec, err = getEnvFloat("LORA_CANDIDATE_DENSE_MIN_TARGET_SEC", 9.0)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse LORA_CANDIDATE_DENSE_MIN_TARGET_SEC: %w", err)
+	}
+	if cfg.LoraCandidateDenseMinTargetSec < 0 {
+		return Config{}, fmt.Errorf("LORA_CANDIDATE_DENSE_MIN_TARGET_SEC must be >= 0")
+	}
+	cfg.LoraCandidateDenseMinCharsPerSec, err = getEnvFloat("LORA_CANDIDATE_DENSE_MIN_CHARS_PER_SEC", 4.9)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse LORA_CANDIDATE_DENSE_MIN_CHARS_PER_SEC: %w", err)
+	}
+	if cfg.LoraCandidateDenseMinCharsPerSec < 0 {
+		return Config{}, fmt.Errorf("LORA_CANDIDATE_DENSE_MIN_CHARS_PER_SEC must be >= 0")
+	}
+	cfg.LoraCandidateNearLongMinTargetSec, err = getEnvFloat("LORA_CANDIDATE_NEAR_LONG_MIN_TARGET_SEC", 16.0)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse LORA_CANDIDATE_NEAR_LONG_MIN_TARGET_SEC: %w", err)
+	}
+	if cfg.LoraCandidateNearLongMinTargetSec < 0 {
+		return Config{}, fmt.Errorf("LORA_CANDIDATE_NEAR_LONG_MIN_TARGET_SEC must be >= 0")
+	}
+	cfg.LoraCandidateNearLongMinTextChars, err = getEnvInt("LORA_CANDIDATE_NEAR_LONG_MIN_TEXT_CHARS", 70)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse LORA_CANDIDATE_NEAR_LONG_MIN_TEXT_CHARS: %w", err)
+	}
+	if cfg.LoraCandidateNearLongMinTextChars < 0 {
+		return Config{}, fmt.Errorf("LORA_CANDIDATE_NEAR_LONG_MIN_TEXT_CHARS must be >= 0")
+	}
+	cfg.LoraCandidateShortDenseMinTargetSec, err = getEnvFloat("LORA_CANDIDATE_SHORT_DENSE_MIN_TARGET_SEC", 6.0)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse LORA_CANDIDATE_SHORT_DENSE_MIN_TARGET_SEC: %w", err)
+	}
+	if cfg.LoraCandidateShortDenseMinTargetSec < 0 {
+		return Config{}, fmt.Errorf("LORA_CANDIDATE_SHORT_DENSE_MIN_TARGET_SEC must be >= 0")
+	}
+	cfg.LoraCandidateShortDenseMaxTargetSec, err = getEnvFloat("LORA_CANDIDATE_SHORT_DENSE_MAX_TARGET_SEC", 9.0)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse LORA_CANDIDATE_SHORT_DENSE_MAX_TARGET_SEC: %w", err)
+	}
+	if cfg.LoraCandidateShortDenseMaxTargetSec < 0 {
+		return Config{}, fmt.Errorf("LORA_CANDIDATE_SHORT_DENSE_MAX_TARGET_SEC must be >= 0")
+	}
+	if cfg.LoraCandidateShortDenseMinTargetSec > 0 &&
+		cfg.LoraCandidateShortDenseMaxTargetSec > 0 &&
+		cfg.LoraCandidateShortDenseMinTargetSec > cfg.LoraCandidateShortDenseMaxTargetSec {
+		return Config{}, fmt.Errorf("LORA_CANDIDATE_SHORT_DENSE_MIN_TARGET_SEC must be <= LORA_CANDIDATE_SHORT_DENSE_MAX_TARGET_SEC")
+	}
+	cfg.LoraCandidateShortDenseMinCharsPerSec, err = getEnvFloat("LORA_CANDIDATE_SHORT_DENSE_MIN_CHARS_PER_SEC", 5.5)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse LORA_CANDIDATE_SHORT_DENSE_MIN_CHARS_PER_SEC: %w", err)
+	}
+	if cfg.LoraCandidateShortDenseMinCharsPerSec < 0 {
+		return Config{}, fmt.Errorf("LORA_CANDIDATE_SHORT_DENSE_MIN_CHARS_PER_SEC must be >= 0")
+	}
+	cfg.LoraCandidateShortTransitionMinTargetSec, err = getEnvFloat("LORA_CANDIDATE_SHORT_TRANSITION_MIN_TARGET_SEC", 5.0)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse LORA_CANDIDATE_SHORT_TRANSITION_MIN_TARGET_SEC: %w", err)
+	}
+	if cfg.LoraCandidateShortTransitionMinTargetSec < 0 {
+		return Config{}, fmt.Errorf("LORA_CANDIDATE_SHORT_TRANSITION_MIN_TARGET_SEC must be >= 0")
+	}
+	cfg.LoraCandidateShortTransitionMaxTargetSec, err = getEnvFloat("LORA_CANDIDATE_SHORT_TRANSITION_MAX_TARGET_SEC", 10.0)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse LORA_CANDIDATE_SHORT_TRANSITION_MAX_TARGET_SEC: %w", err)
+	}
+	if cfg.LoraCandidateShortTransitionMaxTargetSec < 0 {
+		return Config{}, fmt.Errorf("LORA_CANDIDATE_SHORT_TRANSITION_MAX_TARGET_SEC must be >= 0")
+	}
+	if cfg.LoraCandidateShortTransitionMinTargetSec > 0 &&
+		cfg.LoraCandidateShortTransitionMaxTargetSec > 0 &&
+		cfg.LoraCandidateShortTransitionMinTargetSec > cfg.LoraCandidateShortTransitionMaxTargetSec {
+		return Config{}, fmt.Errorf("LORA_CANDIDATE_SHORT_TRANSITION_MIN_TARGET_SEC must be <= LORA_CANDIDATE_SHORT_TRANSITION_MAX_TARGET_SEC")
+	}
+	cfg.LoraCandidateShortTransitionMinCharsPerSec, err = getEnvFloat("LORA_CANDIDATE_SHORT_TRANSITION_MIN_CHARS_PER_SEC", 5.0)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse LORA_CANDIDATE_SHORT_TRANSITION_MIN_CHARS_PER_SEC: %w", err)
+	}
+	if cfg.LoraCandidateShortTransitionMinCharsPerSec < 0 {
+		return Config{}, fmt.Errorf("LORA_CANDIDATE_SHORT_TRANSITION_MIN_CHARS_PER_SEC must be >= 0")
+	}
+	cfg.LoraCandidateShortTermNumberMinTargetSec, err = getEnvFloat("LORA_CANDIDATE_SHORT_TERM_NUMBER_MIN_TARGET_SEC", 6.0)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse LORA_CANDIDATE_SHORT_TERM_NUMBER_MIN_TARGET_SEC: %w", err)
+	}
+	if cfg.LoraCandidateShortTermNumberMinTargetSec < 0 {
+		return Config{}, fmt.Errorf("LORA_CANDIDATE_SHORT_TERM_NUMBER_MIN_TARGET_SEC must be >= 0")
+	}
+	cfg.LoraCandidateShortTermNumberMaxTargetSec, err = getEnvFloat("LORA_CANDIDATE_SHORT_TERM_NUMBER_MAX_TARGET_SEC", 9.0)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse LORA_CANDIDATE_SHORT_TERM_NUMBER_MAX_TARGET_SEC: %w", err)
+	}
+	if cfg.LoraCandidateShortTermNumberMaxTargetSec < 0 {
+		return Config{}, fmt.Errorf("LORA_CANDIDATE_SHORT_TERM_NUMBER_MAX_TARGET_SEC must be >= 0")
+	}
+	if cfg.LoraCandidateShortTermNumberMinTargetSec > 0 &&
+		cfg.LoraCandidateShortTermNumberMaxTargetSec > 0 &&
+		cfg.LoraCandidateShortTermNumberMinTargetSec > cfg.LoraCandidateShortTermNumberMaxTargetSec {
+		return Config{}, fmt.Errorf("LORA_CANDIDATE_SHORT_TERM_NUMBER_MIN_TARGET_SEC must be <= LORA_CANDIDATE_SHORT_TERM_NUMBER_MAX_TARGET_SEC")
+	}
+	cfg.LoraCandidateShortTermNumberMinCharsPerSec, err = getEnvFloat("LORA_CANDIDATE_SHORT_TERM_NUMBER_MIN_CHARS_PER_SEC", 4.8)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse LORA_CANDIDATE_SHORT_TERM_NUMBER_MIN_CHARS_PER_SEC: %w", err)
+	}
+	if cfg.LoraCandidateShortTermNumberMinCharsPerSec < 0 {
+		return Config{}, fmt.Errorf("LORA_CANDIDATE_SHORT_TERM_NUMBER_MIN_CHARS_PER_SEC must be >= 0")
+	}
+	cfg.LoraCandidateMaxPerSegment, err = getEnvInt("LORA_CANDIDATE_MAX_PER_SEGMENT", 2)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse LORA_CANDIDATE_MAX_PER_SEGMENT: %w", err)
+	}
+	if cfg.LoraCandidateMaxPerSegment < 1 {
+		return Config{}, fmt.Errorf("LORA_CANDIDATE_MAX_PER_SEGMENT must be >= 1")
+	}
+	cfg.LoraCandidateRetryEscalationEnabled, err = getEnvBool("LORA_CANDIDATE_RETRY_ESCALATION_ENABLED", false)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse LORA_CANDIDATE_RETRY_ESCALATION_ENABLED: %w", err)
+	}
+	cfg.LoraCandidateRetryEscalationMinAttempt, err = getEnvInt("LORA_CANDIDATE_RETRY_ESCALATION_MIN_ATTEMPT", 2)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse LORA_CANDIDATE_RETRY_ESCALATION_MIN_ATTEMPT: %w", err)
+	}
+	if cfg.LoraCandidateRetryEscalationMinAttempt < 1 {
+		return Config{}, fmt.Errorf("LORA_CANDIDATE_RETRY_ESCALATION_MIN_ATTEMPT must be >= 1")
+	}
+	cfg.LoraCandidateRetryEscalationMinTargetSec, err = getEnvFloat("LORA_CANDIDATE_RETRY_ESCALATION_MIN_TARGET_SEC", 5.0)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse LORA_CANDIDATE_RETRY_ESCALATION_MIN_TARGET_SEC: %w", err)
+	}
+	if cfg.LoraCandidateRetryEscalationMinTargetSec < 0 {
+		return Config{}, fmt.Errorf("LORA_CANDIDATE_RETRY_ESCALATION_MIN_TARGET_SEC must be >= 0")
+	}
+	cfg.LoraCandidateRetryEscalationMaxTargetSec, err = getEnvFloat("LORA_CANDIDATE_RETRY_ESCALATION_MAX_TARGET_SEC", 12.0)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse LORA_CANDIDATE_RETRY_ESCALATION_MAX_TARGET_SEC: %w", err)
+	}
+	if cfg.LoraCandidateRetryEscalationMaxTargetSec < 0 {
+		return Config{}, fmt.Errorf("LORA_CANDIDATE_RETRY_ESCALATION_MAX_TARGET_SEC must be >= 0")
+	}
+	if cfg.LoraCandidateRetryEscalationMinTargetSec > 0 &&
+		cfg.LoraCandidateRetryEscalationMaxTargetSec > 0 &&
+		cfg.LoraCandidateRetryEscalationMinTargetSec > cfg.LoraCandidateRetryEscalationMaxTargetSec {
+		return Config{}, fmt.Errorf("LORA_CANDIDATE_RETRY_ESCALATION_MIN_TARGET_SEC must be <= LORA_CANDIDATE_RETRY_ESCALATION_MAX_TARGET_SEC")
+	}
+	cfg.LoraCandidateRetryEscalationMinTextChars, err = getEnvInt("LORA_CANDIDATE_RETRY_ESCALATION_MIN_TEXT_CHARS", 28)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse LORA_CANDIDATE_RETRY_ESCALATION_MIN_TEXT_CHARS: %w", err)
+	}
+	if cfg.LoraCandidateRetryEscalationMinTextChars < 0 {
+		return Config{}, fmt.Errorf("LORA_CANDIDATE_RETRY_ESCALATION_MIN_TEXT_CHARS must be >= 0")
+	}
+	cfg.LoraCandidateRetryEscalationMinCharsPerSec, err = getEnvFloat("LORA_CANDIDATE_RETRY_ESCALATION_MIN_CHARS_PER_SEC", 4.5)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse LORA_CANDIDATE_RETRY_ESCALATION_MIN_CHARS_PER_SEC: %w", err)
+	}
+	if cfg.LoraCandidateRetryEscalationMinCharsPerSec < 0 {
+		return Config{}, fmt.Errorf("LORA_CANDIDATE_RETRY_ESCALATION_MIN_CHARS_PER_SEC must be >= 0")
+	}
+	cfg.LoraTrainingFullRunnerEnabled, err = getEnvBool("LORA_TRAINING_FULL_RUNNER_ENABLED", false)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse LORA_TRAINING_FULL_RUNNER_ENABLED: %w", err)
+	}
+	cfg.LoraTrainingValidationRunnerEnabled, err = getEnvBool("LORA_TRAINING_VALIDATION_RUNNER_ENABLED", false)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse LORA_TRAINING_VALIDATION_RUNNER_ENABLED: %w", err)
 	}
 
 	cfg.JudgeModel = getEnv("JUDGE_MODEL", "")
@@ -802,6 +1236,21 @@ func (c Config) Validate() error {
 	}
 	if c.MaxJobRetries < 0 {
 		return fmt.Errorf("MAX_JOB_RETRIES must be >= 0, got %d", c.MaxJobRetries)
+	}
+	if c.SegmentReviewAutoApplyMinConfidence < 0 || c.SegmentReviewAutoApplyMinConfidence > 1 {
+		return fmt.Errorf("SEGMENT_REVIEW_AUTO_APPLY_MIN_CONFIDENCE must be in [0,1], got %v", c.SegmentReviewAutoApplyMinConfidence)
+	}
+	if c.SegmentReviewMaxMergeGapMs < 0 {
+		return fmt.Errorf("SEGMENT_REVIEW_MAX_MERGE_GAP_MS must be >= 0, got %d", c.SegmentReviewMaxMergeGapMs)
+	}
+	if c.SegmentReviewMaxMergedDurationMs <= 0 {
+		return fmt.Errorf("SEGMENT_REVIEW_MAX_MERGED_DURATION_MS must be > 0, got %d", c.SegmentReviewMaxMergedDurationMs)
+	}
+	if c.SegmentReviewShortSegmentMs <= 0 {
+		return fmt.Errorf("SEGMENT_REVIEW_SHORT_SEGMENT_MS must be > 0, got %d", c.SegmentReviewShortSegmentMs)
+	}
+	if c.SegmentReviewMaxMergeSegments < 2 {
+		return fmt.Errorf("SEGMENT_REVIEW_MAX_MERGE_SEGMENTS must be >= 2, got %d", c.SegmentReviewMaxMergeSegments)
 	}
 	return nil
 }

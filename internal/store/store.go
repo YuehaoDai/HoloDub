@@ -80,6 +80,7 @@ func (s *Store) AutoMigrate() error {
 		&models.Segment{},
 		&models.JobStageRun{},
 		&models.TenantQuota{},
+		&models.LoraTrainingJob{},
 		&models.SegmentSuggestion{},
 	)
 }
@@ -257,6 +258,8 @@ func (s *Store) UpdateEpisodeStatus(ctx context.Context, id uint, to models.Epis
 		}
 		if to == models.EpisodeStatusFailed && errMsg != "" {
 			updates["error_message"] = errMsg
+		} else if to != models.EpisodeStatusFailed {
+			updates["error_message"] = ""
 		}
 		return tx.Model(&models.Episode{}).Where("id = ?", id).Updates(updates).Error
 	})
@@ -354,17 +357,17 @@ func (s *Store) RunBackfillIfNeeded(ctx context.Context) error {
 	}
 
 	type orphanJob struct {
-		ID                 uint
-		TenantKey          string
-		Name               string
-		InputRelPath       string
-		OutputRelPath      string
-		SourceLanguage     string
-		TargetLanguage     string
-		Status             models.JobStatus
-		CreatedAt          time.Time
-		UpdatedAt          time.Time
-		CompletedAt        *time.Time
+		ID             uint
+		TenantKey      string
+		Name           string
+		InputRelPath   string
+		OutputRelPath  string
+		SourceLanguage string
+		TargetLanguage string
+		Status         models.JobStatus
+		CreatedAt      time.Time
+		UpdatedAt      time.Time
+		CompletedAt    *time.Time
 	}
 
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -570,6 +573,69 @@ func (s *Store) UpdateVoiceProfileSpeakingRate(ctx context.Context, vpID uint, o
 		Update("est_chars_per_sec", newRate).Error
 }
 
+func (s *Store) CreateLoraTrainingJob(ctx context.Context, job *models.LoraTrainingJob) error {
+	if job.Status == "" {
+		job.Status = models.LoraTrainingJobStatusPlanned
+	}
+	if job.TenantKey == "" {
+		job.TenantKey = "default"
+	}
+	if job.ExecutionMode == "" {
+		job.ExecutionMode = "command_only"
+	}
+	return s.db.WithContext(ctx).Create(job).Error
+}
+
+func (s *Store) ListLoraTrainingJobs(ctx context.Context) ([]models.LoraTrainingJob, error) {
+	var jobs []models.LoraTrainingJob
+	err := s.db.WithContext(ctx).
+		Order("id desc").
+		Find(&jobs).Error
+	return jobs, err
+}
+
+func (s *Store) GetLoraTrainingJob(ctx context.Context, id uint) (*models.LoraTrainingJob, error) {
+	var job models.LoraTrainingJob
+	if err := s.db.WithContext(ctx).First(&job, id).Error; err != nil {
+		return nil, err
+	}
+	return &job, nil
+}
+
+func (s *Store) UpdateLoraTrainingJobRuntime(
+	ctx context.Context,
+	id uint,
+	executionMode string,
+	artifacts datatypes.JSONMap,
+	errMsg string,
+) error {
+	return s.UpdateLoraTrainingJobState(ctx, id, "", executionMode, artifacts, errMsg)
+}
+
+func (s *Store) UpdateLoraTrainingJobState(
+	ctx context.Context,
+	id uint,
+	status models.LoraTrainingJobStatus,
+	executionMode string,
+	artifacts datatypes.JSONMap,
+	errMsg string,
+) error {
+	updates := map[string]any{
+		"artifacts":     artifacts,
+		"error_message": errMsg,
+		"updated_at":    time.Now().UTC(),
+	}
+	if status != "" {
+		updates["status"] = status
+	}
+	if executionMode != "" {
+		updates["execution_mode"] = executionMode
+	}
+	return s.db.WithContext(ctx).Model(&models.LoraTrainingJob{}).
+		Where("id = ?", id).
+		Updates(updates).Error
+}
+
 func (s *Store) ReplaceSegments(ctx context.Context, jobID uint, drafts []models.SegmentDraft) error {
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var existingSpeakers []models.Speaker
@@ -613,18 +679,18 @@ func (s *Store) ReplaceSegments(ctx context.Context, jobID uint, drafts []models
 			}
 			speaker := speakersByLabel[label]
 			speakerID := speaker.ID
-		segment := models.Segment{
-			JobID:              jobID,
-			SpeakerID:          &speakerID,
-			SpeakerLabel:       label,
-			Ordinal:            idx,
-			StartMs:            draft.StartMs,
-			EndMs:              draft.EndMs,
-			OriginalDurationMs: draft.EndMs - draft.StartMs,
-			SourceText:         draft.Text,
-			SplitReason:        draft.SplitReason,
-			Status:             models.SegmentStatusPending,
-		}
+			segment := models.Segment{
+				JobID:              jobID,
+				SpeakerID:          &speakerID,
+				SpeakerLabel:       label,
+				Ordinal:            idx,
+				StartMs:            draft.StartMs,
+				EndMs:              draft.EndMs,
+				OriginalDurationMs: draft.EndMs - draft.StartMs,
+				SourceText:         draft.Text,
+				SplitReason:        draft.SplitReason,
+				Status:             models.SegmentStatusPending,
+			}
 			segments = append(segments, segment)
 		}
 
@@ -701,7 +767,7 @@ func (s *Store) UpdateSegmentMeta(ctx context.Context, segmentID uint, metaUpdat
 		}
 	}
 	return s.db.WithContext(ctx).Model(&models.Segment{}).Where("id = ?", segmentID).
-		Updates(map[string]any{"meta": merged, "updated_at": time.Now().UTC()}).Error
+		Updates(map[string]any{"meta": datatypes.JSONMap(merged), "updated_at": time.Now().UTC()}).Error
 }
 
 func (s *Store) UpdateSegmentTranslations(ctx context.Context, segments []models.Segment) error {
@@ -711,6 +777,26 @@ func (s *Store) UpdateSegmentTranslations(ctx context.Context, segments []models
 				"target_text": segment.TargetText,
 				"status":      segment.Status,
 				"updated_at":  time.Now().UTC(),
+			}
+			if segment.Meta != nil {
+				var existing models.Segment
+				if err := tx.Select("id", "meta").Where("id = ?", segment.ID).First(&existing).Error; err != nil {
+					return err
+				}
+				merged := make(map[string]any)
+				if existing.Meta != nil {
+					for k, v := range existing.Meta {
+						merged[k] = v
+					}
+				}
+				for k, v := range segment.Meta {
+					if v == nil {
+						delete(merged, k)
+					} else {
+						merged[k] = v
+					}
+				}
+				updates["meta"] = datatypes.JSONMap(merged)
 			}
 			if err := tx.Model(&models.Segment{}).Where("id = ?", segment.ID).Updates(updates).Error; err != nil {
 				return err
@@ -725,9 +811,9 @@ func (s *Store) UpdateSegmentSynthResults(ctx context.Context, segments []models
 		for _, segment := range segments {
 			updates := map[string]any{
 				"tts_audio_rel_path": segment.TTSAudioRelPath,
-				"tts_duration_ms":  segment.TTSDurationMs,
-				"status":           segment.Status,
-				"updated_at":       time.Now().UTC(),
+				"tts_duration_ms":    segment.TTSDurationMs,
+				"status":             segment.Status,
+				"updated_at":         time.Now().UTC(),
 			}
 			if err := tx.Model(&models.Segment{}).Where("id = ?", segment.ID).Updates(updates).Error; err != nil {
 				return err
@@ -1118,6 +1204,7 @@ func (s *Store) BulkSetSegmentVoice(ctx context.Context, jobID uint, voiceProfil
 func (s *Store) ResetAllSegmentTTS(ctx context.Context, jobID uint) error {
 	return s.db.WithContext(ctx).Model(&models.Segment{}).
 		Where("job_id = ?", jobID).
+		Where("status <> ?", models.SegmentStatusSkipped).
 		Updates(map[string]any{
 			"tts_audio_rel_path": "",
 			"tts_duration_ms":    0,
@@ -1159,6 +1246,7 @@ func (s *Store) ResetSegmentsForRerun(ctx context.Context, segmentIDs []uint) er
 	}
 	return s.db.WithContext(ctx).Model(&models.Segment{}).
 		Where("id IN ?", segmentIDs).
+		Where("status <> ?", models.SegmentStatusSkipped).
 		Updates(map[string]any{
 			"tts_audio_rel_path": "",
 			"tts_duration_ms":    0,
@@ -1195,9 +1283,9 @@ func (s *Store) RequestJobCancel(ctx context.Context, jobID uint) error {
 	return s.db.WithContext(ctx).Model(&models.Job{}).
 		Where("id = ?", jobID).
 		Updates(map[string]any{
-			"status":               models.JobStatusCancelRequested,
-			"cancel_requested_at":  &now,
-			"updated_at":           now,
+			"status":              models.JobStatusCancelRequested,
+			"cancel_requested_at": &now,
+			"updated_at":          now,
 		}).Error
 }
 
@@ -1329,15 +1417,15 @@ func (s *Store) MergeSegments(ctx context.Context, jobID uint, segmentIDs []uint
 		now := time.Now().UTC()
 		if err := tx.Model(&models.Segment{}).Where("id = ?", first.ID).
 			Updates(map[string]any{
-				"end_ms":              last.EndMs,
+				"end_ms":               last.EndMs,
 				"original_duration_ms": last.EndMs - first.StartMs,
-				"source_text":         mergedText,
-				"target_text":         "",
-				"tts_audio_rel_path":  "",
-				"tts_duration_ms":     0,
-				"status":              "pending",
-				"split_reason":        "merged",
-				"updated_at":          now,
+				"source_text":          mergedText,
+				"target_text":          "",
+				"tts_audio_rel_path":   "",
+				"tts_duration_ms":      0,
+				"status":               "pending",
+				"split_reason":         "merged",
+				"updated_at":           now,
 			}).Error; err != nil {
 			return err
 		}
@@ -1384,15 +1472,15 @@ func (s *Store) SplitSegment(ctx context.Context, jobID uint, segmentID uint, sp
 		// Update first half in-place
 		if err := tx.Model(&models.Segment{}).Where("id = ?", seg.ID).
 			Updates(map[string]any{
-				"end_ms":              splitMs,
+				"end_ms":               splitMs,
 				"original_duration_ms": splitMs - seg.StartMs,
-				"source_text":         textA,
-				"target_text":         "",
-				"tts_audio_rel_path":  "",
-				"tts_duration_ms":     0,
-				"status":              "pending",
-				"split_reason":        "manual_split",
-				"updated_at":          now,
+				"source_text":          textA,
+				"target_text":          "",
+				"tts_audio_rel_path":   "",
+				"tts_duration_ms":      0,
+				"status":               "pending",
+				"split_reason":         "manual_split",
+				"updated_at":           now,
 			}).Error; err != nil {
 			return err
 		}
@@ -1631,6 +1719,7 @@ func (s *Store) CreateChapterJob(
 		BgmRelPath:             in.BgmRelPath,
 		SourceLanguage:         parent.SourceLanguage,
 		TargetLanguage:         parent.TargetLanguage,
+		Config:                 cloneJSONMap(parent.Config),
 		Status:                 models.JobStatusPending,
 		CurrentStage:           models.StageSegmentReview, // skip media+separate; chapter inherits from episode
 		MaxRetries:             parent.MaxRetries,
@@ -1642,6 +1731,17 @@ func (s *Store) CreateChapterJob(
 		return nil, fmt.Errorf("create chapter job ord=%d: %w", in.Ordinal, err)
 	}
 	return &job, nil
+}
+
+func cloneJSONMap(in datatypes.JSONMap) datatypes.JSONMap {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(datatypes.JSONMap, len(in))
+	for key, value := range in {
+		out[key] = value
+	}
+	return out
 }
 
 // UpdateChapterMetadata writes the LLM-derived bilingual title + summary onto

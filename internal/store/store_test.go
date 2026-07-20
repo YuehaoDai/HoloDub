@@ -3,12 +3,14 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
 	"holodub/internal/models"
 
+	"gorm.io/datatypes"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -134,6 +136,86 @@ func TestUpdateSegmentSourceText_MissingSegmentReturnsNotFound(t *testing.T) {
 }
 
 // ── Episode / Chapter (OPT-401) ──────────────────────────────────────────────
+
+func TestUpdateSegmentTranslations_PersistsSkippedMeta(t *testing.T) {
+	st := newTestStore(t)
+	jobID, segID := seedAwaitingReviewSegment(t, st)
+	ctx := context.Background()
+
+	seg := models.Segment{
+		ID:         segID,
+		JobID:      jobID,
+		TargetText: "",
+		Status:     models.SegmentStatusSkipped,
+		Meta: map[string]any{
+			"dubbing_skip": map[string]any{
+				"reason": "high_zcr",
+				"source": "test",
+			},
+		},
+	}
+	if err := st.UpdateSegmentTranslations(ctx, []models.Segment{seg}); err != nil {
+		t.Fatalf("update translations: %v", err)
+	}
+
+	got, err := st.GetSegment(ctx, segID)
+	if err != nil {
+		t.Fatalf("get segment: %v", err)
+	}
+	if got.Status != models.SegmentStatusSkipped {
+		t.Fatalf("status = %q, want skipped", got.Status)
+	}
+	raw, ok := got.Meta["dubbing_skip"].(map[string]any)
+	if !ok {
+		t.Fatalf("dubbing_skip meta missing: %+v", got.Meta)
+	}
+	if raw["reason"] != "high_zcr" {
+		t.Fatalf("reason = %v, want high_zcr", raw["reason"])
+	}
+}
+
+func TestUpdateSegmentTranslations_MergesMetaWithoutDroppingLineage(t *testing.T) {
+	st := newTestStore(t)
+	jobID, segID := seedAwaitingReviewSegment(t, st)
+	ctx := context.Background()
+
+	if err := st.UpdateSegmentMeta(ctx, segID, map[string]any{
+		"shadow_source_segment_id": float64(10691),
+		"shadow_source_job_id":     float64(147),
+	}); err != nil {
+		t.Fatalf("seed lineage meta: %v", err)
+	}
+
+	seg := models.Segment{
+		ID:         segID,
+		JobID:      jobID,
+		TargetText: "retry text",
+		Status:     models.SegmentStatusTranslated,
+		Meta: map[string]any{
+			"tts_lora_candidate_runtime": map[string]any{
+				"fallback_reason": "candidate_attempt_limit_reached",
+			},
+		},
+	}
+	if err := st.UpdateSegmentTranslations(ctx, []models.Segment{seg}); err != nil {
+		t.Fatalf("update translations: %v", err)
+	}
+
+	got, err := st.GetSegment(ctx, segID)
+	if err != nil {
+		t.Fatalf("get segment: %v", err)
+	}
+	if fmt.Sprint(got.Meta["shadow_source_segment_id"]) != "10691" {
+		t.Fatalf("lineage was dropped: %+v", got.Meta)
+	}
+	runtime, ok := got.Meta["tts_lora_candidate_runtime"].(map[string]any)
+	if !ok {
+		t.Fatalf("runtime meta missing: %+v", got.Meta)
+	}
+	if runtime["fallback_reason"] != "candidate_attempt_limit_reached" {
+		t.Fatalf("unexpected runtime: %+v", runtime)
+	}
+}
 
 // TestCreateJob_AutoCreatesEpisode covers the backwards-compatible default
 // path: callers that do not supply an episode_id get a 1-chapter Episode
@@ -269,6 +351,69 @@ func TestCreateJob_RejectsTerminalEpisode(t *testing.T) {
 	}
 	if err := st.CreateJob(ctx, job); err == nil {
 		t.Fatalf("expected error appending chapter to terminal episode")
+	}
+}
+
+func TestCreateChapterJobInheritsParentConfig(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+
+	ep := &models.Episode{
+		TenantKey:      "default",
+		Name:           "episode",
+		SourceLanguage: "en",
+		TargetLanguage: "zh-CN",
+		Status:         models.EpisodeStatusRunning,
+	}
+	if err := st.CreateEpisode(ctx, ep); err != nil {
+		t.Fatalf("create episode: %v", err)
+	}
+	parent := &models.Job{
+		EpisodeID:      ep.ID,
+		ChapterOrdinal: 1,
+		Name:           "chapter-1",
+		TenantKey:      "default",
+		SourceLanguage: "en",
+		TargetLanguage: "zh-CN",
+		InputRelPath:   "source.mp4",
+		Config: datatypes.JSONMap{
+			"course":                "mit6824-2020",
+			"lecture":               float64(8),
+			"production_profile":    "mit6824-course-prod-v1",
+			"lora_candidate_opt_in": true,
+		},
+	}
+	if err := st.CreateJob(ctx, parent); err != nil {
+		t.Fatalf("create parent job: %v", err)
+	}
+
+	child, err := st.CreateChapterJob(ctx, ep.ID, parent, ChapterFanOutInput{
+		Ordinal:         2,
+		StartMs:         1000,
+		EndMs:           2000,
+		Title:           "Chapter 2",
+		TitleTranslated: "第二章",
+		InputRelPath:    "episodes/1/chapters/source/ch02.mp4",
+		VocalsRelPath:   "episodes/1/chapters/source/ch02.vocals.wav",
+		BgmRelPath:      "episodes/1/chapters/source/ch02.bgm.wav",
+	})
+	if err != nil {
+		t.Fatalf("create child chapter: %v", err)
+	}
+	if child.Config["lora_candidate_opt_in"] != true {
+		t.Fatalf("child lost lora candidate opt-in config: %#v", child.Config)
+	}
+	child.Config["lora_candidate_opt_in"] = false
+	if parent.Config["lora_candidate_opt_in"] != true {
+		t.Fatalf("child config aliases parent config")
+	}
+
+	var persisted models.Job
+	if err := st.db.First(&persisted, child.ID).Error; err != nil {
+		t.Fatalf("load child: %v", err)
+	}
+	if persisted.Config["production_profile"] != "mit6824-course-prod-v1" {
+		t.Fatalf("persisted child config mismatch: %#v", persisted.Config)
 	}
 }
 

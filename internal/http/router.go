@@ -84,9 +84,9 @@ type upsertBindingsRequest struct {
 }
 
 type artifactInfo struct {
-	RelPath      string    `json:"relpath"`
-	SizeBytes    int64     `json:"size_bytes"`
-	ModifiedAt   time.Time `json:"modified_at"`
+	RelPath    string    `json:"relpath"`
+	SizeBytes  int64     `json:"size_bytes"`
+	ModifiedAt time.Time `json:"modified_at"`
 }
 
 func NewRouter(cfg config.Config, st *store.Store, pipelineSvc *pipeline.Service) *gin.Engine {
@@ -143,7 +143,17 @@ func NewRouter(cfg config.Config, st *store.Store, pipelineSvc *pipeline.Service
 	router.PATCH("/jobs/:id/segments/:segmentId", server.patchSegment)
 	router.PATCH("/jobs/:id/segments/:segmentId/quality", server.patchSegmentQuality)
 
+	router.GET("/data-artifacts/*relpath", server.serveDataArtifact)
 	router.GET("/files", server.listFiles)
+	router.GET("/lora/adapters", server.listLoraAdapters)
+	router.GET("/lora/training-contract", server.getLoraTrainingContract)
+	router.GET("/lora/training-jobs", server.listLoraTrainingJobs)
+	router.POST("/lora/training-jobs", server.createLoraTrainingJob)
+	router.GET("/lora/training-jobs/:id", server.getLoraTrainingJob)
+	router.POST("/lora/training-jobs/:id/run-smoke", server.runLoraTrainingJobSmoke)
+	router.POST("/lora/training-jobs/:id/start-full", server.startLoraTrainingJobFull)
+	router.POST("/lora/training-jobs/:id/start-canary", server.startLoraTrainingJobCanary)
+	router.POST("/lora/training-jobs/:id/start-regression", server.startLoraTrainingJobRegression)
 	router.GET("/voice-profiles", server.listVoiceProfiles)
 	router.POST("/voice-profiles", server.createVoiceProfile)
 	router.GET("/voice-profiles/:id", server.getVoiceProfile)
@@ -534,6 +544,38 @@ func (s *Server) listArtifacts(c *gin.Context) {
 		return nil
 	})
 	c.JSON(stdhttp.StatusOK, gin.H{"artifacts": artifacts})
+}
+
+func (s *Server) serveDataArtifact(c *gin.Context) {
+	relPath := strings.TrimPrefix(c.Param("relpath"), "/")
+	relPath = strings.TrimPrefix(filepath.ToSlash(relPath), "data/")
+	if strings.TrimSpace(relPath) == "" {
+		respondError(c, stdhttp.StatusBadRequest, "invalid_path", "artifact path is required")
+		return
+	}
+	abs, err := storage.SecureJoinUnderRoot(s.cfg.DataRoot, relPath)
+	if err != nil {
+		respondError(c, stdhttp.StatusBadRequest, "invalid_path", "artifact path is outside data root")
+		return
+	}
+	info, err := os.Stat(abs)
+	if err != nil || info.IsDir() {
+		respondError(c, stdhttp.StatusNotFound, "artifact_missing", "artifact file not found on disk")
+		return
+	}
+	c.Header("Content-Type", contentTypeForPath(abs))
+	c.Header("Content-Disposition", "inline")
+	c.Header("Cache-Control", "no-store")
+	if strings.EqualFold(filepath.Base(abs), "index.html") {
+		data, readErr := os.ReadFile(abs)
+		if readErr != nil {
+			respondError(c, stdhttp.StatusInternalServerError, "artifact_read_failed", readErr.Error())
+			return
+		}
+		c.Data(stdhttp.StatusOK, contentTypeForPath(abs), data)
+		return
+	}
+	c.File(abs)
 }
 
 func (s *Server) rerunSegment(c *gin.Context) {
@@ -1234,8 +1276,9 @@ type fileEntry struct {
 
 // listFiles lists the contents of a directory under DATA_ROOT.
 // Query params:
-//   dir    - relative path inside DATA_ROOT (empty = root)
-//   filter - "video" | "audio" | "all" (default "all")
+//
+//	dir    - relative path inside DATA_ROOT (empty = root)
+//	filter - "video" | "audio" | "all" (default "all")
 func (s *Server) listFiles(c *gin.Context) {
 	relDir := filepath.ToSlash(filepath.Clean(c.Query("dir")))
 	if relDir == "." {
