@@ -239,6 +239,253 @@ export interface VoiceProfile {
   validation_error?: string;
 }
 
+export interface LoraAdapterTrainingSummary {
+  rank?: number;
+  alpha?: number;
+  dropout?: number;
+  steps?: number;
+  trainable_params?: number;
+  total_params?: number;
+  duration_control?: boolean;
+  duration_source?: string;
+  baseline_val?: Record<string, unknown>;
+  final_val?: Record<string, unknown>;
+}
+
+export interface LoraAdapterDatasetSummary {
+  source_tier: string;
+  train_features?: string;
+  val_features?: string;
+  train_feature_rows: number;
+  val_feature_rows: number;
+  test_feature_rows: number;
+  feature_splits?: Record<string, unknown>;
+  warnings: string[];
+}
+
+export interface LoraAdapterQualitySummary {
+  status: string;
+  baseline_id?: string;
+  mean_asr?: number;
+  weighted_asr?: number;
+  mean_abs_drift_ms?: number;
+  max_abs_drift_ms?: number;
+  join_quality_failures?: number;
+  final_mix_asr_gate?: boolean;
+}
+
+export interface LoraAdapterVoiceCompatibility {
+  contains_voice_identity: boolean;
+  voice_bias_risk: string;
+  intended_scope: string;
+  compatible_voice_profile_ids: number[];
+  notes: string[];
+}
+
+export interface LoraAdapterNaming {
+  recommended_id: string;
+  recommended_label: string;
+  convention: string;
+  example_production: string;
+}
+
+export interface LoraAdapter {
+  id: string;
+  name: string;
+  run_id: string;
+  run_relpath: string;
+  adapter_relpath: string;
+  summary_relpath?: string;
+  quality_relpath?: string;
+  size_bytes: number;
+  modified_at: string;
+  sha256?: string;
+  is_canonical: boolean;
+  checkpoint_role?: string;
+  checkpoint_step?: number;
+  promotion_status: string;
+  promotion_reasons: string[];
+  training: LoraAdapterTrainingSummary;
+  dataset: LoraAdapterDatasetSummary;
+  quality: LoraAdapterQualitySummary;
+  voice_compatibility: LoraAdapterVoiceCompatibility;
+  naming: LoraAdapterNaming;
+  artifacts: Record<string, unknown>;
+}
+
+export interface LoraAdapterEvidence {
+  id: string;
+  type: string;
+  status?: string;
+  baseline_id?: string;
+  relpath: string;
+  summary?: string;
+  review_pack_relpath?: string;
+  modified_at: string;
+  metrics?: Record<string, unknown>;
+}
+
+export interface LoraAdapterGateStatus {
+  key: string;
+  status: string;
+  reason?: string;
+  evidence?: string;
+}
+
+export interface LoraAdapterRun {
+  id: string;
+  name: string;
+  run_relpath: string;
+  canonical_adapter_id?: string;
+  canonical_adapter_relpath?: string;
+  promotion_status: string;
+  promotion_reasons: string[];
+  checkpoint_count: number;
+  checkpoints: LoraAdapter[];
+  evidence: LoraAdapterEvidence[];
+  gate_status: LoraAdapterGateStatus[];
+  training: LoraAdapterTrainingSummary;
+  dataset: LoraAdapterDatasetSummary;
+  quality: LoraAdapterQualitySummary;
+  voice_compatibility: LoraAdapterVoiceCompatibility;
+  naming: LoraAdapterNaming;
+  artifacts: Record<string, unknown>;
+}
+
+export interface LoraAdapterRuntimeSelection {
+  candidate_execution_enabled: boolean;
+  ml_candidate_execution_enabled: boolean;
+  split_planning_enabled: boolean;
+  adapter_relpath?: string;
+  adapter_id?: string;
+  run_id?: string;
+  matched_registry: boolean;
+  matches_run_canonical: boolean;
+  notes: string[];
+}
+
+export interface LoraTrainingContract {
+  schema_version: string;
+  asset_model: Record<string, unknown>;
+  data_requirements: Record<string, unknown>;
+  objective_gates: Record<string, unknown>;
+  training_decision_policy?: Record<string, unknown>;
+  reference_baselines?: Record<string, Record<string, unknown>>;
+  runner_capabilities?: Record<string, unknown>;
+  phase_gates: Array<{ phase: string; exit: string }>;
+  hard_rejection_reasons: string[];
+  soft_override_reasons: string[];
+  naming_convention: Record<string, unknown>;
+}
+
+export interface LoraTrainingJob {
+  id: number;
+  tenant_key?: string;
+  name: string;
+  status: string;
+  run_id: string;
+  source_tier: string;
+  train_features_relpath: string;
+  val_features_relpath: string;
+  canary_features_relpath: string;
+  output_root_relpath: string;
+  output_dir_relpath: string;
+  adapter_relpath: string;
+  voice_prompt_relpath: string;
+  rank: number;
+  alpha: number;
+  dropout: number;
+  learning_rate: number;
+  max_steps: number;
+  save_every: number;
+  eval_interval: number;
+  text_loss_weight: number;
+  mel_loss_weight: number;
+  duration_control: boolean;
+  duration_source: string;
+  duration_dropout?: number;
+  mel_stop_loss_weight: number;
+  mel_end_loss_weight: number;
+  mel_end_window: number;
+  duration_stop_bce_weight?: number;
+  duration_position_loss_weight?: number;
+  duration_position_loss_window?: number;
+  gradient_checkpointing: boolean;
+  precision: string;
+  execution_mode: string;
+  commands: Record<string, string>;
+  gate_config: Record<string, unknown>;
+  artifacts: Record<string, string>;
+  error_message?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface LoraTrainingJobRequest {
+  name?: string;
+  run_id: string;
+  source_tier?: string;
+  train_features: string;
+  val_features: string;
+  canary_features: string;
+  output_root: string;
+  voice_prompt_relpath: string;
+  rank: number;
+  alpha: number;
+  dropout: number;
+  lr: number;
+  max_steps: number;
+  save_every: number;
+  eval_interval: number;
+  text_loss_weight: number;
+  mel_loss_weight: number;
+  duration_control: boolean;
+  duration_source: string;
+  duration_dropout: number;
+  mel_stop_loss_weight: number;
+  mel_end_loss_weight: number;
+  mel_end_window: number;
+  duration_stop_bce_weight: number;
+  duration_position_loss_weight: number;
+  duration_position_loss_window: number;
+  gradient_checkpointing: boolean;
+  precision: string;
+}
+
+export interface LoraTrainingSmokeResult {
+  status: string;
+  exit_code?: number;
+  output_dir_relpath: string;
+  adapter_relpath?: string;
+  summary_relpath?: string;
+  metrics_relpath?: string;
+  stdout_log_relpath: string;
+  stderr_log_relpath: string;
+  command?: string[];
+  diagnostics?: string[];
+}
+
+export interface LoraTrainingSmokeResponse {
+  training_job: LoraTrainingJob;
+  smoke_result: LoraTrainingSmokeResult;
+}
+
+export interface LoraTrainingFullStartResponse {
+  training_job: LoraTrainingJob;
+  runner_status: string;
+}
+
+export interface LoraTrainingRunnerStartResponse {
+  training_job: LoraTrainingJob;
+  runner_status: string;
+}
+
+export interface LoraTrainingCanaryStartOptions {
+  skip_inference?: boolean;
+  resume?: boolean;
+  sample_ids?: string;
+}
+
 export interface Binding {
   id: number;
   speaker_id: number;
@@ -295,13 +542,22 @@ export const api = {
       body: JSON.stringify({ stage, segment_ids: segmentIds }),
     }),
 
-  listSegments: (id: number, signal?: AbortSignal) => apiFetch<{ segments: Segment[] }>(`/jobs/${id}/segments`, { signal }),
+  listSegments: (id: number, signal?: AbortSignal) =>
+    apiFetch<{ segments: Segment[] }>(`/jobs/${id}/segments`, { signal }),
 
-  listStageRuns: (id: number, signal?: AbortSignal) => apiFetch<{ stage_runs: StageRun[] }>(`/jobs/${id}/stage-runs`, { signal }),
+  listStageRuns: (id: number, signal?: AbortSignal) =>
+    apiFetch<{ stage_runs: StageRun[] }>(`/jobs/${id}/stage-runs`, { signal }),
 
-  listArtifacts: (id: number, signal?: AbortSignal) => apiFetch<{ artifacts: Artifact[] }>(`/jobs/${id}/artifacts`, { signal }),
+  listArtifacts: (id: number, signal?: AbortSignal) =>
+    apiFetch<{ artifacts: Artifact[] }>(`/jobs/${id}/artifacts`, { signal }),
 
-  patchSegment: (jobId: number, segmentId: number, targetText: string, rerun: boolean, voiceProfileId?: number | null) =>
+  patchSegment: (
+    jobId: number,
+    segmentId: number,
+    targetText: string,
+    rerun: boolean,
+    voiceProfileId?: number | null,
+  ) =>
     apiFetch(`/jobs/${jobId}/segments/${segmentId}`, {
       method: "PATCH",
       body: JSON.stringify({
@@ -328,7 +584,7 @@ export const api = {
       {
         method: "PATCH",
         body: JSON.stringify({ src_text: srcText }),
-      }
+      },
     ),
 
   // retrySegmentASR clips the segment's time window out of the job's
@@ -340,11 +596,11 @@ export const api = {
   // Failures map to 409 / 404 / 502 / 500 with the standard error envelope.
   retrySegmentASR: (jobId: number, segmentId: number) =>
     apiFetch<{
-      updated: boolean
-      segment_id: number
-      src_text?: string
-      warning?: string
-      message?: string
+      updated: boolean;
+      segment_id: number;
+      src_text?: string;
+      warning?: string;
+      message?: string;
     }>(`/jobs/${jobId}/segments/${segmentId}/retry-asr`, { method: "POST" }),
 
   rerunSegment: (jobId: number, segmentId: number) =>
@@ -383,16 +639,22 @@ export const api = {
     return key ? `${base}?api_key=${encodeURIComponent(key)}` : base;
   },
 
-  originalAudioUrl: (jobId: number, ordinal: number, v?: number, previewStartMs?: number, previewEndMs?: number): string => {
+  originalAudioUrl: (
+    jobId: number,
+    ordinal: number,
+    v?: number,
+    previewStartMs?: number,
+    previewEndMs?: number,
+  ): string => {
     const key = getApiKey();
     const base = `/jobs/${jobId}/audio/${ordinal}`;
     const params = new URLSearchParams();
     // URLSearchParams.set already encodes values — do NOT wrap with encodeURIComponent
-    if (key) params.set('api_key', key);
+    if (key) params.set("api_key", key);
     // v combines both start and end so any time range change produces a distinct URL
-    if (v !== undefined) params.set('v', String(v));
-    if (previewStartMs !== undefined) params.set('start_ms', String(previewStartMs));
-    if (previewEndMs !== undefined) params.set('end_ms', String(previewEndMs));
+    if (v !== undefined) params.set("v", String(v));
+    if (previewStartMs !== undefined) params.set("start_ms", String(previewStartMs));
+    if (previewEndMs !== undefined) params.set("end_ms", String(previewEndMs));
     const q = params.toString();
     return q ? `${base}?${q}` : base;
   },
@@ -402,6 +664,51 @@ export const api = {
 
   listVoiceProfiles: (signal?: AbortSignal) =>
     apiFetch<{ voice_profiles: VoiceProfile[] }>("/voice-profiles", { signal }),
+
+  listLoraAdapters: (signal?: AbortSignal) =>
+    apiFetch<{
+      adapters: LoraAdapter[];
+      runs?: LoraAdapterRun[];
+      unlinked_evidence?: LoraAdapterEvidence[];
+      runtime_selection?: LoraAdapterRuntimeSelection;
+      training_contract: LoraTrainingContract;
+    }>("/lora/adapters", { signal }),
+
+  getLoraTrainingContract: (signal?: AbortSignal) =>
+    apiFetch<LoraTrainingContract>("/lora/training-contract", { signal }),
+
+  listLoraTrainingJobs: (signal?: AbortSignal) =>
+    apiFetch<{ training_jobs: LoraTrainingJob[] }>("/lora/training-jobs", { signal }),
+
+  getLoraTrainingJob: (id: number, signal?: AbortSignal) =>
+    apiFetch<LoraTrainingJob>(`/lora/training-jobs/${id}`, { signal }),
+
+  createLoraTrainingJob: (data: LoraTrainingJobRequest) =>
+    apiFetch<LoraTrainingJob>("/lora/training-jobs", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  runLoraTrainingJobSmoke: (id: number) =>
+    apiFetch<LoraTrainingSmokeResponse>(`/lora/training-jobs/${id}/run-smoke`, {
+      method: "POST",
+    }),
+
+  startLoraTrainingJobFull: (id: number) =>
+    apiFetch<LoraTrainingFullStartResponse>(`/lora/training-jobs/${id}/start-full`, {
+      method: "POST",
+    }),
+
+  startLoraTrainingJobCanary: (id: number, options: LoraTrainingCanaryStartOptions = {}) =>
+    apiFetch<LoraTrainingRunnerStartResponse>(`/lora/training-jobs/${id}/start-canary`, {
+      method: "POST",
+      body: JSON.stringify(options),
+    }),
+
+  startLoraTrainingJobRegression: (id: number) =>
+    apiFetch<LoraTrainingRunnerStartResponse>(`/lora/training-jobs/${id}/start-regression`, {
+      method: "POST",
+    }),
 
   listFiles: (dir?: string, filter?: "video" | "audio" | "all", signal?: AbortSignal) => {
     const params = new URLSearchParams();
@@ -430,31 +737,33 @@ export const api = {
   validateVoiceProfile: (id: number) =>
     apiFetch<{ voice_profile_id: number; status: string; missing_paths: string[] }>(
       `/voice-profiles/${id}/validate`,
-      { method: "POST" }
+      { method: "POST" },
     ),
 
-  updateVoiceProfile: (id: number, data: {
-    name: string;
-    mode?: string;
-    provider?: string;
-    language?: string;
-    sample_relpaths?: string[];
-    checkpoint_relpath?: string;
-    index_relpath?: string;
-    config_relpath?: string;
-  }) =>
+  updateVoiceProfile: (
+    id: number,
+    data: {
+      name: string;
+      mode?: string;
+      provider?: string;
+      language?: string;
+      sample_relpaths?: string[];
+      checkpoint_relpath?: string;
+      index_relpath?: string;
+      config_relpath?: string;
+    },
+  ) =>
     apiFetch<VoiceProfile>(`/voice-profiles/${id}`, {
       method: "PATCH",
       body: JSON.stringify(data),
     }),
 
-  deleteVoiceProfile: (id: number) =>
-    apiFetch<void>(`/voice-profiles/${id}`, { method: "DELETE" }),
+  deleteVoiceProfile: (id: number) => apiFetch<void>(`/voice-profiles/${id}`, { method: "DELETE" }),
 
   previewVoice: (jobId: number, segmentId: number, voiceProfileId: number) =>
     apiFetch<{ audio_relpath: string; actual_duration_ms: number; preview_url: string }>(
       `/jobs/${jobId}/segments/${segmentId}/preview-voice`,
-      { method: "POST", body: JSON.stringify({ voice_profile_id: voiceProfileId }) }
+      { method: "POST", body: JSON.stringify({ voice_profile_id: voiceProfileId }) },
     ),
 
   previewVoiceUrl: (jobId: number, segmentId: number, voiceProfileId: number): string => {
@@ -464,11 +773,18 @@ export const api = {
     return url;
   },
 
-  upsertBindings: (jobId: number, bindings: { speaker_label: string; voice_profile_id: number }[], rerunAffected?: boolean) =>
+  upsertBindings: (
+    jobId: number,
+    bindings: { speaker_label: string; voice_profile_id: number }[],
+    rerunAffected?: boolean,
+  ) =>
     apiFetch(`/jobs/${jobId}/bindings`, {
       method: "PUT",
       body: JSON.stringify({
-        bindings: bindings.map((b) => ({ speaker_label: b.speaker_label, voice_profile_id: b.voice_profile_id })),
+        bindings: bindings.map((b) => ({
+          speaker_label: b.speaker_label,
+          voice_profile_id: b.voice_profile_id,
+        })),
         rerun_affected: !!rerunAffected,
       }),
     }),
@@ -487,7 +803,9 @@ export const api = {
 
   // ── Segment review ────────────────────────────────────────────────────────
   listSegmentSuggestions: (jobId: number, signal?: AbortSignal) =>
-    apiFetch<{ suggestions: SegmentSuggestion[] }>(`/jobs/${jobId}/segment-suggestions`, { signal }),
+    apiFetch<{ suggestions: SegmentSuggestion[] }>(`/jobs/${jobId}/segment-suggestions`, {
+      signal,
+    }),
 
   acceptSuggestion: (jobId: number, suggestionId: number) =>
     apiFetch(`/jobs/${jobId}/segment-suggestions/${suggestionId}/accept`, { method: "POST" }),
@@ -510,6 +828,5 @@ export const api = {
   confirmSegmentation: (jobId: number) =>
     apiFetch(`/jobs/${jobId}/confirm-segmentation`, { method: "POST" }),
 
-  retryASR: (jobId: number) =>
-    apiFetch(`/jobs/${jobId}/retry-asr`, { method: "POST" }),
+  retryASR: (jobId: number) => apiFetch(`/jobs/${jobId}/retry-asr`, { method: "POST" }),
 };

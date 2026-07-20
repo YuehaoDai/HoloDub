@@ -7,6 +7,7 @@
 // touching call-sites.
 
 import { ref, type Ref } from "vue";
+import { t } from "../i18n";
 
 export type ToastVariant = "info" | "success" | "warning" | "error";
 
@@ -57,7 +58,7 @@ export const toast = {
    * Convenience: show an error from a thrown value with sensible defaults.
    * Recognises ApiError (already imported by callers).
    */
-  fromError(err: unknown, fallback = "操作失败"): void {
+  fromError(err: unknown, fallback = t("操作失败")): void {
     if (err instanceof Error) {
       const code = (err as { code?: string }).code;
       const detail = code ? `[${code}]` : undefined;

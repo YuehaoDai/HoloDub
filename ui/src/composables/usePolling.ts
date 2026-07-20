@@ -39,9 +39,7 @@ export function usePolling<T>(options: UsePollingOptions<T>) {
   let stopped = false;
 
   function intervalValue(): number {
-    return typeof options.intervalMs === "number"
-      ? options.intervalMs
-      : options.intervalMs.value;
+    return typeof options.intervalMs === "number" ? options.intervalMs : options.intervalMs.value;
   }
 
   async function tick() {

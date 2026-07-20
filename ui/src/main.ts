@@ -26,6 +26,14 @@ const router = createRouter({
       path: "/episodes/:id",
       component: () => import("./components/EpisodeDetail.vue"),
     },
+    {
+      path: "/lora-adapters",
+      component: () => import("./components/LoraAdapterManager.vue"),
+    },
+    {
+      path: "/lora-training",
+      component: () => import("./components/LoraTrainingWorkbench.vue"),
+    },
   ],
 });
 

@@ -1,7 +1,10 @@
 <template>
   <div class="waveform-viewer">
-    <label v-if="label" class="block text-[10px] text-[#9db0c9] mb-1">{{ label }}</label>
-    <div ref="containerRef" class="min-h-[80px] rounded bg-[#1e2535]"></div>
+    <label v-if="label" class="hd-label mb-1 block">{{ label }}</label>
+    <div
+      ref="containerRef"
+      class="min-h-[80px] rounded-[8px] border border-[color:var(--hd-border-soft)] bg-black/25"
+    ></div>
   </div>
 </template>
 
@@ -23,8 +26,8 @@ function initWaveSurfer() {
   wavesurfer = WaveSurfer.create({
     container: containerRef.value,
     url: props.audioUrl,
-    waveColor: "#4a6080",
-    progressColor: "#60a5fa",
+    waveColor: "#455565",
+    progressColor: "#20d5ee",
     height: 80,
     barWidth: 1,
     barGap: 1,
@@ -44,7 +47,7 @@ watch(
   () => props.audioUrl,
   () => {
     initWaveSurfer();
-  }
+  },
 );
 </script>
 

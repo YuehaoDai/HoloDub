@@ -6,17 +6,28 @@
         class="fixed inset-0 bg-black/70 flex items-center justify-center z-[60]"
         @click.self="$emit('update:modelValue', false)"
       >
-        <div class="bg-[#1e2535] border border-[#273246] rounded-xl shadow-2xl flex flex-col w-[600px] max-w-[95vw] max-h-[80vh]">
+        <div
+          class="bg-[#1e2535] border border-[#273246] rounded-xl shadow-2xl flex flex-col w-[600px] max-w-[95vw] max-h-[80vh]"
+        >
           <!-- Header -->
-          <div class="flex items-center justify-between px-4 py-3 border-b border-[#273246] shrink-0">
+          <div
+            class="flex items-center justify-between px-4 py-3 border-b border-[#273246] shrink-0"
+          >
             <span class="text-sm font-semibold text-white">
-              {{ multiple ? '选择文件（可多选）' : '选择文件' }}
+              {{ multiple ? t("选择文件可多选") : t("选择文件") }}
             </span>
-            <button class="text-[#9db0c9] hover:text-white transition-colors text-lg leading-none" @click="$emit('update:modelValue', false)">×</button>
+            <button
+              class="text-[#9db0c9] hover:text-white transition-colors text-lg leading-none"
+              @click="$emit('update:modelValue', false)"
+            >
+              ×
+            </button>
           </div>
 
           <!-- Breadcrumb -->
-          <div class="flex items-center gap-1 px-4 py-2 bg-[#111722] border-b border-[#273246] shrink-0 overflow-x-auto">
+          <div
+            class="flex items-center gap-1 px-4 py-2 bg-[#111722] border-b border-[#273246] shrink-0 overflow-x-auto"
+          >
             <button
               class="text-[10px] text-[#9db0c9] hover:text-white transition-colors shrink-0"
               @click="navigateTo('')"
@@ -27,7 +38,11 @@
               <span class="text-[#37465f] shrink-0">/</span>
               <button
                 class="text-[10px] transition-colors shrink-0"
-                :class="i === pathSegments.length - 1 ? 'text-white cursor-default' : 'text-[#9db0c9] hover:text-white'"
+                :class="
+                  i === pathSegments.length - 1
+                    ? 'text-white cursor-default'
+                    : 'text-[#9db0c9] hover:text-white'
+                "
                 @click="i < pathSegments.length - 1 && navigateTo(breadcrumbPath(i))"
               >
                 {{ seg }}
@@ -37,9 +52,16 @@
 
           <!-- File List -->
           <div class="flex-1 overflow-y-auto">
-            <div v-if="loading" class="flex items-center justify-center py-8 text-xs text-[#9db0c9]">加载中…</div>
+            <div
+              v-if="loading"
+              class="flex items-center justify-center py-8 text-xs text-[#9db0c9]"
+            >
+              {{ t("加载中…") }}
+            </div>
             <div v-else-if="loadError" class="px-4 py-4 text-xs text-red-400">{{ loadError }}</div>
-            <div v-else-if="!entries.length" class="px-4 py-8 text-xs text-center text-[#37465f]">此目录为空</div>
+            <div v-else-if="!entries.length" class="px-4 py-8 text-xs text-center text-[#37465f]">
+              {{ t("此目录为空") }}
+            </div>
             <div v-else>
               <!-- Parent dir entry -->
               <button
@@ -70,11 +92,17 @@
                 <!-- Icon -->
                 <span class="text-base shrink-0">{{ entryIcon(entry) }}</span>
                 <!-- Name -->
-                <span class="flex-1 text-xs truncate" :class="entry.is_dir ? 'text-[#9db0c9]' : 'text-[#f2f5f7]'">
+                <span
+                  class="flex-1 text-xs truncate"
+                  :class="entry.is_dir ? 'text-[#9db0c9]' : 'text-[#f2f5f7]'"
+                >
                   {{ entry.name }}
                 </span>
                 <!-- Size -->
-                <span v-if="!entry.is_dir && entry.size_bytes" class="text-[10px] text-[#37465f] shrink-0">
+                <span
+                  v-if="!entry.is_dir && entry.size_bytes"
+                  class="text-[10px] text-[#37465f] shrink-0"
+                >
                   {{ formatBytes(entry.size_bytes) }}
                 </span>
                 <!-- Dir arrow -->
@@ -84,9 +112,15 @@
           </div>
 
           <!-- Footer (multi-select confirm / single-select info) -->
-          <div class="flex items-center justify-between px-4 py-3 border-t border-[#273246] shrink-0">
+          <div
+            class="flex items-center justify-between px-4 py-3 border-t border-[#273246] shrink-0"
+          >
             <span class="text-[10px] text-[#37465f]">
-              {{ multiple ? `已选 ${selectedPaths.size} 个文件` : '点击文件直接选中' }}
+              {{
+                multiple
+                  ? t("已选 {count} 个文件", { count: selectedPaths.size })
+                  : t("点击文件直接选中")
+              }}
             </span>
             <div class="flex gap-2">
               <button
@@ -95,13 +129,17 @@
                 :disabled="selectedPaths.size === 0"
                 @click="confirmMultiple"
               >
-                添加 {{ selectedPaths.size > 0 ? `(${selectedPaths.size})` : '' }}
+                {{
+                  t("添加 {suffix}", {
+                    suffix: selectedPaths.size > 0 ? `(${selectedPaths.size})` : "",
+                  })
+                }}
               </button>
               <button
                 class="text-xs px-3 py-1.5 rounded bg-[#273246] hover:bg-[#37465f] text-[#9db0c9] transition-colors"
                 @click="$emit('update:modelValue', false)"
               >
-                取消
+                {{ t("取消") }}
               </button>
             </div>
           </div>
@@ -114,15 +152,21 @@
 <script setup lang="ts">
 import { ref, computed, watch } from "vue";
 import { api, type FileEntry } from "../api";
+import { useI18n } from "../i18n";
 
-const props = withDefaults(defineProps<{
-  modelValue: boolean;
-  filter?: "video" | "audio" | "all";
-  multiple?: boolean;
-}>(), {
-  filter: "all",
-  multiple: false,
-});
+const { t } = useI18n();
+
+const props = withDefaults(
+  defineProps<{
+    modelValue: boolean;
+    filter?: "video" | "audio" | "all";
+    multiple?: boolean;
+  }>(),
+  {
+    filter: "all",
+    multiple: false,
+  },
+);
 
 const emit = defineEmits<{
   "update:modelValue": [value: boolean];
@@ -136,11 +180,11 @@ const loading = ref(false);
 const loadError = ref("");
 const selectedPaths = ref(new Set<string>());
 
-const pathSegments = computed(() => currentDir.value ? currentDir.value.split("/") : []);
+const pathSegments = computed(() => (currentDir.value ? currentDir.value.split("/") : []));
 
 const sortedEntries = computed(() => {
-  const dirs = entries.value.filter(e => e.is_dir);
-  const files = entries.value.filter(e => !e.is_dir);
+  const dirs = entries.value.filter((e) => e.is_dir);
+  const files = entries.value.filter((e) => !e.is_dir);
   return [...dirs, ...files];
 });
 
@@ -212,12 +256,15 @@ function formatBytes(bytes: number): string {
 }
 
 // Load root when opened
-watch(() => props.modelValue, (val) => {
-  if (val) {
-    currentDir.value = "";
-    entries.value = [];
-    selectedPaths.value = new Set();
-    loadDir("");
-  }
-});
+watch(
+  () => props.modelValue,
+  (val) => {
+    if (val) {
+      currentDir.value = "";
+      entries.value = [];
+      selectedPaths.value = new Set();
+      loadDir("");
+    }
+  },
+);
 </script>

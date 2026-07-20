@@ -1,63 +1,91 @@
 <template>
-  <div class="flex flex-wrap items-center gap-2 mb-3 p-2 bg-[#171b26] rounded-lg border border-[#1e2535]">
-    <!-- 筛选 -->
-    <div class="flex items-center gap-1 text-xs">
-      <span class="text-[#9db0c9] mr-1">筛选：</span>
+  <div class="hd-toolbar mb-3">
+    <div class="flex items-center gap-2 text-xs">
+      <span class="hd-chip hd-chip-muted">
+        <SlidersHorizontal :size="12" />
+        {{ t("筛选") }}
+      </span>
       <button
         v-for="opt in filterOptions"
         :key="opt.value"
-        class="px-2 py-1 rounded transition-colors"
-        :class="filter === opt.value ? 'bg-blue-600 text-white' : 'bg-[#1e2535] text-[#9db0c9] hover:text-white'"
+        class="rounded-[7px] px-2.5 py-1.5 font-semibold transition"
+        :class="
+          filter === opt.value
+            ? 'bg-cyan-300/15 text-cyan-100 ring-1 ring-cyan-300/25'
+            : 'text-[color:var(--hd-text-muted)] hover:bg-white/[0.05] hover:text-white'
+        "
         @click="$emit('update:filter', opt.value)"
       >
         {{ opt.label }}
-        <span v-if="opt.value === 'high-drift' && highDriftCount" class="ml-1 text-[10px] bg-red-800/60 text-red-300 px-1 rounded-full">
+        <span
+          v-if="opt.value === 'high-drift' && highDriftCount"
+          class="ml-1 rounded-full bg-rose-400/20 px-1.5 py-0.5 text-[10px] text-rose-200"
+        >
           {{ highDriftCount }}
         </span>
       </button>
     </div>
 
-    <div class="h-4 w-px bg-[#273246] mx-1"></div>
+    <div class="h-5 w-px bg-[color:var(--hd-border-soft)]"></div>
 
-    <!-- 快捷键 -->
-    <span class="text-[10px] text-[#37465f]">J/K 导航 · Space 播放 · E 编辑</span>
+    <span class="hidden text-[10px] text-[color:var(--hd-text-dim)] md:inline">{{
+      t("J/K 导航 · Space 播放 · E 编辑")
+    }}</span>
 
-    <div class="h-4 w-px bg-[#273246] mx-1"></div>
+    <div class="h-5 w-px bg-[color:var(--hd-border-soft)]"></div>
 
-    <!-- 排序 -->
-    <div class="flex items-center gap-1 text-xs">
-      <span class="text-[#9db0c9] mr-1">排序：</span>
+    <div class="ml-auto flex items-center gap-2 text-xs">
+      <span class="hd-chip hd-chip-muted">
+        <ArrowUpDown :size="12" />
+        {{ t("排序") }}
+      </span>
       <button
         v-for="opt in sortOptions"
         :key="opt.value"
-        class="px-2 py-1 rounded transition-colors"
-        :class="sort === opt.value ? 'bg-[#273246] text-white' : 'bg-transparent text-[#9db0c9] hover:text-white'"
+        class="rounded-[7px] px-2.5 py-1.5 font-semibold transition"
+        :class="
+          sort === opt.value
+            ? 'bg-white/[0.08] text-white'
+            : 'text-[color:var(--hd-text-muted)] hover:bg-white/[0.05] hover:text-white'
+        "
         @click="toggleSort(opt.value)"
       >
         {{ opt.label }}
-        <span v-if="sort === opt.value">{{ sortDir === 'asc' ? '↑' : '↓' }}</span>
+        <span v-if="sort === opt.value" class="ml-1 text-cyan-200">{{
+          sortDir === "asc" ? "↑" : "↓"
+        }}</span>
       </button>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
+import { ArrowUpDown, SlidersHorizontal } from "@lucide/vue";
+import { computed } from "vue";
+import { useI18n } from "../i18n";
+
+const { t } = useI18n();
+
 const emit = defineEmits<{
   "update:filter": [v: "all" | "high-drift" | "unsynthesized"];
   "update:sort": [v: "ordinal" | "drift"];
   "update:sortDir": [v: "asc" | "desc"];
 }>();
 
-const filterOptions = [
-  { value: "all" as const, label: "全部" },
-  { value: "high-drift" as const, label: "高漂移" },
-  { value: "unsynthesized" as const, label: "未合成" },
-];
+const filterOptions = computed(() =>
+  [
+    { value: "all" as const, label: "全部" },
+    { value: "high-drift" as const, label: "高漂移" },
+    { value: "unsynthesized" as const, label: "未合成" },
+  ].map((option) => ({ ...option, label: t(option.label) })),
+);
 
-const sortOptions = [
-  { value: "ordinal" as const, label: "序号" },
-  { value: "drift" as const, label: "漂移率" },
-];
+const sortOptions = computed(() =>
+  [
+    { value: "ordinal" as const, label: "序号" },
+    { value: "drift" as const, label: "漂移率" },
+  ].map((option) => ({ ...option, label: t(option.label) })),
+);
 
 const props = defineProps<{
   filter: "all" | "high-drift" | "unsynthesized";
