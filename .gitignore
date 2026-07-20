@@ -15,6 +15,7 @@
 holodub-api-linux
 holodub-worker-linux
 migrate-output-linux
+lora-shadow-clone-linux
 
 # Test binary, built with `go test -c`
 *.test
@@ -53,6 +54,12 @@ data/tmp/
 data/cache/
 data/voices/
 data/debug-*.log
+# LoRA training / experiment artefacts (large, runtime-generated)
+data/experiments/
+data/source_videos/
+data/training/
+data/validation/
+data/tmp_objective_debug/
 
 # Cursor IDE
 .cursor/
@@ -64,6 +71,10 @@ data/input-smoke*.mp4
 
 # HuggingFace model cache (large files, populated at runtime)
 hf-cache/
+# torch.hub / Demucs weights cache (mounted into ml-service container)
+torch-cache/
+# Local pipeline outputs / scratch render dir
+outputs/
 
 # Video files are not committed to the repository
 *.mp4

@@ -1,5 +1,6 @@
 # Model caches — several GB, not needed inside the build container
 hf-cache/
+torch-cache/
 
 # Runtime data (exclude whole tree — partial ignores still let huge files under data/ into context)
 data/
@@ -17,7 +18,9 @@ demo/
 __pycache__/
 *.py[cod]
 .pytest_cache/
+**/.pytest_cache/
 .mypy_cache/
+**/.mypy_cache/
 
 # Secrets
 .env

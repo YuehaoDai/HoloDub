@@ -32,12 +32,18 @@ services:
       - ${COMPOSE_ENV_FILE:-.env}
     environment:
       DATA_ROOT: /data
+      HF_HOME: /root/.cache/huggingface
+      TORCH_HOME: /root/.cache/torch
+      XDG_CACHE_HOME: /root/.cache
     depends_on:
       redis:
         condition: service_started
     volumes:
+      # Runtime model caches live on the host so container recreation does not
+      # redownload Hugging Face or torch.hub/Demucs weights.
       - ./data:/data
       - ./hf-cache:/root/.cache/huggingface
+      - ./torch-cache:/root/.cache/torch
     # GPU passthrough via nvidia Container Toolkit.
     # Requires: Docker Desktop with WSL2 backend + nvidia runtime (already verified).
     # Remove the deploy block entirely if you want CPU-only mode.
