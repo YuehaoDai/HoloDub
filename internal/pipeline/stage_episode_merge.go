@@ -149,6 +149,19 @@ func (s *Service) runEpisodeMerge(ctx context.Context, task models.TaskPayload) 
 	// rolls back to "video on disk but no manifest" rather than "DB says
 	// merged but no file". Operator intervention is straightforward in the
 	// former case (re-run merge); the latter requires DB surgery.
+	//
+	// 2026-07-21 (P8 follow-up): plain non-chapterized jobs carry zero chapter
+	// bounds, and when the episode duration is also unknown the builder's
+	// episode-duration fallback cannot fire either — derive the window from
+	// each chapter's segment span so the manifest always validates.
+	for i := range chapters {
+		if chapters[i].ChapterEndMs <= chapters[i].ChapterStartMs {
+			if startMs, endMs := s.chapterSegmentSpanMs(ctx, chapters[i].ID); endMs > startMs {
+				chapters[i].ChapterStartMs = startMs
+				chapters[i].ChapterEndMs = endMs
+			}
+		}
+	}
 	manifestRel := ep.GetChaptersJSONRelPath()
 	manifestAbs := storage.ResolveDataPath(s.cfg.DataRoot, manifestRel)
 	manifest := buildChaptersManifest(ep, chapters, finalRelPath, masterStats)
@@ -303,6 +316,28 @@ func hardlinkOrCopy(src, dst string) error {
 // the live Episode + Chapter rows + the just-written episode output path.
 // Loudnorm stats from the Episode row + master pass (if non-nil) are
 // merged into the manifest.
+// chapterSegmentSpanMs returns the [min(start_ms), max(end_ms)) window
+// covered by a chapter job's segments, or (0, 0) when the job has no
+// segments yet. Used to backfill unset chapter bounds for chapters.json
+// on plain non-chapterized episodes.
+func (s *Service) chapterSegmentSpanMs(ctx context.Context, jobID uint) (int64, int64) {
+	segments, err := s.store.ListSegments(ctx, jobID, nil)
+	if err != nil || len(segments) == 0 {
+		return 0, 0
+	}
+	startMs := segments[0].StartMs
+	endMs := segments[0].EndMs
+	for _, seg := range segments[1:] {
+		if seg.StartMs < startMs {
+			startMs = seg.StartMs
+		}
+		if seg.EndMs > endMs {
+			endMs = seg.EndMs
+		}
+	}
+	return startMs, endMs
+}
+
 func buildChaptersManifest(
 	ep *models.Episode,
 	chapters []models.Job,
