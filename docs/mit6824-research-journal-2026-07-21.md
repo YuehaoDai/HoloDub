@@ -461,6 +461,17 @@ v7 durationpos adapter 改变了速率行为。需要用"adapter 装载态"重�
 - **L8 验收路径完全打通**：用户标准接受命令即可（无需 override），系统性信号以 warning 留存。
 - READ_ME_FIRST 已同步简化。
 
+## 26. L2 完成 + P8 端到端验证（22:04 UTC）
+
+- **L2（job 364）全部 25 段合成完成**：含最后一段 16464 在 attempt 8 压哨通过
+  （11.655s/11.64s，漂移 0.13%，judge 满分）。**F4 advance=true 让 tts→merge 自动衔接**，
+  整 job 无手工干预完成（F4 端到端验证）。
+- **L2 diff：overall PASS**。可比较指标 judge_score_mean 0.984 vs baseline 0.994
+  （-1.01%，WARN 在 5% 阈值内）。报告存 `docs/quality-mainline-q/results/2026-07-21-10min.json`。
+- **P8 补刀并端到端验证**：ep184（duration_ms=0 且章界为 0 的双零场景）episode merge
+  现在通过并写出 chapters.json（段跨度回填 1460-60023=58.563s），已提交（b191555d）。
+- **验证轨收尾**：L1 PASS + L2 PASS（带 F1-F4），L3 放弃。当前栈健康度成立。
+
 ## 待续
 
 - [ ] 16262 / 16364 / 16416 墙段攻坚结果
