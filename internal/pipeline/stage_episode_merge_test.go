@@ -221,3 +221,34 @@ func TestEpisodeMergeShouldUpdateCompletedStatus_SkipsAlreadyCompleted(t *testin
 		t.Fatal("active episode merge should still mark episode completed")
 	}
 }
+
+// 2026-07-21 (P8): plain non-chapterized jobs carry ChapterStartMs/EndMs=0,
+// which previously made ep_episode_merge fail WriteChaptersJSON with
+// "chapters[0] invalid range [0, 0)". The builder must backfill the single
+// chapter to the episode duration instead of failing the whole merge.
+func TestBuildChaptersManifest_BackfillsUnsetChapterBounds(t *testing.T) {
+	ep := &models.Episode{Name: "Smoke", DurationMs: 60000}
+	ep.ID = 184
+	chapters := []models.Job{{ChapterOrdinal: 1}}
+	chapters[0].ID = 363
+
+	m := buildChaptersManifest(ep, chapters, "episodes/184/output/vp0/final.mp4", nil)
+	if got := m.Chapters[0].StartMs; got != 0 {
+		t.Fatalf("StartMs: want 0, got %d", got)
+	}
+	if got := m.Chapters[0].EndMs; got != 60000 {
+		t.Fatalf("EndMs: want episode duration 60000, got %d", got)
+	}
+	if err := m.Validate(); err != nil {
+		t.Fatalf("manifest with backfilled bounds fails Validate: %v", err)
+	}
+
+	// Episode duration unknown (0): original zero range is preserved so
+	// genuine data bugs still fail loudly at validation time.
+	ep2 := &models.Episode{Name: "Broken"}
+	ep2.ID = 999
+	m2 := buildChaptersManifest(ep2, chapters, "out", nil)
+	if err := m2.Validate(); err == nil {
+		t.Fatal("zero-range chapter with unknown episode duration must still fail validation")
+	}
+}

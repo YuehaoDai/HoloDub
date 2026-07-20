@@ -312,23 +312,34 @@ func buildChaptersManifest(
 	entries := make([]episodepkg.ChapterEntry, 0, len(chapters))
 	var totalDur int64
 	for _, ch := range chapters {
-		dur := ch.ChapterEndMs - ch.ChapterStartMs
+		startMs, endMs := ch.ChapterStartMs, ch.ChapterEndMs
+		if endMs <= startMs {
+			// Plain non-chapterized jobs never populate chapter bounds
+			// (start=end=0), which WriteChaptersJSON rejects. A single
+			// chapter then spans the whole episode; keep the original
+			// values when the episode duration is also unknown so genuine
+			// data bugs still fail loudly at validation time.
+			if ep.DurationMs > 0 {
+				startMs, endMs = 0, ep.DurationMs
+			}
+		}
+		dur := endMs - startMs
 		if dur < 0 {
 			dur = 0
 		}
 		entries = append(entries, episodepkg.ChapterEntry{
 			Ordinal:         ch.ChapterOrdinal,
 			JobID:           ch.ID,
-			StartMs:         ch.ChapterStartMs,
-			EndMs:           ch.ChapterEndMs,
+			StartMs:         startMs,
+			EndMs:           endMs,
 			DurationMs:      dur,
 			TitleSource:     ch.ChapterTitle,
 			TitleTranslated: ch.ChapterTitleTranslated,
 			SummaryMD:       ch.ChapterSummaryMD,
 			OutputRelPath:   ch.OutputRelPath,
 		})
-		if ch.ChapterEndMs > totalDur {
-			totalDur = ch.ChapterEndMs
+		if endMs > totalDur {
+			totalDur = endMs
 		}
 	}
 
