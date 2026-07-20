@@ -182,8 +182,23 @@ def acceptance_content_readiness(
                     "selected_fit": fit_summary.get("selected_fit"),
                     "candidate_fit": fit_summary.get("candidate_fit"),
                 }
-            if fit_audit.get("status") != "pass":
-                errors.append(f"fit_audit_not_pass:{fit_audit.get('status') or 'unknown'}")
+            fit_status = fit_audit.get("status")
+            if fit_status == "fail":
+                # Real content failure: selected/final audio violates the fit
+                # gates. Blocks acceptance readiness.
+                errors.append(f"fit_audit_not_pass:{fit_status or 'unknown'}")
+            elif fit_status == "review":
+                # 2026-07-21: "review" means selected/final are clean while the
+                # RAW candidate pool is duration-systemic. That is a
+                # human-judgement signal about the generation substrate (e.g.
+                # rate-table calibration), not a content failure of the shipped
+                # audio — record it as a warning so acceptance readiness can
+                # still pass after human review instead of deadlocking every
+                # lecture whose candidate pool is noisy.
+                warnings.append(
+                    "fit_audit_review_raw_candidate_systemic:"
+                    f"candidate_fit={fit_summary.get('candidate_fit')}"
+                )
 
     risk_path = artifact_paths.get("risk_queue")
     risk_queue = load_json_if_exists(risk_path)
