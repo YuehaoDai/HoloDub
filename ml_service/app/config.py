@@ -113,7 +113,11 @@ class Settings(BaseSettings):
     indextts2_duration_control_mode: str = "off"
     # Supported values: constant, piecewise. Piecewise follows the first
     # threshold whose target seconds are greater than the request duration.
-    indextts2_duration_token_rate: float = 50.0
+    # 2026-07-21 calibration: controlled probe on the production voice/model
+    # measured ~30 mel tokens per second of output audio (rate 50 over-produced
+    # ~1.67x on a 24.84s target; rate 30 landed 24.997s). The previous default
+    # 50.0 was the outlier; the piecewise table below already brackets ~30.
+    indextts2_duration_token_rate: float = 30.0
     indextts2_duration_token_rate_policy: str = "constant"
     indextts2_duration_piecewise_token_rates: str = "15:23.4375,23:30,default:32.5"
     indextts2_duration_control_min_sec: float = 15.0
