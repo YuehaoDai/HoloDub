@@ -2,20 +2,26 @@
 
 <div align="center">
 
-  <img src="./header.svg" alt="HoloDub Logo" width="100%">
+  <img src="./header.svg" alt="HoloDub" width="100%">
 
-  <h3>Holographic Audio Dubbing with Perfect Sync</h3>
-  <p>全息音频配音 · 智能语义切分 · 时长精准对齐</p>
+  <h3>自托管 AI 视频配音系统，让翻译后的声音依然贴着原片节奏走。</h3>
+
+  <p>
+    时间轴优先 · 智能 ASR 切分 · 时长感知 TTS · 零样本声纹克隆 · 可观测操作台
+  </p>
 
   <p>
     <a href="https://golang.org/">
-      <img src="https://img.shields.io/badge/Go-1.25+-00ADD8?style=flat&logo=go&logoColor=white" alt="Go Version">
+      <img src="https://img.shields.io/badge/Go-1.25+-00ADD8?style=flat&logo=go&logoColor=white" alt="Go">
     </a>
     <a href="https://www.python.org/">
-      <img src="https://img.shields.io/badge/Python-3.10+-3776AB?style=flat&logo=python&logoColor=white" alt="Python Version">
+      <img src="https://img.shields.io/badge/Python-3.10+-3776AB?style=flat&logo=python&logoColor=white" alt="Python">
     </a>
     <a href="#">
-      <img src="https://img.shields.io/badge/Model-IndexTTS2-FF6F00?style=flat" alt="IndexTTS2">
+      <img src="https://img.shields.io/badge/Vue-3-42B883?style=flat&logo=vuedotjs&logoColor=white" alt="Vue">
+    </a>
+    <a href="#">
+      <img src="https://img.shields.io/badge/TTS-IndexTTS2-FF6F00?style=flat" alt="IndexTTS2">
     </a>
     <a href="https://www.apache.org/licenses/LICENSE-2.0">
       <img src="https://img.shields.io/badge/License-Apache%202.0-green.svg" alt="License">
@@ -23,874 +29,317 @@
   </p>
 
   <p>
-    <a href="README.md">📖 English README</a>
+    <a href="README.md">English README</a>
+    ·
+    <a href="docs/README.md">文档导航</a>
+    ·
+    <a href="docs/openapi.yaml">OpenAPI</a>
   </p>
 
 </div>
 
-> Dub the whole performance, not just the words.  
-> 不止翻译台词，而是重现整场表演。
+> 不只是翻译台词，而是重新配出整场表演。
 
-## 🎬 运行案例 — 英语 → 中文（IndexTTS2，RTX 5080）
+HoloDub 是一个面向创作者、字幕组、教育内容团队和小型工作室的本地优先配音系统。它让你在自己的 GPU、自己的模型、自己的数据目录里完成长视频译制，而不是把素材、声音和工作流交给一个黑盒 SaaS。
 
-MIT 6.824 分布式系统完整课程（79 分钟，626 段）。零样本声纹克隆配音，无需任何训练。
+它不满足于“翻译字幕 + 套一条 AI 声音”。HoloDub 围绕原视频时间轴重构音轨：先识别语义边界，再做时长受控翻译，用指定音色合成每段语音，测量漂移，暴露弱段，最后把可检查、可重跑、可追踪的结果合成回视频。
 
-**B 站观看**：[HoloDub 配音演示 — MIT 6.824 分布式系统课程（英→中）](https://www.bilibili.com/video/BV1vrwszEELd/)
+## 为什么需要 HoloDub
 
-流水线：`Faster-Whisper large-v3`（ASR）→ `Qwen-turbo`（翻译）→ `IndexTTS2 FP16`（零样本 TTS）· RTX 5080 总耗时约 52 分钟（79 分钟视频）
+真实配音流水线里，最麻烦的往往不是“能不能生成声音”，而是这些细节：
 
----
+- 字幕翻译出来了，但配音塞不回原画面。
+- TTS 声音很好听，却总是慢半拍或快半拍。
+- 长视频跑到一半失败，却不知道卡在哪个阶段、哪一段。
+- 一个 ASR 错字或边界错误，不应该重跑整条视频。
+- 私有素材、商业内容、定制音色，不一定适合上传到第三方平台。
 
-HoloDub 是一个 **面向创作者、自托管的视频翻译与配音工具箱**。
+HoloDub 选择另一条路：你控制模型，你控制数据，你控制最终声音。
 
-它主要服务于这样一群人：
+## 当前已经能做什么
 
-- 想把 YouTube / B 站 / TikTok 视频搬运到其他语种平台的 UP / 博主  
-- 做剪辑、二创、混剪的个人创作者、小团队  
-- 想在本地 GPU 主机或云服务器上，用自己的模型做“私有译制”的字幕组 / Studio  
+- 用 Docker Compose 跑通端到端视频配音流水线。
+- 通过 Faster-Whisper 词级时间戳和 VAD 信号，生成语义更自然的切分段落。
+- 接入 OpenAI 兼容翻译接口，例如 DeepSeek、Qwen 兼容网关或自建服务。
+- 使用 IndexTTS2 进行时长感知 TTS，并支持短参考音频的零样本声纹克隆。
+- 只重跑失败段、高漂移段或被人工修改过的段，而不是重跑整个视频。
+- 在 UI 里审核 ASR 边界、合并/拆分片段、调整时间、编辑原文、重识别单段。
+- 在操作台查看模型预热、阶段进度、输出文件、漂移率、AI 评分、弱段和当前错误。
+- 暴露 Prometheus 指标，并提供 Grafana、OpenAPI、发布和部署文档骨架。
 
-HoloDub 的目标不是“翻完字幕 + 随便套一条 AI 配音”，  
-而是围绕整条时间轴，**重构音轨**，尽量接近「原生配音」的观看体验：
+## 操作台设计
 
-> 核心能力：**智能语义切分 + 时长感知 TTS（Duration-aware TTS）**
+HoloDub 的 UI 已按“可观测配音工作台”重构。任务不再是一个黑盒：每个阶段、每个片段、每个输出文件和每个时间漂移都应该能被看见。
 
----
+![HoloDub 可观测操作台](assets/holodub-console-observability.png)
 
-## ✨ 主要特性
+段落工作台服务于真正的精修工作：筛选高漂移段、对比原声与 TTS、查看波形、编辑译文、切换音色、只重跑有问题的行。
 
-### 🎬 时间轴优先的配音工作流
+![HoloDub 段落精修工作台](assets/holodub-segment-workbench.png)
 
-- **智能语义切分（Smart Semantic Split）**
-  - 基于 Whisper 的 **单词级时间戳 ASR**。
-  - 结合 Pyannote 的 VAD 静音检测。
-  - 按“语义 + 停顿”拆分片段，而不是机械按固定时长切。
-  - 可配置片段时长窗口（例如 2–15 秒 / 段）。
+上面的图是本次 UI 改造使用的设计图例，当前 Vue 3 + Tailwind 实现已经沿用这套视觉系统。接入 Go API 和 Worker 后，界面会展示真实任务数据。
 
-- **时长感知 TTS（Duration-aware TTS, IndexTTS2）**
-  - 每个片段记录「原始时长」，作为 TTS 的硬约束输入。
-  - 利用 IndexTTS2 的时长控制能力，使合成语音的长度尽量贴近原片段。
-  - 必要时配合 `atempo` 等轻量时间拉伸手段，保证「音画尽量对齐」。
+## 公开生产案例
 
-### 🗣 多说话人 + 自定义音色
+HoloDub 已经从单次 Demo 走向连续公开生产，支撑完成 MIT 6.824 分布式系统课程英译中系列：
 
-- **说话人聚类（Speaker Diarization）**
-  - 对整条人声做说话人识别和聚类（例如 `SPK_01`、`SPK_02`）。
-  - 每个切分片段都会绑定一个说话人 ID。
+- 系列范围：Lecture 1-7。
+- 公开成片：7 集，共 561.7 分钟（9.36 小时）。
+- B 站观看：[HoloDub 支撑制作的 MIT 6.824 英译中系列](https://www.bilibili.com/video/BV1uYXFBLEPo/)。
 
-- **自定义音色配置（Voice Profiles）**
-  - `sample` 模式：  
-    上传若干段参考音频，即可做 zero-shot 声纹克隆。
-  - `checkpoint` 模式：  
-    直接加载已有的 SoVITS / IndexTTS 风格检查点  
-    （`.pth/.ckpt + .index + config`）。
-  - 支持统一管理模型路径、说话人 ID、语种标签等元数据。
+该系列用于证明多集长视频的连续、可重复生产能力。这是团队自行制作并公开发布的作品案例，不是客户项目或付费商业案例；以上数字只描述公开成片数量与时长，不代表播放表现或第三方质量认证。
 
-- **说话人与音色映射（Speaker → Voice Mapping）**
-  - 面向每条视频任务（Job）：  
-    为 `SPK_01 / SPK_02 / …` 分别选择不同的 Voice Profile。
-  - 一个视频里，可以让主持人、嘉宾、旁白用完全不同的音色。
-  - 修改映射后，可以只对受影响的片段重新生成配音。
+## 代表性技术基准
 
-### 🚀 创作者友好 & 自托管
+其中一条完整长视频作为受控条件下的代表性技术基准：
 
-- **想跑在哪儿就跑在哪儿**
-  - 本地带 GPU 的桌面机 / NAS。
-  - 云服务器上的单卡 / 双卡实例。
-  - 默认不依赖任何第三方 SaaS。
+- 输入：英语讲座视频，79 分钟，626 个段落。
+- 流水线：Faster-Whisper large-v3 -> Qwen 兼容翻译 -> IndexTTS2 FP16。
+- 硬件：RTX 5080，Docker + WSL2。
+- 结果：完整英语到中文配音视频，模型预热后端到端约一小时。
+- 时长：验证运行中平均段落漂移低于 1%；异常段会进入再翻译或人工审查视图。
 
-- **默认单节点架构**
-  - 简单的“一机版”拓扑：
-    - Go 控制面（API + Worker）
-    - Python ML 服务（GPU 推理）
-    - PostgreSQL + Redis
-  - 全部通过 Docker Compose 拉起来即可。
+希望快速了解效果，可观看早期 10 分钟版 [HoloDub B 站快速演示](https://www.bilibili.com/video/BV1vrwszEELd/)。
 
-- **数据都在自己手里**
-  - 视频 / 音频 / 文本 / 模型统一存放在 `/data` 目录。
-  - 数据库只保存 **相对路径**（例如 `jobs/101/input.mp4`），迁移和备份更简单。
+## 核心流水线
 
----
+```mermaid
+flowchart LR
+  A["视频输入"] --> B["media"]
+  B --> C["separate"]
+  C --> D["asr_smart"]
+  D --> E["segment_review"]
+  E --> F["translate"]
+  F --> G["tts_duration"]
+  G --> H["merge"]
+  H --> I["final.mp4"]
+```
 
-## 🧱 架构概览（简版）
+每个阶段都是显式的、可追踪的：
 
-> 不看这一段也可以用；  
-> 想二开 / 魔改时，这一段能帮你快速搞清楚结构。
+| 阶段             | 做什么                                        |
+| ---------------- | --------------------------------------------- |
+| `media`          | 归一化并准备源媒体。                          |
+| `separate`       | 可选的人声/BGM 分离。                         |
+| `asr_smart`      | 生成词级 ASR 和语义语音片段。                 |
+| `segment_review` | 让 LLM 提出安全的边界修正建议，可选人工确认。 |
+| `translate`      | 生成适合配音、受时长约束的译文。              |
+| `tts_duration`   | 按目标时长和音色约束合成每个片段。            |
+| `merge`          | 把对齐后的配音重组回最终视频。                |
 
-### 控制面（Go）
+## 架构
 
-- 使用 Go 1.25+、Gin、GORM。
-- 驱动任务在以下阶段流转：
+```mermaid
+flowchart TB
+  UI["Vue 3 操作台"] --> API["Go API"]
+  API --> DB[("PostgreSQL")]
+  API --> Redis[("Redis 队列")]
+  Worker["Go Worker"] --> Redis
+  Worker --> DB
+  Worker --> ML["Python ML Service"]
+  Worker --> LLM["OpenAI 兼容 LLM"]
+  ML --> Models["Faster-Whisper / Pyannote / IndexTTS2 / Demucs"]
+  API --> Data["/data 共享存储"]
+  ML --> Data
+  Worker --> Data
+```
 
-  `media` → `separate` → `asr_smart` → `segment_review` → `translate` → `tts_duration` → `merge`
+HoloDub 默认适合单机部署：
 
-  - `segment_review` **默认开启**：ASR 完成后任务进入 `awaiting_review`，操作员可在前端审查、合并、拆分、调整时间，并修正 ASR 文本，确认无误后再进入 `translate`。可设 `SEGMENT_REVIEW_ENABLED=false` 关闭，自动直通翻译。
+- Go 控制面：Gin、GORM、Worker 编排、队列、API、嵌入式 UI。
+- Python 数据面：FastAPI、PyTorch、ASR、VAD、分离、TTS、模型注册表、GPU 并发控制。
+- 存储：PostgreSQL 元数据 + Redis 队列 + `/data` 媒体和产物目录。
+- 前端：Vue 3、Vite、Tailwind CSS、WaveSurfer.js、lucide 图标。
+- 可观测性：结构化日志、Prometheus 指标、Grafana dashboard、readyz、模型预热状态。
 
-- 在 PostgreSQL 中维护：
-  - `jobs`：每条视频一个 Job。
-  - `voice_profiles`：音色配置。
-  - `speakers`：任务内的逻辑说话人。
-  - `speaker_voice_bindings`：说话人与音色绑定关系。
-  - `segments`：切分片段（翻译 & TTS 的最小单位）。
-  - `segment_suggestions`：`segment_review` 阶段 LLM 生成的合并 / 拆分建议。
+## 快速开始
 
-- 基于 Redis 做任务队列：
-  - Job 级阶段任务（如 `job:123:stage:asr_smart`）。
-  - 需要的时候可细化到 Segment 级别的 TTS 子任务。
-
-- 对接 LLM（Qwen / DeepSeek 等）做翻译：
-  - Prompt 会对「配音友好、长度接近」做约束，尽量避免译文过长或过短。
-
-### 数据面（Python / GPU）
-
-- 使用 Python 3.10+、FastAPI、PyTorch。
-- 提供全局 GPU 锁 / 信号量，避免 OOM。
-- 使用模型注册表管理：
-  - Demucs / UVR5：人声 / 伴奏分离。
-  - Faster-Whisper：ASR + 单词级时间戳。
-  - Pyannote：VAD + 说话人识别。
-  - IndexTTS2：时长感知 TTS。
-
-- 通过 HTTP 提供接口，例如：
-  - `POST /asr/smart_split`：
-    - 输入：`audio_path`（相对路径）、最小/最大片段时长。
-    - 输出：包含 `start_ms` / `end_ms` / `text` / `speaker_label` / `split_reason` 的片段列表。
-  - `POST /asr/transcribe_segment`：
-    - 输入：音频相对路径 + `start_ms` / `end_ms`。
-    - 输出：该窗口对应的整段文本，供前端「↻ 重新识别」按钮调用。
-  - `POST /tts/run`：
-    - 输入：译文、`target_duration_sec`、`voice_config`、`output_relpath`。
-    - 输出：音频保存路径 + 实际生成时长。
-  - `GET /healthz`（轻量存活探针）与 `GET /readyz`（就绪探针；IndexTTS2 预热未完成时返回 503）。
-
-### 存储与路径约定
-
-- 宿主机 `./data` 挂载为所有容器内的 `/data`。
-- 数据库只保存相对路径（例如 `jobs/101/input.mp4`）。
-- 应用运行时通过 `DATA_ROOT` 环境变量组装绝对路径。
-
----
-
-## 📊 数据模型要点
-
-- **jobs**：一条完整视频任务的生命周期。
-- **voice_profiles**：抽象“音色配置”的元信息。
-- **speakers**：单个任务内部的逻辑说话人（`SPK_01`、`SPK_02` 等）。
-- **speaker_voice_bindings**：`speaker_id` → `voice_profile_id` 的映射。
-- **segments**：
-  - 包含 `start_ms` / `end_ms` / `original_duration_ms`。
-  - `src_text`（ASR 文本）与 `tgt_text`（翻译文本）。
-  - `tts_audio_path` / `tts_duration_ms`。
-  - `voice_profile_id`（段级音色覆盖；为空时回退到说话人绑定）。
-  - `status`（强类型生命周期：`pending` → `translated` → `synthesized`，带显式状态机校验）。
-  - `meta` JSON（段级质量标签等）。
-  - `split_reason`：`punctuation` / `silence_gap` / `max_duration` / `speaker_change` / `manual_split` / `merged` / …
-- **segment_suggestions**：
-  - `segment_review` 阶段 LLM 产出的审查建议（当前仅 `merge`，`split` 已规划）。
-  - 每条指向一组现有 segment，附带 `confidence` 与 `reason`。
-  - 状态：`pending` → `accepted`（已应用到 `segments`）/ `rejected`（仅标记，不触发动作）。
-
----
-
-## 🚦 当前状态
-
-- [x] 架构与数据模型设计完成
-- [x] 说话人与音色映射抽象完成
-- [x] Go 控制面（API + Worker）
-- [x] Python ML 服务（FastAPI）
-- [x] 烟测模式端到端（mock / ffmpeg_stub / silence）
-- [x] **真实 ASR**：Faster-Whisper large-v3，GPU 加速，词级时间戳
-- [x] **真实翻译**：OpenAI 兼容接口（已测 qwen-turbo / DeepSeek）
-- [x] **真实 TTS（兜底方案）**：Edge-TTS（微软，免费，中文自然语音）— 无 GPU 时可用，IndexTTS2 启用后即视为 fallback
-- [x] GPU 直通（NVIDIA Container Toolkit + Docker Compose `deploy.devices`）
-- [x] **IndexTTS2 内联集成**：`indextts2-inference` 集成进 `ml-service`，零样本声纹克隆
-- [x] **IndexTTS2 真实推理验证**：英语 → 中文，RTF 1.47x（RTX 5080）
-- [x] **asyncio 阻塞 bug 修复**：所有 ML 路由改用 `run_in_executor`，GPU 推理期间 healthz 保持响应
-- [x] **时长感知翻译**：第一遍翻译携带基于片段时长计算的字数约束；TTS 音频溢出超出尾随静音 gap 时触发 Kimi-k2.5 再翻译
-- [x] **漂移率驱动再翻译（≤6%）**：当 `|实际 − 目标| / 目标 > 6%` 时触发再翻译；最多 10 次，每次将上一轮文本、时长、漂移注入 prompt；达标或达上限后停止
-- [x] **彻底去除 atempo**：时长对齐改为 gap 借用 + 再翻译循环，不再产生速度失真
-- [x] **ASR 切分优化**：仅句尾标点触发切分，最少 5 词，800ms 静音阈值，短段后处理合并；默认最小 4s / 最大 20s
-- [x] **amix 音量 bug 修复**：所有 amix 加 `normalize=0`；此前多段视频音量被除以段数（81 段时衰减 38 dB）
-- [x] **ffmpeg 分批 merge**：每批最多 30 段，避免 `filter_complex` 在大视频上的 O(N²) 卡死；merge 阶段 lease 冲突时任务重新入队，不再丢失
-- [x] **TTS 结果即时入库**：每段合成后立即写 DB，超时重试只处理未完成的段
-- [x] **TTS 并发**：Worker 端 `TTS_CONCURRENCY=2` 同时发送请求；ml-service `GPU_CONCURRENCY=2` 支持 2 路并行 GPU 推理，提升吞吐
-- [x] **79 分钟完整视频验证**：626 段，英语 → 中文，完整流水线端到端跑通
-- [ ] 真实人声 / 伴奏分离（Demucs，需 `ML_PYTHON_EXTRAS=real`）
-- [ ] 说话人分离（Pyannote，需 HuggingFace token）
-- [x] **BigVGAN CUDA kernel 在 Blackwell / sm_120 上编译失败**：改用 devel 镜像 + 去掉未使用的 `#include <cuda_profiler_api.h>` + 通过 `docker/precompile_bigvgan.py` 在构建期模拟目标 GPU 编译，把 `.so` 直接烤进 IndexTTS 在 site-packages 的精确缓存目录；RTX 5080 启动时 < 5 秒加载，无需运行时 JIT
-- [x] **段落审查阶段（`segment_review`）**：LLM 自动产出合并 / 拆分建议；任务停在 `awaiting_review`，操作员可以采纳 / 否决建议、手动合并 / 拆分 / 调整时间，确认后通过 `POST /jobs/:id/confirm-segmentation` 进入翻译
-- [x] **段级 ASR 原文手动编辑（Wave 1）**：`PATCH /jobs/:id/segments/:segmentId` 接受 `src_text`，可在审查阶段修正 Whisper 识别错误（8 KiB 上限，仅 `awaiting_review` 阶段允许）；只更新 `source_text + updated_at`，不触碰时间轴和状态
-- [x] **段级 ASR 重新识别（Wave 2）**：`POST /jobs/:id/segments/:segmentId/retry-asr` 用 ffmpeg 切出该段在 `vocals.wav` 上的窗口，单独跑一遍 faster-whisper 替换 `source_text`；只针对一段，不影响其他段落、建议或手动编辑
-- [x] **`/readyz` 独立就绪探针 + IndexTTS2 预热看门狗**：`/readyz` 在 `tts_warmup_status` 为 `loading` / `error` 时返回 503；后台守护线程每 30s 心跳，加载线程消失（segfault / OOM kill）或超过 30 分钟硬超时立刻置为 `error` 并刷新日志
-- [x] **IndexTTS2 启动时预加载模型**：当 `INDEXTTS2_INLINE=true` 时，ml-service 启动即后台加载；用 event + state-machine 协议，重型构造在锁外运行，加载线程崩溃也不会让后续 TTS 请求被未释放的锁卡死
-- [x] **可观测性 + CI 加固**：`golangci-lint` / `ruff` / `mypy` / `eslint` 多语种代码质量门禁、`govulncheck` / `pip-audit` / Trivy / gitleaks 安全扫描、Dependabot、`docs/openapi.yaml`（Redocly 校验）、Prometheus 指标（`holodub_external_calls_total`、`holodub_ml_*`）、`docs/observability/` Grafana dashboard + Prometheus rules、Helm chart 骨架、多架构 goreleaser 配置
-- [ ] 使用中文参考音频改善韵律（当前默认使用英文片段，导致轻微语速不一致）
-
-欢迎一起参与开发、提 Issue / PR。
-
----
-
-## ▶ 运行当前原型
-
-### 前置条件
-
-- **Docker Desktop** 已安装并运行（Windows 使用 WSL2 后端）
-- NVIDIA GPU 用户需额外安装 **NVIDIA Container Toolkit**（Docker Desktop 自带 nvidia runtime 支持时可跳过）
-
-### 模式一：烟测（无需 GPU / API Key）
+### 1. 烟测模式：无需 GPU，无需 API key
 
 ```powershell
 Copy-Item .env.example .env
 docker compose up --build -d
 ```
 
-默认配置为 mock 后端，无需任何外部依赖，可验证整条流水线。
+提交测试任务：
 
 ```powershell
-# 提交测试任务
 $body = '{"input_relpath":"input-smoke.mp4","target_language":"zh","auto_start":true}'
 Invoke-RestMethod -Uri "http://127.0.0.1:8080/jobs" -Method POST -ContentType "application/json" -Body $body
 ```
 
-打开 **http://localhost:8080/ui/** 查看进度，输出在 `data/jobs/<id>/output/final.mp4`。
+打开操作台：
 
-### 模式二：接入真实后端（推荐）
+```text
+http://localhost:8080/ui/
+```
 
-#### 第一步：翻译（只需 API Key）
+烟测模式使用 mock 翻译、mock ASR 和占位 TTS，适合先验证编排、队列、数据库和 UI。
 
-在 `.env` 中填写：
+### 2. 接入真实翻译
+
+在 `.env` 中配置 OpenAI 兼容接口：
 
 ```env
-TRANSLATION_PROVIDER=openai_compatible
-OPENAI_BASE_URL=https://api.deepseek.com/v1   # 或阿里云 / OpenAI 等任意兼容接口
-OPENAI_API_KEY=sk-xxxxxx
-OPENAI_MODEL=deepseek-chat
-```
-
-推荐 **DeepSeek**（国内可访问、极低价格、中文效果好）。
-
-#### 第二步：真实 ASR + TTS（需要 GPU）
-
-在 `.env` 中修改：
-
-```env
-ML_PYTHON_EXTRAS=real
-ML_ASR_BACKEND=faster_whisper
-FASTER_WHISPER_MODEL=large-v3     # 推荐；显存 < 6GB 可用 medium
-
-# 默认推荐的 TTS 后端：IndexTTS2（零样本声纹克隆 + 时长感知，内联在 ml-service 中）
-ML_TTS_BACKEND=indextts2
-INDEXTTS2_INLINE=true
-
-# 没有 GPU 时的兜底方案：Edge-TTS（微软免费，无需 API key）
-# 所有说话人共用一个预设音色，不支持声纹克隆
-# ML_TTS_BACKEND=edge_tts
-```
-
-重建 ml-service 镜像（首次约 10 分钟，主要是下载 PyTorch）：
-
-```powershell
-docker compose build ml-service
-docker compose --env-file .env up -d
-```
-
-> ⚠️ **重要**：务必用 `--env-file .env` 或确保环境变量 `COMPOSE_ENV_FILE` 未被设置为 `.env.example`，否则容器会读取旧配置。
-
-#### 第三步：Whisper 模型缓存（避免每次重启重新下载）
-
-首次运行时，ml-service 会自动从 HuggingFace 下载 Whisper 模型（large-v3 约 3GB）。  
-为避免每次重启容器都重新下载，`docker-compose.yml` 已将 `./hf-cache` 挂载到容器的 HuggingFace 缓存目录：
-
-```
-./hf-cache:/root/.cache/huggingface
-```
-
-模型一旦下载到 `hf-cache/`，后续重启无需重复下载。
-
-#### 可选：说话人分离（Pyannote）
-
-1. 在 HuggingFace 上接受 [pyannote/speaker-diarization-3.1](https://huggingface.co/pyannote/speaker-diarization-3.1) 的许可协议
-2. 生成 Access Token：https://hf.co/settings/tokens
-3. 在 `.env` 中填写：
-
-```env
-ML_VAD_BACKEND=pyannote
-PYANNOTE_AUTH_TOKEN=hf_xxxxxx
-```
-
-### 常用命令
-
-```powershell
-docker compose ps                         # 查看服务状态
-docker compose logs -f worker             # 查看 worker 日志
-docker compose logs -f ml-service         # 查看 ML 服务日志（含模型加载进度）
-docker compose down                       # 停止并移除容器
-docker compose --env-file .env up -d      # 显式指定 .env 重启（推荐）
-```
-
-### Edge-TTS 音色选项（无 GPU 兜底）
-
-> Edge-TTS 是**无 CUDA GPU 环境下的兜底 TTS 后端**。它不支持零样本声纹克隆，所有说话人共用同一预设音色。要做实际配音建议直接使用 IndexTTS2（见下方专属章节）。
-
-默认音色为 `zh-CN-XiaoxiaoNeural`（女声）。可在 `.env` 中设置 `EDGE_TTS_VOICE` 更换：
-
-| 音色 | 风格 |
-|------|------|
-| `zh-CN-XiaoxiaoNeural` | 女声，自然对话（默认） |
-| `zh-CN-YunxiNeural` | 男声，新闻播报 |
-| `zh-CN-YunjianNeural` | 男声，激昂有力 |
-| `zh-TW-HsiaoChenNeural` | 台湾女声 |
-
----
-
-## 🐧 部署到 Linux 服务器
-
-本节介绍如何在无桌面环境的 Linux GPU 服务器（云主机或裸金属机）上运行 HoloDub。  
-无需 Docker Desktop，只需 Docker Engine + NVIDIA Container Toolkit 即可。
-
-### 硬件要求
-
-| 组件 | 最低要求 | 推荐配置 |
-|------|---------|---------|
-| GPU 显存 | 8 GB | 16–24 GB（可开启 `GPU_CONCURRENCY=2`） |
-| 内存 | 16 GB | 32 GB |
-| CPU | 4 核 | 8 核+ |
-| 磁盘 | 50 GB 可用 | 200 GB+（模型约 10 GB，数据随视频增长） |
-| CUDA | 11.8+ | 12.x |
-
-> IndexTTS2 模型约 5 GB，Faster-Whisper large-v3 约 3 GB。  
-> `./hf-cache` + `./data` 合计至少预留 20 GB。
-
----
-
-### 第一步 — 安装 Docker Engine 和 NVIDIA Container Toolkit
-
-```bash
-# Docker Engine（Ubuntu / Debian）
-curl -fsSL https://get.docker.com | sh
-sudo usermod -aG docker $USER   # 执行后退出并重新登录
-
-# NVIDIA Container Toolkit
-curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | \
-  sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
-curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \
-  sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
-  sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
-sudo apt-get update && sudo apt-get install -y nvidia-container-toolkit
-sudo nvidia-ctk runtime configure --runtime=docker
-sudo systemctl restart docker
-
-# 验证 Docker 内 GPU 可见
-docker run --rm --gpus all nvidia/cuda:12.8.0-base-ubuntu22.04 nvidia-smi
-```
-
----
-
-### 第二步 — 克隆仓库并配置环境变量
-
-```bash
-git clone https://github.com/YuehaoDai/HoloDub.git
-cd HoloDub
-cp .env.example .env
-```
-
-编辑 `.env`，至少配置以下字段：
-
-```env
-# 真实翻译
 TRANSLATION_PROVIDER=openai_compatible
 OPENAI_BASE_URL=https://api.deepseek.com/v1
 OPENAI_API_KEY=sk-xxxxxx
 OPENAI_MODEL=deepseek-chat
-RETRANSLATION_MODEL=deepseek-chat   # 或同一接口上的其他模型
+```
 
-# 真实 ML 后端
+只要接口形状兼容 OpenAI Chat API，就可以接入你自己的网关或模型服务。
+
+### 3. 真实 ASR + IndexTTS2
+
+GPU 推理配置：
+
+```env
 ML_PYTHON_EXTRAS=real
 ML_ASR_BACKEND=faster_whisper
 FASTER_WHISPER_MODEL=large-v3
+
 ML_TTS_BACKEND=indextts2
 INDEXTTS2_INLINE=true
-
-# 超时时间——长视频建议调大（单位秒）
-STAGE_TIMEOUT_SECONDS=14400
-
-# 安全——设置强随机 token 保护 API
-API_AUTH_TOKEN=<用 openssl rand -hex 32 生成>
-```
-
-> **提示**：在服务器上运行 `openssl rand -hex 32` 生成 token，  
-> 然后在 UI 或请求头 `Authorization: Bearer <token>` 中填入相同的值。
-
----
-
-### 第三步 — 构建并启动
-
-```bash
-# 首次构建 ML 服务镜像（约 10–20 分钟）
-docker compose build ml-service
-
-# 以生产模式启动所有服务
-docker compose -f docker-compose.yml -f docker-compose.staging.yml --env-file .env up -d
-```
-
-`docker-compose.staging.yml` 会给每个服务添加 `restart: unless-stopped`，服务器重启后自动恢复。
-
-检查运行状态：
-
-```bash
-docker compose ps
-docker compose logs -f worker      # 流水线日志
-docker compose logs -f ml-service  # 模型加载 / TTS 日志
-```
-
-在浏览器打开 `http://<服务器IP>:8080/ui/`。
-
----
-
-### 第四步 — 预下载模型权重（推荐）
-
-`ml-service` 首次启动时会从 HuggingFace 下载 Whisper large-v3（约 3 GB）和 IndexTTS2（约 5 GB），  
-根据带宽不同可能需要 10–30 分钟。
-
-监控下载进度：
-
-```bash
-docker compose logs -f ml-service
-```
-
-如果 XetHub 协议卡住（大文件的 `.incomplete` 停止增长），使用已知问题章节中的解决方案：
-
-```bash
-docker exec -it holodub-ml-service-1 python3 /data/dl_gpt.py
-```
-
-所有权重存储在 `./hf-cache`（挂载为 `/root/.cache/huggingface`），重启和重建镜像后均可持久保留。
-
----
-
-### 第五步 — 防火墙与反向代理
-
-默认 `8080` 端口对所有网卡开放。建议在防火墙层面限制访问，或在前面架设 Nginx/Caddy。
-
-**最简 ufw 规则：**
-
-```bash
-sudo ufw allow ssh
-sudo ufw allow 8080/tcp   # 或限定 IP：ufw allow from <your-ip> to any port 8080
-sudo ufw enable
-```
-
-**最简 Caddy 反向代理**（自动 HTTPS，需要域名）：
-
-```
-example.com {
-    reverse_proxy localhost:8080
-}
-```
-
-使用反向代理时，`.env` 中还需设置：
-
-```env
-TRUSTED_PROXIES=127.0.0.1
-```
-
----
-
-### 从现有实例迁移数据
-
-如果你要从 Windows/Docker Desktop 迁移到 Linux 服务器，需要迁移以下三项内容：
-
-#### 1. PostgreSQL 数据库
-
-```bash
-# 在源机器上（Windows — 在 WSL 或 Git Bash 中执行）
-docker exec holodub-postgres-1 \
-  pg_dump -U holodub -Fc holodub > holodub.dump
-
-scp holodub.dump user@server:/home/user/
-
-# 在 Linux 服务器上（docker compose 启动后执行）
-docker exec -i holodub-postgres-1 \
-  pg_restore -U holodub -d holodub --clean --if-exists < /home/user/holodub.dump
-```
-
-#### 2. 任务数据（`./data`）
-
-```bash
-# 从源机器通过 SSH 同步（根据实际路径调整）
-rsync -avz --progress ./data/ user@server:/path/to/HoloDub/data/
-```
-
-> `./data` 存放所有上传的视频、分离音频、TTS 输出和合成视频。  
-> 大型项目可达数十 GB，可用 `--bwlimit=5000` 限速（单位 KB/s）。
-
-#### 3. 模型缓存（`./hf-cache`）
-
-```bash
-# 方案 A — rsync（源机器已有缓存时最快）
-rsync -avz --progress ./hf-cache/ user@server:/path/to/HoloDub/hf-cache/
-
-# 方案 B — 让 ml-service 首次启动时重新下载（更简单，较慢）
-# 跳过此步骤，缓存会自动重建。
-```
-
-迁移完成后，在服务器上重启整个 stack：
-
-```bash
-docker compose -f docker-compose.yml -f docker-compose.staging.yml --env-file .env up -d
-```
-
----
-
-### 常用 Linux 命令
-
-```bash
-docker compose ps                          # 查看服务状态
-docker compose logs -f worker              # 实时查看 worker 日志
-docker compose logs -f ml-service          # 实时查看 ML 服务日志
-docker compose --env-file .env up -d       # 使用指定 env 文件重启
-
-# 在 ml-service 容器内查看 GPU 使用情况
-docker exec holodub-ml-service-1 nvidia-smi
-
-# 从服务器提交测试任务
-curl -s -X POST http://localhost:8080/jobs \
-  -H "Content-Type: application/json" \
-  -d '{"input_relpath":"input-smoke.mp4","target_language":"zh","auto_start":true}' \
-  | python3 -m json.tool
-
-# 清除卡住的 Redis stage lease（任务卡死时使用）
-docker exec holodub-redis-1 redis-cli DEL holodub:lease:job:<id>:stage:<stage>
-
-# 停止并清理（保留 ./data 和 postgres-data 卷）
-docker compose down
-```
-
----
-
-## 🎙 IndexTTS2 零样本配音（已可用）
-
-[IndexTTS2](https://github.com/index-tts/index-tts)（Bilibili 发布，Apache 2.0）是 HoloDub 的核心 TTS 后端。  
-`indextts2-inference` 已**集成并完成代码级验证**，可在 `ml-service` 内直接加载模型。
-
-### 核心能力
-
-**1. 时长控制**（配音最关键的能力）  
-- `max_mel_tokens` 根据**译文字数**估算（实测约 50 AR tokens/秒、13.5 tokens/汉字），仅留 5% 余量——不依赖目标时长。字数驱动的上限可防止模型因预算宽裕而拖慢语速。
-- `max_allowed_sec = target_sec + 下一段前的静音 gap`，作为硬上限传入适配器，确保音频不超出可用静音窗口。
-- 音频溢出进入 gap：直接接受（自然占用静音，无音质损失）。
-- 溢出超出 gap（会覆盖下一段音频）：触发 Kimi-k2.5 再翻译压缩字数（最多 `RETRANSLATION_MAX_ATTEMPTS` 次）。
-- **完全不使用 `atempo`**：通过再翻译 + gap 借用实现对齐，不产生速度失真。
-
-**2. 零样本声纹克隆**  
-- 只需 3~10 秒参考音频，无需训练，即可克隆任意说话人音色
-- 结合 HoloDub 的 **Voice Profile** 体系：上传参考音频 → 绑定到 `SPK_01` / `SPK_02` → 不同说话人各有独立克隆音色
-
-**3. 情感感知合成**  
-- 音色与情感解耦，可用 A 的声音表达 B 的情绪
-- `use_emo_text=true`（默认开启）：Qwen3 微调模型自动从翻译文本推断 8 维情感向量
-- 愤怒的台词自动用愤怒的语气合成，无需手动标注
-
-### 启用 IndexTTS2 内联模式
-
-**前置条件**：需要 GPU + 已构建 `ML_PYTHON_EXTRAS=real` 镜像。
-
-```env
-# .env
-ML_TTS_BACKEND=indextts2
-INDEXTTS2_INLINE=true
-
-# 可选：本地模型路径（留空则首次运行自动从 HuggingFace 下载）
-INDEXTTS2_MODEL_DIR=/data/models/indextts2
-
-# 可选：注意力后端（留空使用默认 sdpa，Ampere/Hopper 可选 sage/flash）
-INDEXTTS2_ATTN_BACKEND=
-
-# 从翻译文本自动推断情感（推荐开启）
 INDEXTTS2_USE_EMO_TEXT=true
-
-# 当某个说话人未绑定 VoiceProfile 时的兜底参考音频
-INDEXTTS2_DEFAULT_VOICE_RELPATH=voices/default.wav
 ```
 
-重启服务（不需要重新构建镜像）：
+构建并启动：
 
 ```powershell
+docker compose build ml-service
 docker compose --env-file .env up -d
 ```
 
-**首次运行**：IndexTTS2 模型（约 3~5 GB）会自动从 HuggingFace 下载到 `./hf-cache`，后续启动无需重复下载。
+建议每次启动都显式传入 `--env-file .env`，避免 shell 中的 `COMPOSE_ENV_FILE` 误指向 `.env.example`。
 
-### 配置零样本声纹克隆
+完整环境变量矩阵见 [配置参考](docs/configuration.md)。
+
+## HoloDub 如何使用 IndexTTS2
+
+IndexTTS2 是 HoloDub 的主力 TTS 后端，因为配音不只需要好听的声音，更需要“能卡进时间轴”的声音。
+
+HoloDub 使用 IndexTTS2 实现：
+
+- 短参考音频零样本声纹克隆。
+- 每个说话人绑定独立 Voice Profile。
+- 根据译文字数和下一段前静音 gap 计算时长上限。
+- 当合成语音会覆盖下一段时，触发漂移驱动再翻译。
+- 启动时后台预热模型，并把 warmup 状态暴露到 UI 和 readyz。
+- 针对 Blackwell/RTX 50 系列提供 BigVGAN CUDA 预编译路径。
+
+创建一个音色档案：
 
 ```powershell
-# 1. 将参考音频放入 data/voices/（容器内路径 /data/voices/）
-
-# 2. 通过 API 创建 VoiceProfile
 $body = @{
     name = "主持人音色"
     mode = "sample"
     language = "zh"
     sample_relpaths = @("voices/host_ref.wav")
 } | ConvertTo-Json
-Invoke-RestMethod -Uri "http://localhost:8080/voice-profiles" -Method Post -ContentType "application/json" -Body $body
 
-# 3. 将 SPK_01 绑定到该 VoiceProfile
-$body = @{ bindings = @(@{ speaker_label = "SPK_01"; voice_profile_id = <profile_id> }) } | ConvertTo-Json
-Invoke-RestMethod -Uri "http://localhost:8080/jobs/<job_id>/bindings" -Method Put -ContentType "application/json" -Body $body
+Invoke-RestMethod `
+  -Uri "http://localhost:8080/voice-profiles" `
+  -Method Post `
+  -ContentType "application/json" `
+  -Body $body
 ```
 
-### 其他接入模式（无本地 GPU 时可用）
+绑定到任务中的说话人：
 
-**HTTP 模式**（将 IndexTTS2 作为独立旁路服务）：
-```env
-ML_TTS_BACKEND=indextts2
-INDEXTTS2_ENDPOINT=http://your-indextts2-service:8000/tts
+```powershell
+$body = @{
+  bindings = @(@{ speaker_label = "SPK_01"; voice_profile_id = <profile_id> })
+} | ConvertTo-Json
+
+Invoke-RestMethod `
+  -Uri "http://localhost:8080/jobs/<job_id>/bindings" `
+  -Method Put `
+  -ContentType "application/json" `
+  -Body $body
 ```
 
-**命令模式**（调用本地脚本）：
-```env
-ML_TTS_BACKEND=indextts2
-INDEXTTS2_COMMAND=python run_tts.py --text "{text}" --duration "{duration}" --output "{output}"
-```
+## 操作台能力
 
-### 待完成
+HoloDub 的前端不是装饰，它是长视频译制的控制台。
 
-- [ ] `emo_audio_prompt` 跨说话人情感迁移支持
-- [ ] 单段情感手动覆盖（当前依赖自动文本推断）
+完整操作流程见 [UI 使用指南](docs/ui-guide.md)。
 
----
+| 界面         | 能看到什么                                                   |
+| ------------ | ------------------------------------------------------------ |
+| 任务侧栏     | 最近 Jobs 和 Episodes，附带健康与状态摘要。                  |
+| 语言切换     | 控制台可在中文和英文之间切换，并在浏览器本地记住偏好。       |
+| 任务观测头部 | 当前阶段、段落数、高漂移数、输出就绪度、AI 评分、运行时长。  |
+| 阶段时间线   | 一眼看到流水线进度和失败阶段。                               |
+| 段落表格     | 原文、译文、音色、漂移率、偏差秒数、AI 评分、音频和行操作。  |
+| 分段审查     | LLM 建议、手动合并/拆分、原文编辑、时间调整、单段 ASR 重试。 |
+| 产物面板     | 最终视频、中间音频、CSV/JSON trace 和最新输出文件。          |
 
-## 🎬 运行案例
+## 部署说明
 
-完整配音演示可在 B 站观看：[BV1vrwszEELd](https://www.bilibili.com/video/BV1vrwszEELd/)
+项目已经包含：
 
-### 60 秒短片（9 段）
+- 本地和服务器运行用 Docker Compose。
+- `docker-compose.staging.yml` 与 `docker-compose.prod.yml`。
+- `deploy/helm/holodub` 下的 Helm chart 骨架。
+- `docs/production` 下的发布、扩容和真实后端 rollout 文档。
+- `docs/observability` 下的 Prometheus 抓取配置、告警规则和 Grafana dashboard。
+- `docs/openapi.yaml` API 规范。
 
-**输入**：MIT 6.824 分布式系统课程节选，英语，60 秒  
-**流水线**：Faster-Whisper large-v3 → Qwen-turbo → IndexTTS2（零样本）  
-**硬件**：RTX 5080，Docker + WSL2
-
-| 阶段 | 时间 |
-|------|------|
-| IndexTTS2 冷启动（首次任务） | **~6 分钟** |
-| 单段推理（热态） | **3.6 秒**（GPT 1.06s + S2Mel 0.70s + BigVGAN 0.10s） |
-| 完整 60 秒任务 | **~7 分钟** |
-| 实时率（RTF） | **1.47x** |
-
-### 完整 79 分钟课程
-
-**输入**：MIT 6.824 完整讲座视频，英语，79 分钟，946 MB  
-**流水线**：同上  
-**切分**：626 段，平均 6.9 秒（最短 4s，最长 21.5s）
-
-| 阶段 | 大约耗时 |
-|------|---------|
-| ASR（Faster-Whisper large-v3） | ~8 分钟 |
-| 翻译（Qwen-turbo，626 段） | ~12 分钟 |
-| TTS（IndexTTS2，热态） | ~36 分钟 |
-| 合并（分批 ffmpeg，21 批 × 30 段） | ~5 分钟 |
-| **总计** | **~60 分钟** |
-
-**时长精度**：626 段平均漂移 < 1%；3 段因溢出超出 gap 触发 Kimi-k2.5 再翻译。
-
-**10 分钟短片（test_10min.mp4）**：约 81 段；漂移率驱动再翻译（目标 ≤6%，最多 10 次）使多数段落在 5% 以内；高漂移筛选可快速定位需人工精调的段落。
-
----
-
-## ⚠️ 已知问题与社区求助
-
-以下是真实硬件测试中发现的开放问题，欢迎贡献 PR！
-
-### 1. ~~BigVGAN CUDA kernel 在 Blackwell / RTX 50 系列（sm_120）上编译失败~~ — 已修复 ✅
-
-**原始现象**：`nvidia/cuda:12.8.0-runtime` 基础镜像不含 `nvcc`，BigVGAN 反混叠 CUDA 扩展在运行时无法 JIT 编译。
-
-**修复方案**（`docker/ml.Dockerfile`）：
-
-1. **切换基础镜像**：从 `nvidia/cuda:12.8.0-runtime-ubuntu22.04` 改为 **`nvidia/cuda:12.8.0-devel-ubuntu22.04`**，devel 版本包含完整 CUDA 编译工具链（`nvcc`、`cuda_runtime.h`、`cusparse.h` 等所有头文件）。镜像增大约 1 GB，但编译可靠。
-
-2. **去掉未使用的头文件引用**：BigVGAN 的 `.cu` 源码包含 `#include <cuda_profiler_api.h>`，该头文件即使在 devel 镜像中也不存在，且从未被实际调用。在 Dockerfile 中用 `sed` 将其注释掉：
-   ```dockerfile
-   RUN find /usr/local/lib/python3.11/dist-packages/indextts -name "*.cu" \
-        -exec sed -i 's|#include <cuda_profiler_api.h>|// removed (unused)|g' {} \;
-   ```
-
-3. **构建时预编译并缓存**：`docker/precompile_bigvgan.py` 在 `docker build` 阶段执行，为 `7.5;8.0;8.6;8.9+PTX;12.0` 各架构编译扩展，生成的 `.so` 文件烤进镜像层。每次容器启动时直接加载缓存的 kernel，无需运行时编译。
-
-**RTX 5080 实测结果**：BigVGAN 现在使用原生 CUDA kernel。结合 `use_fp16=True`，TTS 吞吐量相比 FP32 + torch 回退提升约 **2.5 倍**（626 段 / 79 分钟视频实测：3.08 秒/段 vs 约 7.7 秒/段）。
-
-### 2. IndexTTS2 冷启动（已缓解）
-
-**现象**：加载全部组件（GPT 3.3 GB + S2Mel 1.1 GB + BigVGAN + wav2vec2bert + CAMP++ + NeMo 文本处理器）在 RTX 5080 上约 **6 分钟**。
-
-**已实现缓解**：
-- 当 `INDEXTTS2_INLINE=true` 且 `ML_TTS_BACKEND=indextts2` 时，ml-service 启动即**后台预加载**，首次 TTS 请求不再阻塞 6 分钟
-- `/healthz` 返回 `tts_warmup_status`：`idle` | `loading` | `ready` | `error`
-- Go API 提供 `GET /ml-health` 代理 ml-service 状态
-- Web UI 在 `tts_warmup_status === "loading"` 时显示「TTS 模型预热中…」提示条
-
-### 3. HuggingFace XetHub 大文件下载在 Docker 内停滞
-
-**现象**：通过 XetHub 协议（`hf-xet`）的 `snapshot_download` 会在 2~3 个大 blob 上停滞（`.incomplete` 文件不再增长）。
-
-**解决办法**：设置 `HF_HUB_DISABLE_XET=1` 并用标准 HTTP 下载：
-
-```python
-import os, requests
-os.environ["HF_HUB_DISABLE_XET"] = "1"
-from huggingface_hub import snapshot_download
-snapshot_download("IndexTeam/IndexTTS-2", token=os.environ.get("HF_TOKEN"))
-```
-
-或直接用 requests 流式下载单个卡住的文件（如 `gpt.pth`）：
-
-```python
-import requests, os
-url = "https://huggingface.co/IndexTeam/IndexTTS-2/resolve/main/gpt.pth"
-headers = {"Authorization": f"Bearer {os.environ['HF_TOKEN']}"}
-with open("gpt.pth", "wb") as f:
-    for chunk in requests.get(url, headers=headers, stream=True).iter_content(8*1024*1024):
-        f.write(chunk)
-```
-
----
-
-### .env 配置说明
-
-#### 后端选择
-
-| 变量 | 烟测默认 | 真实后端 |
-|------|----------|----------|
-| `TRANSLATION_PROVIDER` | `mock` | `openai_compatible` |
-| `ML_ASR_BACKEND` | `mock` | `faster_whisper` |
-| `ML_TTS_BACKEND` | `silence` | `indextts2`（推荐）· `edge_tts`（无 GPU 兜底）|
-| `ML_VAD_BACKEND` | `none` | `pyannote`（可选）|
-| `ML_SEPARATOR_BACKEND` | `ffmpeg_stub` | `demucs`（可选）|
-| `ML_PYTHON_EXTRAS` | 空 | `real` |
-
-#### IndexTTS2
-
-| 变量 | 默认 | 说明 |
-|------|------|------|
-| `INDEXTTS2_INLINE` | `false` | `ML_TTS_BACKEND=indextts2` 时设为 `true`，让模型在 ml-service 内联加载 |
-| `INDEXTTS2_MODEL_DIR` | 空（自动下载）| 设为 `/data/models/indextts2` 使用本地 checkpoint |
-| `INDEXTTS2_USE_EMO_TEXT` | `false` | `true` 启用 Qwen3 微调模型从译文文本推断 8 维情感向量 |
-| `INDEXTTS2_DEFAULT_VOICE_RELPATH` | 空 | `voices/ref.wav`（**建议用中文音频**，韵律更好）|
-| `INDEXTTS2_USE_CUDA_KERNEL` | `false` | 仅当镜像由 `docker/precompile_bigvgan.py` 烤过 BigVGAN `.so` 时设为 `true`；否则运行时回退到 PyTorch 原生路径（音频一致，约慢 10–15 %）|
-
-#### 段落审查 + ASR 切分参数
-
-| 变量 | 默认 | 说明 |
-|------|------|------|
-| `SEGMENT_REVIEW_ENABLED` | `true` | 设 `false` 跳过 LLM 合并建议阶段，`asr_smart` 完成后直接进入 `translate` |
-| `SEGMENT_REVIEW_MODEL` | 回退到 `RETRANSLATION_MODEL` → `OPENAI_MODEL` | 仅当希望用不同模型跑审查 prompt 时覆盖 |
-| `HARD_MAX_SEGMENT_SEC` | `45` | 后处理合并的硬上限——任何合并段不得超过该时长，对连讲场景同时是 close-gap merge 的硬刹车 |
-| `CLOSE_GAP_MS` | `800` | 相邻段 gap 阈值；从历史的 `1500 ms` 调小，避免合并过激 |
-| `ASR_END_PAD_MS` | `500` | 给每段 `end_ms` 补的尾部 padding，弥补 Whisper 词级时间戳低估的尾音 |
-
-#### 再翻译循环
-
-| 变量 | 默认 | 说明 |
-|------|------|------|
-| `RETRANSLATION_ENABLED` | `true` | 设 `false` 完全关掉漂移率驱动的再翻译反馈循环 |
-| `RETRANSLATION_MODEL` | `kimi-k2.5` | 同一 `OPENAI_BASE_URL` 上的任意模型 |
-| `RETRANSLATION_DRIFT_THRESHOLD` | `0.06` | 最大允许 `|实际 − 目标| / 目标`；超出则触发再翻译 |
-| `RETRANSLATION_MAX_ATTEMPTS` | `30` | 每段最多再翻译次数（OPT-002-followup-5 从 10 抬升到 30，为 UI 重跑预留更大余地） |
-
-#### 并发、超时与安全
-
-| 变量 | 默认 | 说明 |
-|------|------|------|
-| `TTS_CONCURRENCY` | `2` | Worker 端 TTS 并发请求数 |
-| `GPU_CONCURRENCY` | `2` | ml-service 端 GPU 推理并发数（需约 16 GB 显存）|
-| `MODEL_REGISTRY_MAX_MODELS` | 空（不淘汰）| ml-service `ModelRegistry` 的可选 LRU 上限 |
-| `STAGE_TIMEOUT_SECONDS` | `14400` | 超长视频可适当调大 |
-| `API_AUTH_TOKEN` | 空 | **`APP_ENV=production` 时必填**——否则 API 拒绝启动；非生产环境只打一次警告然后保持开放 |
-| `TRUSTED_PROXIES` | 空 | 走 Nginx / Caddy 反代时设为 `127.0.0.1`（或实际代理 IP），让客户端 IP 从 `X-Forwarded-For` 读取 |
-
----
-
-## 🖥 Web UI — 段落精调审查
-
-操作台（`/ui/`）已重构为 Vue 3 SPA，采用 **Open WebUI 风格**的深色侧边栏布局。
-
-![段落精调界面](assets/精调界面截图.png)
-
-*段落表格：漂移率徽章、内联编辑、高漂移筛选 — 逐段审查与精调译文。*
-
-### 一期 — 译文精调（translate 之后）
-
-| 功能 | 说明 |
-|------|------|
-| **Job 侧边栏** | 实时任务列表 + 状态徽章，每 10 秒自动刷新 |
-| **段落表格** | 全部段落：原文、译文、漂移率徽章 |
-| **漂移率徽章** | 绿色 < 5 % · 黄色 5–15 % · 红色 > 15 % |
-| **音频试听** | 每个已合成段落内联 `<audio>` 播放器（懒加载 blob） |
-| **内联编辑** | 点击编辑 → 修改译文 → 仅保存 或 保存 + 重新合成 |
-| **筛选 / 排序** | 按 全部 / 高漂移 / 未合成 筛选 · 按序号或漂移率排序 |
-| **重新合并** | 编辑后触发 merge 阶段重试，重新生成 `final.mp4` |
-
-### 段落审查（translate 之前，`awaiting_review` 阶段）
-
-`asr_smart` 完成后（如启用 `segment_review` 阶段，则 LLM 先生成合并建议）任务进入 `awaiting_review`，前端会显示一个独立面板，让操作员先把切分和 ASR 错误处理掉再付翻译成本。
-
-| 控件 | 说明 |
-|------|------|
-| **AI 分段建议** 面板 | 列出每条 `segment_suggestion`（当前为 merge）：置信度、理由、涉及段落，每行可采纳 / 否决。 |
-| **🤖 ↻ 重试 ASR 分段** | Job 级「核选项」：清空所有段落和建议，重新入队 `asr_smart`。 |
-| **✂ 拆分** | 行内拆分 UI：点击文字或拖滑条选 `split_char_index`，后端按字符比例线性切分时间。 |
-| **⊕ 合并↓** | 与下一段合并。 |
-| **⏱ 调整时间** | 行内文本框 + ▶ 试听，对照 `vocals.wav` 微调 `start_ms` / `end_ms`。 |
-| **✏ 编辑原文** | Wave 1：内联 textarea + ✓ / ✕ 修正 Whisper 识别错误；只写 `source_text`，时间轴和状态保证不变。 |
-| **↻ 重新识别** | Wave 2：仅对该段窗口重跑一次 faster-whisper，结果就地替换 `source_text`；空文本会提示手动编辑而不是报错。 |
-| **✓ 确认分段，开始翻译** | 底部操作栏；调用 `POST /jobs/:id/confirm-segmentation` 入队 `translate`。 |
-
-行内的五个控件互斥——同一行同时只能打开一种编辑器（拆分 / 时间 / 编辑原文），点 ↻ 重新识别会自动关掉当前打开的那一个再发请求。
-
-### 本地构建 UI
+Linux GPU 服务器的最短路径：
 
 ```bash
-cd ui
-npm install
-npm run build
-# 输出到 internal/ui/static/（由 go:embed 打包进二进制）
+git clone https://github.com/YuehaoDai/HoloDub.git
+cd HoloDub
+cp .env.example .env
+docker compose build ml-service
+docker compose -f docker-compose.yml -f docker-compose.staging.yml --env-file .env up -d
 ```
 
-**仅更新前端后启动**（不重建 ml-service，避免重复拉取 CUDA/PyTorch）：
-```bash
-cd ui && npm run build && cd ..
-docker compose build api && docker compose up -d
-```
+## 项目状态
 
-开发热更新模式：
-```bash
-cd ui
-npm install
-npm run dev
-# Vite 开发服务器：http://localhost:5173/
-```
+HoloDub 已经可以完成真实端到端配音，目前工程重点是稳定性、可控性和长视频质量的可重复验证。
 
-### 二期规划
+已完成亮点：
 
-- [x] **原始音频对比**：原声切片 vs TTS 音频并排播放（`GET /jobs/:id/audio/:ordinal` 从 `vocals.wav` 切片）
-- [x] **批量重合成**：多选段落 + 批量 Rerun 按钮
-- [x] **键盘快捷键**：`J`/`K` 上下段，`Space` 播放，`E` 编辑
-- [x] **波形可视化**：集成 WaveSurfer.js 进行精确音频检视（可展开波形行）
-- [x] **段落质量标注**：标记 good / bad / skip，持久化到 segment meta
-- [x] **说话人绑定 UI**：直接在段落表格中分配音色档案
+- Go API 与 Worker 流水线。
+- Python ML 服务，接入真实 ASR 与 IndexTTS2。
+- 时长感知翻译与漂移驱动再翻译。
+- 分段审查与人工介入工作流。
+- 段级 TTS 即时入库和精确重试。
+- 长视频 ffmpeg 分批合并。
+- 可观测优先的 Web UI 重构。
+- Prometheus/Grafana 可观测资产。
+- CI、安全扫描和 OpenAPI 配置。
 
----
+仍在推进：
 
-## 🛠 技术栈
+- 更稳定的真实人声/BGM 分离默认方案。
+- Pyannote 说话人分离的安装和体验优化。
+- 中文参考音频和韵律配置指南。
+- 章节/整集级质量评估的自动门禁。
+- 面向团队协作的长任务报告和分享能力。
 
-- **控制面**：Go、Gin、GORM、Redis、PostgreSQL  
-- **ML 服务**：FastAPI、PyTorch、Demucs/UVR5、Faster-Whisper、Pyannote、IndexTTS2  
-- **编排**：Docker Compose  
-- **翻译**：Qwen / DeepSeek / 其他可插拔 LLM 提供方  
-- **Web UI**：Vue 3、Vite、Tailwind CSS  
+## 文档入口
 
----
+建议从这里开始：
 
-## 📜 License
+- [文档导航](docs/README.md)
+- [UI 使用指南](docs/ui-guide.md)
+- [配置参考](docs/configuration.md)
+- [可观测性配置](docs/observability/README.md)
+- [生产发布 runbook](docs/production/release-runbook.md)
+- [扩容路线图](docs/production/scale-roadmap.md)
+- [OpenAPI 规范](docs/openapi.yaml)
+- [优化路线图](docs/roadmap/optimization-roadmap.md)
 
-Apache 2.0
+## 技术栈
+
+- 控制面：Go、Gin、GORM、Redis、PostgreSQL。
+- ML 服务：Python、FastAPI、PyTorch、Faster-Whisper、Pyannote、Demucs/UVR5、IndexTTS2。
+- 前端：Vue 3、Vite、Tailwind CSS、WaveSurfer.js。
+- 编排：Docker Compose、Helm chart 骨架。
+- LLM 提供方：DeepSeek、Qwen 兼容网关、OpenAI 兼容 API 或自托管 endpoint。
+
+## License
+
+Apache 2.0。

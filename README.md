@@ -1,21 +1,27 @@
-# HoloDub (幻读)
+# HoloDub
 
 <div align="center">
 
-  <img src="./header.svg" alt="HoloDub Logo" width="100%">
+  <img src="./header.svg" alt="HoloDub" width="100%">
 
-  <h3>Holographic Audio Dubbing with Perfect Sync</h3>
-  <p>全息音频配音 · 智能语义切分 · 时长精准对齐</p>
+  <h3>Self-hosted AI video dubbing that keeps the performance in sync.</h3>
+
+  <p>
+    Timeline-first dubbing · Smart ASR segmentation · Duration-aware TTS · Voice cloning · Operator-grade observability
+  </p>
 
   <p>
     <a href="https://golang.org/">
-      <img src="https://img.shields.io/badge/Go-1.25+-00ADD8?style=flat&logo=go&logoColor=white" alt="Go Version">
+      <img src="https://img.shields.io/badge/Go-1.25+-00ADD8?style=flat&logo=go&logoColor=white" alt="Go">
     </a>
     <a href="https://www.python.org/">
-      <img src="https://img.shields.io/badge/Python-3.10+-3776AB?style=flat&logo=python&logoColor=white" alt="Python Version">
+      <img src="https://img.shields.io/badge/Python-3.10+-3776AB?style=flat&logo=python&logoColor=white" alt="Python">
     </a>
     <a href="#">
-      <img src="https://img.shields.io/badge/Model-IndexTTS2-FF6F00?style=flat" alt="IndexTTS2">
+      <img src="https://img.shields.io/badge/Vue-3-42B883?style=flat&logo=vuedotjs&logoColor=white" alt="Vue">
+    </a>
+    <a href="#">
+      <img src="https://img.shields.io/badge/TTS-IndexTTS2-FF6F00?style=flat" alt="IndexTTS2">
     </a>
     <a href="https://www.apache.org/licenses/LICENSE-2.0">
       <img src="https://img.shields.io/badge/License-Apache%202.0-green.svg" alt="License">
@@ -23,886 +29,317 @@
   </p>
 
   <p>
-    <a href="README_zh-CN.md">📖 中文文档</a>
+    <a href="README_zh-CN.md">中文文档</a>
+    ·
+    <a href="docs/README.md">Documentation map</a>
+    ·
+    <a href="docs/openapi.yaml">OpenAPI</a>
   </p>
 
 </div>
 
 > Dub the whole performance, not just the words.
 
-## 🎬 Demo — English → Chinese (IndexTTS2, RTX 5080)
+HoloDub is a local-first dubbing studio for creators, educators, media teams, and small studios who want to translate videos without giving up control of their footage, voices, prompts, or GPU budget.
 
-Full 79-minute MIT 6.824 Distributed Systems lecture (626 segments). Dubbed with zero-shot voice cloning, no training required.
+It does more than produce translated subtitles. HoloDub rebuilds the audio track around the original timeline: it detects semantic boundaries, translates with duration pressure, synthesizes speaker-specific voices, measures timing drift, and gives operators a console to inspect every segment before the final video is merged.
 
-**Watch on Bilibili**: [HoloDub 配音演示 — MIT 6.824 分布式系统课程（英→中）](https://www.bilibili.com/video/BV1vrwszEELd/)
+## Why It Exists
 
-Pipeline: `Faster-Whisper large-v3` (ASR) → `Qwen-turbo` (translation) → `IndexTTS2 FP16` (zero-shot TTS) · Total time: ~52 min on RTX 5080 (79-min video)
+Most AI dubbing pipelines break in the details:
 
----
+- Subtitles translate, but speech no longer fits the scene.
+- A beautiful TTS voice drifts half a second late.
+- Long videos fail after hours and leave no clue where.
+- One bad ASR segment forces the whole job to be rerun.
+- SaaS tools are convenient, but not always acceptable for private media or custom models.
 
-HoloDub is a **self-hosted video translation & dubbing toolkit for creators**.
+HoloDub is built for the other path: your models, your machine, your data, your final cut.
 
-It is designed for people who need to re-voice videos for platforms like **YouTube, Bilibili, TikTok** and beyond:
-- channel owners,
-- clip / highlights makers,
-- fansub groups,
-- small studios that want to keep everything on their own GPU box or cloud instance.
+## What It Can Do Today
 
-Instead of just “translating subtitles and dropping a generic voice on top”, HoloDub rebuilds the audio track **around the original timeline** using:
+- Run an end-to-end video dubbing pipeline with Docker Compose.
+- Split speech into meaning-aware segments using Faster-Whisper timestamps and VAD signals.
+- Translate through OpenAI-compatible providers such as DeepSeek, Qwen-compatible endpoints, or your own gateway.
+- Synthesize duration-aware speech with IndexTTS2, including zero-shot voice cloning from short reference clips.
+- Retry only the failing or high-drift pieces instead of rerunning a whole video.
+- Review ASR boundaries, merge/split segments, adjust timestamps, edit transcripts, and re-run a single segment.
+- Track model warmup, job stages, artifacts, drift, judge scores, weak segments, and current errors in the web console.
+- Expose Prometheus metrics and production deployment building blocks.
 
-> **Smart semantic splitting + duration-aware TTS**, so dubbed audio stays in sync with the video.
+## Interface Direction
 
----
+The web UI has been redesigned as an observability-first dubbing console. Jobs are not black boxes: every stage, segment, artifact, and timing issue becomes inspectable.
 
-## ✨ Features at a glance
+![HoloDub observability console](assets/holodub-console-observability.png)
 
-### 🎬 Timeline-first dubbing
+The segment workbench is built for real operator work: filter high drift, compare original audio with TTS, inspect waveforms, edit translations, change voice profiles, and rerun only the rows that need attention.
 
-- **Smart semantic split**
-  - Whisper-based ASR with **word-level timestamps**.
-  - VAD-assisted pause detection (Pyannote).
-  - Splits by **meaning and natural pauses**, not fixed-length chunks.
-  - Configurable segment length window (e.g. 2–15 seconds).
+![HoloDub segment workbench](assets/holodub-segment-workbench.png)
 
-- **Duration-aware TTS (IndexTTS2)**
-  - Every segment carries its **original duration** as metadata.
-  - IndexTTS2 uses this as a hard constraint: generated speech length ≈ original segment length.
-  - Optional `atempo` / light time-stretching as fallback when needed.
+The implementation follows this design system in Vue 3 + Tailwind. The screenshots above are design figures used to guide the current UI refresh; live data appears once the Go API and worker are running.
 
-### 🗣 Multi-speaker & custom voices
+## Public Production Showcase
 
-- **Speaker diarization**
-  - Automatically clusters different speakers (e.g. `SPK_01`, `SPK_02`, …).
-  - Each segment is tagged with a speaker ID.
+HoloDub has moved beyond a one-off demo and powered a continuous, publicly released English-to-Chinese lecture series:
 
-- **Custom voice profiles**
-  - `sample` mode  
-    Upload 1–N reference clips and use zero-shot voice cloning.
-  - `checkpoint` mode  
-    Load your own SoVITS / IndexTTS-style checkpoints  
-    (`.pth/.ckpt + .index + config`).
-  - Language tags, internal speaker IDs and model paths are stored centrally.
+- Series: MIT 6.824 Distributed Systems, Lectures 1-7.
+- Published output: 7 full-length episodes, 561.7 minutes (9.36 hours) in total.
+- Watch the series on Bilibili: [MIT 6.824 English-to-Chinese series powered by HoloDub](https://www.bilibili.com/video/BV1uYXFBLEPo/).
 
-- **Speaker → voice mapping**
-  - For each job, map `SPK_01 / SPK_02 / …` to different voice profiles.
-  - Use different timbres in one video (host, guest, narrator…).
-  - Change mappings and re-run only the affected segments.
+This series demonstrates repeatable production across multiple long-form episodes. It is a self-produced public showcase, not a customer engagement or paid commercial case. The figures above describe released output only; they do not represent audience traction or third-party quality certification.
 
-### 🚀 Creator-friendly & self-hosted
+## Representative Benchmark
 
-- **Run it where you want**
-  - On your own GPU PC at home.
-  - On a single cloud GPU instance.
-  - No external SaaS required by default.
+A representative full-length lecture remains the controlled technical benchmark for the pipeline:
 
-- **Single-node by default**
-  - Simple “one-box” layout:
-    - Go control plane (API + worker)
-    - Python ML service (GPU)
-    - PostgreSQL + Redis
-  - All wired together with Docker Compose.
+- Source: English lecture video, 79 minutes, 626 segments.
+- Pipeline: Faster-Whisper large-v3 -> Qwen-compatible translation -> IndexTTS2 FP16.
+- Hardware: RTX 5080, Docker + WSL2.
+- Result: full English-to-Chinese dubbed output, roughly one hour end to end after model warmup.
+- Timing: average segment drift under 1 percent in the validated run; outliers are surfaced for retranslation and manual review.
 
-- **Keep your data**
-  - Videos, audio, transcripts and models live under a shared `/data` volume.
-  - Database stores **relative paths** only (easier to move / backup).
+For a shorter introduction, watch the earlier 10-minute [HoloDub quick demo on Bilibili](https://www.bilibili.com/video/BV1vrwszEELd/).
 
----
+## Core Pipeline
 
-## 🧱 Architecture (short version)
+```mermaid
+flowchart LR
+  A["Video input"] --> B["media"]
+  B --> C["separate"]
+  C --> D["asr_smart"]
+  D --> E["segment_review"]
+  E --> F["translate"]
+  F --> G["tts_duration"]
+  G --> H["merge"]
+  H --> I["final.mp4"]
+```
 
-You don’t need to understand all of this to *use* HoloDub —  
-but if you want to hack on it, here’s the rough picture.
+Each stage is explicit and observable:
 
-### Control plane (Go)
+| Stage            | What happens                                                                |
+| ---------------- | --------------------------------------------------------------------------- |
+| `media`          | Normalize and prepare the source media.                                     |
+| `separate`       | Optional vocal/BGM separation.                                              |
+| `asr_smart`      | Generate word-level ASR and semantic speech segments.                       |
+| `segment_review` | Let an LLM propose safe boundary fixes; optionally require human approval.  |
+| `translate`      | Produce dubbing-friendly translations with duration pressure.               |
+| `tts_duration`   | Synthesize each segment with target duration and voice profile constraints. |
+| `merge`          | Rebuild the final video with aligned dubbed audio.                          |
 
-- Go 1.25+, Gin, GORM.
-- Drives jobs through stages:
+## Architecture
 
-  `media` → `separate` → `asr_smart` → `segment_review` → `translate` → `tts_duration` → `merge`
+```mermaid
+flowchart TB
+  UI["Vue 3 Console"] --> API["Go API"]
+  API --> DB[("PostgreSQL")]
+  API --> Redis[("Redis Queue")]
+  Worker["Go Worker"] --> Redis
+  Worker --> DB
+  Worker --> ML["Python ML Service"]
+  Worker --> LLM["OpenAI-compatible LLM"]
+  ML --> Models["Faster-Whisper / Pyannote / IndexTTS2 / Demucs"]
+  API --> Data["/data shared storage"]
+  ML --> Data
+  Worker --> Data
+```
 
-  - `segment_review` is **optional but enabled by default**: the job parks in `awaiting_review` after ASR so the operator can merge / split / edit segment boundaries (and now ASR transcripts) before translation starts. Disable with `SEGMENT_REVIEW_ENABLED=false` to auto-advance straight into `translate`.
+HoloDub is intentionally single-node friendly:
 
-- Stores:
-  - `jobs` (one per video),
-  - `voice_profiles` (custom voices),
-  - `speakers` (logical speakers per job),
-  - `speaker_voice_bindings` (who uses which voice),
-  - `segments` (time-aligned pieces),
-  - `segment_suggestions` (LLM-generated merge / split hints surfaced in the review UI).
+- Go control plane: Gin, GORM, worker orchestration, queues, API, embedded UI.
+- Python data plane: FastAPI, PyTorch, ASR, VAD, separation, TTS, model registry, GPU concurrency control.
+- Storage: PostgreSQL metadata + Redis queue + `/data` for media, audio, artifacts, and model references.
+- UI: Vue 3, Vite, Tailwind CSS, WaveSurfer.js, lucide icons.
+- Observability: structured logs, Prometheus metrics, Grafana dashboard, readiness probes, warmup state.
 
-- Uses Redis as task queue:
-  - Job-level stage tasks (e.g. `job:123:stage:asr_smart`).
-  - Optionally segment-level TTS tasks.
+## Quick Start
 
-- Talks to an LLM (Qwen / DeepSeek / etc.) for translation:
-  - Prompts tuned for **dubbing-friendly, length-aware** output.
-
-### Data plane (Python / GPU)
-
-- Python 3.10+, FastAPI, PyTorch.
-- Global GPU lock / semaphore to avoid OOM.
-- Model registry with simple LRU-style caching:
-  - Demucs / UVR5 — vocal & BGM separation.
-  - Faster-Whisper — ASR with word-level timestamps.
-  - Pyannote.audio — VAD and (optional) diarization.
-  - IndexTTS2 — duration-aware TTS.
-
-- HTTP endpoints (examples):
-  - `POST /asr/smart_split`  
-    → segments with `start_ms`, `end_ms`, `text`, `speaker_label`, `split_reason`.
-  - `POST /asr/transcribe_segment`  
-    → re-runs Whisper on a single `[start_ms, end_ms]` window so the review UI can fix one segment without redoing the whole job.
-  - `POST /tts/run`  
-    → takes `text` + `target_duration_sec` + `voice_config` + `output_relpath`,  
-    → returns saved audio path + actual duration.
-  - `GET /healthz` (liveness, cheap) and `GET /readyz` (readiness; returns 503 while IndexTTS2 is still warming up).
-
-### Shared storage
-
-- Host `./data` mounted as `/data` in all containers.
-- DB only stores **relative paths** (e.g. `jobs/101/input.mp4`).
-- Apps resolve absolute paths using `DATA_ROOT`.
-
----
-
-## 🗂 Data model highlights
-
-- **jobs**
-  - One row per video.
-  - Tracks status, current stage, progress, config JSON, IO paths, errors, retries, heartbeat.
-
-- **voice_profiles**
-  - Describes how to synthesize a voice:
-    - sample-based or checkpoint-based,
-    - paths to models / indexes / configs,
-    - language tags, internal speaker IDs.
-
-- **speakers**
-  - Per-job logical speakers generated by diarization  
-    (e.g. `SPK_01` is “the host”, `SPK_02` is “the guest”).
-
-- **speaker_voice_bindings**
-  - Maps `speaker_id` → `voice_profile_id`.  
-    This is where you say: *“for this job, SPK_01 uses Voice A, SPK_02 uses Voice B.”*
-
-- **segments**
-  - Minimal units for translation & TTS.
-  - Carry:
-    - `start_ms`, `end_ms`
-    - `original_duration_ms` (generated column)
-    - `src_text`, `tgt_text`
-    - `tts_audio_path`, `tts_duration_ms`
-    - `voice_profile_id` (per-segment override; falls back to speaker binding)
-    - `status` (typed lifecycle: `pending` → `translated` → `synthesized`, with explicit transition validation)
-    - `meta` JSON (segment-level quality tag etc.)
-    - `split_reason` (`punctuation` / `silence_gap` / `max_duration` / `speaker_change` / `manual_split` / `merged` / …)
-
-- **segment_suggestions**
-  - LLM-generated review hints emitted by the `segment_review` stage.
-  - Each row points at one or more existing segments and proposes a `merge` (or future `split`) action with a confidence score and a human-readable reason.
-  - Status transitions: `pending` → `accepted` (applied to `segments`) / `rejected` (left untouched).
-
----
-
-## 📊 Status
-
-- [x] Architecture & schema design
-- [x] Speaker / voice mapping model
-- [x] Go control plane (API + worker)
-- [x] Python ML service (FastAPI)
-- [x] Smoke-mode end-to-end pipeline (`mock` / `ffmpeg_stub` / `silence`)
-- [x] **Real ASR**: Faster-Whisper large-v3, GPU-accelerated, word-level timestamps
-- [x] **Real translation**: OpenAI-compatible API (tested with qwen-turbo / DeepSeek)
-- [x] **Real TTS (interim)**: Edge-TTS (Microsoft, free, Chinese voice, atempo duration alignment)
-- [x] GPU passthrough (NVIDIA Container Toolkit + Docker Compose `deploy.devices`)
-- [x] **IndexTTS2 inline integration**: `indextts2-inference` inside `ml-service`, zero-shot voice cloning
-- [x] **IndexTTS2 real inference validated**: English → Chinese, RTF 1.47x (RTX 5080)
-- [x] **asyncio blocking fixed**: all ML routes use `run_in_executor`; healthz stays live during GPU inference
-- [x] **Duration-aware translation**: first-pass translation prompt carries character budget derived from segment duration; Kimi-k2.5 re-translation triggered when TTS audio overflows trailing silence gap
-- [x] **Drift-based retranslation (≤6%)**: re-translate when `|actual − target| / target > 6%`; up to 10 attempts with feedback (previous text, duration, drift) injected into prompt; stops when within threshold or max attempts reached
-- [x] **atempo removed**: duration alignment now uses gap-borrowing (overflow into trailing silence) + re-translation loop; no speed artifacts
-- [x] **ASR segmentation improved**: sentence-boundary-only splits, 5-word minimum, 800 ms silence threshold, short-segment post-merge; default min 4 s / max 20 s
-- [x] **amix volume bug fixed**: `normalize=0` on all amix filters; previously audio was divided by segment count (–38 dB for 81-segment videos)
-- [x] **Batched ffmpeg merge**: segments processed in groups of 30 to avoid `filter_complex` hang (O(N²) parser) on long videos; merge stage lease re-queue on conflict (no task loss)
-- [x] **Per-segment TTS persistence**: each segment's result is written to DB immediately; timeout/retry only re-processes unfinished segments
-- [x] **Parallel TTS**: worker sends up to `TTS_CONCURRENCY` (default 2) segments concurrently; ml-service `GPU_CONCURRENCY=2` allows 2 parallel GPU inferences for higher throughput
-- [x] **Full 79-minute video validated**: 626 segments, English → Chinese, complete pipeline end-to-end
-- [ ] Real vocal / BGM separation (Demucs, requires `ML_PYTHON_EXTRAS=real`)
-- [ ] Speaker diarization (Pyannote, requires HuggingFace token)
-- [x] **BigVGAN CUDA kernel on Blackwell / sm_120**: switched to `nvidia/cuda:12.8.0-devel` image + patched unused `#include <cuda_profiler_api.h>` + pre-compiled `.so` baked into the image layer via `docker/precompile_bigvgan.py` (monkey-patches `torch.cuda` so the build-time compile lands in IndexTTS' exact site-packages cache directory); RTX 5080 loads the cached kernel in <5 s instead of JIT-compiling at runtime
-- [x] **Segment-review stage (`segment_review`)**: LLM generates merge / split suggestions, job parks in `awaiting_review`; user can accept / reject suggestions, manually merge / split / re-time segments, and explicitly call `POST /jobs/:id/confirm-segmentation` to advance to `translate`
-- [x] **Per-segment ASR transcript editing (Wave 1)**: `PATCH /jobs/:id/segments/:segmentId` with `src_text` lets reviewers fix Whisper recognition errors on a single row (8 KiB cap, awaiting-review only); writes only `source_text + updated_at`, never touches timing or status
-- [x] **Per-segment ASR re-transcription (Wave 2)**: `POST /jobs/:id/segments/:segmentId/retry-asr` clips the segment's `[start_ms, end_ms]` window out of `vocals.wav` with ffmpeg and re-runs faster-whisper, so a single misrecognised segment can be fixed without rerunning the whole job-level retry-asr
-- [x] **Standalone `/readyz` probe + IndexTTS2 warm-up watchdog**: `/readyz` returns 503 while `tts_warmup_status` is `loading` or `error`; a watchdog daemon thread heartbeats every 30 s, marks warm-up `error` if the loader thread vanishes (segfault / OOM-kill) or exceeds a 30-min hard timeout, and proactively flushes logging handlers
-- [x] **IndexTTS2 eager model pre-loading at startup**: `INDEXTTS2_INLINE=true` triggers background warm-up during ml-service lifespan, fronted by an event-and-state-machine protocol so a crashing loader can never strand subsequent TTS requests with an unreleased mutex
-- [x] **Observability + CI hardening**: `golangci-lint` / `ruff` / `mypy` / `eslint` gates, `govulncheck` / `pip-audit` / Trivy / gitleaks security scans, Dependabot, `docs/openapi.yaml` (Redocly-linted), Prometheus metrics (`holodub_external_calls_total`, `holodub_ml_*`), Grafana dashboard + Prometheus rules under `docs/observability/`, Helm chart skeleton, multi-arch goreleaser config
-- [ ] Use a Chinese reference audio clip for better prosody alignment (current default uses English lecture audio)
-
-If you’re interested in hacking on it, PRs and discussions are very welcome.
-
----
-
-## ▶ Running
-
-### Prerequisites
-
-- **Docker Desktop** installed and running (Windows: WSL2 backend)
-- NVIDIA GPU users: **NVIDIA Container Toolkit** (Docker Desktop includes nvidia runtime support)
-
-### Mode 1: Smoke run (no GPU / API key needed)
+### 1. Smoke mode: no GPU, no API key
 
 ```powershell
 Copy-Item .env.example .env
 docker compose up --build -d
 ```
 
-Default config uses mock backends — no external dependencies. Verify the full pipeline end to end.
+Submit a test job:
 
 ```powershell
-# Submit a test job
 $body = '{"input_relpath":"input-smoke.mp4","target_language":"zh","auto_start":true}'
 Invoke-RestMethod -Uri "http://127.0.0.1:8080/jobs" -Method POST -ContentType "application/json" -Body $body
 ```
 
-Open **http://localhost:8080/ui/** to track progress. Output lands at `data/jobs/<id>/output/final.mp4`.
+Open the console:
 
-### Mode 2: Real backends (recommended)
+```text
+http://localhost:8080/ui/
+```
 
-#### Step 1 — Translation (API key only)
+Smoke mode uses mock translation, mock ASR, and silence/placeholder TTS so you can verify orchestration before downloading large models.
+
+### 2. Real translation
+
+Set an OpenAI-compatible provider in `.env`:
 
 ```env
-TRANSLATION_PROVIDER=openai_compatible
-OPENAI_BASE_URL=https://api.deepseek.com/v1   # or any OpenAI-compatible endpoint
-OPENAI_API_KEY=sk-xxxxxx
-OPENAI_MODEL=deepseek-chat
-```
-
-**DeepSeek** is recommended: accessible globally, very cheap, excellent Chinese quality.
-
-#### Step 2 — Real ASR + TTS (GPU required)
-
-```env
-ML_PYTHON_EXTRAS=real
-ML_ASR_BACKEND=faster_whisper
-FASTER_WHISPER_MODEL=large-v3   # recommended; use medium if VRAM < 6 GB
-
-# Default and recommended TTS backend: IndexTTS2 (zero-shot voice cloning,
-# duration-aware, runs inline inside ml-service).
-ML_TTS_BACKEND=indextts2
-INDEXTTS2_INLINE=true
-
-# Fallback when no GPU is available: Edge-TTS (Microsoft, free, no API key).
-# All speakers share one preset voice, no zero-shot cloning.
-# ML_TTS_BACKEND=edge_tts
-```
-
-Rebuild the ML service image (first time ~10 min, mostly PyTorch download):
-
-```powershell
-docker compose build ml-service
-docker compose --env-file .env up -d
-```
-
-> ⚠️ **Important**: always use `--env-file .env` or make sure the shell variable `COMPOSE_ENV_FILE` is not set to `.env.example`. If it is set, containers will silently use the example config instead of yours.
-
-#### Step 3 — Whisper model cache (avoid re-downloading on restart)
-
-On first run, `ml-service` downloads the Whisper model from HuggingFace (~3 GB for large-v3).  
-`docker-compose.yml` mounts `./hf-cache` into the container so the model persists across restarts:
-
-```
-./hf-cache:/root/.cache/huggingface
-```
-
-Once downloaded, subsequent restarts load from disk immediately.
-
-#### Optional — Speaker diarization (Pyannote)
-
-1. Accept the license for [pyannote/speaker-diarization-3.1](https://huggingface.co/pyannote/speaker-diarization-3.1) on HuggingFace.
-2. Create a Read token at https://hf.co/settings/tokens.
-3. Set in `.env`:
-
-```env
-ML_VAD_BACKEND=pyannote
-PYANNOTE_AUTH_TOKEN=hf_xxxxxx
-```
-
-### Common commands
-
-```powershell
-docker compose ps                         # service status
-docker compose logs -f worker             # tail worker logs
-docker compose logs -f ml-service         # ML service logs (model load progress etc.)
-docker compose down                       # stop and remove containers
-docker compose --env-file .env up -d      # restart with explicit env file (recommended)
-```
-
-### Edge-TTS voice options (no-GPU fallback)
-
-> Edge-TTS is the **fallback TTS backend** for environments without a CUDA GPU. It does not support zero-shot voice cloning; every speaker shares one preset voice. For real dubbing work you almost certainly want IndexTTS2 instead — see the dedicated section below.
-
-Default is `zh-CN-XiaoxiaoNeural` (female, conversational). Override with `EDGE_TTS_VOICE` in `.env`:
-
-| Voice | Style |
-|-------|-------|
-| `zh-CN-XiaoxiaoNeural` | Female, natural dialogue (default) |
-| `zh-CN-YunxiNeural` | Male, news-reading |
-| `zh-CN-YunjianNeural` | Male, energetic |
-| `zh-TW-HsiaoChenNeural` | Female, Traditional Chinese |
-
----
-
-## 🐧 Deploying to a Linux Server
-
-This section covers running HoloDub on a headless Linux GPU server (cloud VM or bare-metal).  
-No Docker Desktop is needed — everything runs with Docker Engine + NVIDIA Container Toolkit.
-
-### Hardware requirements
-
-| Component | Minimum | Recommended |
-|-----------|---------|-------------|
-| GPU VRAM | 8 GB | 16–24 GB (enables `GPU_CONCURRENCY=2`) |
-| System RAM | 16 GB | 32 GB |
-| CPU | 4 cores | 8+ cores |
-| Disk | 50 GB free | 200 GB+ (models ~10 GB, data grows with videos) |
-| CUDA | 11.8+ | 12.x |
-
-> The indexTTS2 model suite weighs ~5 GB; Faster-Whisper large-v3 adds ~3 GB.  
-> Plan for at least 20 GB under `./hf-cache` + `./data` combined.
-
----
-
-### Step 1 — Install Docker Engine & NVIDIA Container Toolkit
-
-```bash
-# Docker Engine (Ubuntu / Debian)
-curl -fsSL https://get.docker.com | sh
-sudo usermod -aG docker $USER   # log out and back in after this
-
-# NVIDIA Container Toolkit
-curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | \
-  sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
-curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \
-  sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
-  sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
-sudo apt-get update && sudo apt-get install -y nvidia-container-toolkit
-sudo nvidia-ctk runtime configure --runtime=docker
-sudo systemctl restart docker
-
-# Verify GPU is visible inside Docker
-docker run --rm --gpus all nvidia/cuda:12.8.0-base-ubuntu22.04 nvidia-smi
-```
-
----
-
-### Step 2 — Clone and configure
-
-```bash
-git clone https://github.com/YuehaoDai/HoloDub.git
-cd HoloDub
-cp .env.example .env
-```
-
-Edit `.env` for production use.  At a minimum set:
-
-```env
-# Real translation
 TRANSLATION_PROVIDER=openai_compatible
 OPENAI_BASE_URL=https://api.deepseek.com/v1
 OPENAI_API_KEY=sk-xxxxxx
 OPENAI_MODEL=deepseek-chat
-RETRANSLATION_MODEL=deepseek-chat   # or any model on the same endpoint
+```
 
-# Real ML backends
+Any compatible endpoint can be used as long as it follows the OpenAI chat API shape.
+
+### 3. Real ASR + IndexTTS2
+
+For GPU-backed runs:
+
+```env
 ML_PYTHON_EXTRAS=real
 ML_ASR_BACKEND=faster_whisper
 FASTER_WHISPER_MODEL=large-v3
+
 ML_TTS_BACKEND=indextts2
 INDEXTTS2_INLINE=true
-
-# Timeouts — bump for very long videos (seconds)
-STAGE_TIMEOUT_SECONDS=14400
-
-# Security — set a strong random token to protect the API
-API_AUTH_TOKEN=<generate with: openssl rand -hex 32>
-```
-
-> **Tip**: run `openssl rand -hex 32` on the server to generate a secure token,  
-> then set the same value in the UI (or `Authorization: Bearer <token>` header) to access the API.
-
----
-
-### Step 3 — Build and start
-
-```bash
-# Build the ML service image (~10-20 min on first run)
-docker compose build ml-service
-
-# Start all services in production mode
-docker compose -f docker-compose.yml -f docker-compose.staging.yml --env-file .env up -d
-```
-
-`docker-compose.staging.yml` adds `restart: unless-stopped` to every service so they survive reboots automatically.
-
-Check that everything came up:
-
-```bash
-docker compose ps
-docker compose logs -f worker      # pipeline logs
-docker compose logs -f ml-service  # model loading / TTS logs
-```
-
-Open `http://<server-ip>:8080/ui/` in your browser.
-
----
-
-### Step 4 — Pre-download model weights (recommended)
-
-On first start `ml-service` downloads Whisper large-v3 (~3 GB) and IndexTTS2 (~5 GB) from HuggingFace.  
-Downloads happen inside the container and can take 10–30 min depending on bandwidth.
-
-To monitor progress:
-
-```bash
-docker compose logs -f ml-service
-```
-
-If the XetHub protocol stalls (large `.incomplete` files stop growing), use the workaround from the Known Issues section:
-
-```bash
-docker exec -it holodub-ml-service-1 python3 /data/dl_gpt.py
-```
-
-All weights land in `./hf-cache` (mounted as `/root/.cache/huggingface`) and persist across container restarts and rebuilds.
-
----
-
-### Step 5 — Firewall and reverse proxy
-
-By default port `8080` is exposed on all interfaces.  Either restrict it at the firewall level or put Nginx/Caddy in front.
-
-**Minimal ufw rules:**
-
-```bash
-sudo ufw allow ssh
-sudo ufw allow 8080/tcp   # or restrict to your IP: ufw allow from <your-ip> to any port 8080
-sudo ufw enable
-```
-
-**Minimal Caddy reverse proxy** (auto-HTTPS with a domain):
-
-```
-example.com {
-    reverse_proxy localhost:8080
-}
-```
-
-When behind a trusted reverse proxy, also set in `.env`:
-
-```env
-TRUSTED_PROXIES=127.0.0.1
-```
-
----
-
-### Migrating data from an existing instance
-
-If you are moving from a Windows/Docker Desktop setup to a Linux server, transfer three things:
-
-#### 1. PostgreSQL database
-
-```bash
-# On the source machine (Windows — run in WSL or Git Bash)
-docker exec holodub-postgres-1 \
-  pg_dump -U holodub -Fc holodub > holodub.dump
-
-scp holodub.dump user@server:/home/user/
-
-# On the Linux server (after docker compose is running)
-docker exec -i holodub-postgres-1 \
-  pg_restore -U holodub -d holodub --clean --if-exists < /home/user/holodub.dump
-```
-
-#### 2. Job data (`./data`)
-
-```bash
-# From source machine — rsync over SSH (adjust paths as needed)
-rsync -avz --progress ./data/ user@server:/path/to/HoloDub/data/
-```
-
-> `./data` holds all uploaded videos, separated audio, TTS output, and merged videos.  
-> It can be large (tens of GB for long projects); use `--bwlimit=5000` to cap bandwidth.
-
-#### 3. Model cache (`./hf-cache`)
-
-```bash
-# Option A — rsync (fastest if source already has everything downloaded)
-rsync -avz --progress ./hf-cache/ user@server:/path/to/HoloDub/hf-cache/
-
-# Option B — let ml-service re-download on first start (simpler, slower)
-# Just skip this step; the cache will be rebuilt automatically.
-```
-
-After transfer, restart the stack on the server:
-
-```bash
-docker compose -f docker-compose.yml -f docker-compose.staging.yml --env-file .env up -d
-```
-
----
-
-### Common Linux commands
-
-```bash
-docker compose ps                          # service status
-docker compose logs -f worker              # tail worker logs
-docker compose logs -f ml-service          # ML service logs
-docker compose --env-file .env up -d       # restart with explicit env file
-
-# Check GPU utilisation inside the ml-service container
-docker exec holodub-ml-service-1 nvidia-smi
-
-# Submit a test job from the server
-curl -s -X POST http://localhost:8080/jobs \
-  -H "Content-Type: application/json" \
-  -d '{"input_relpath":"input-smoke.mp4","target_language":"zh","auto_start":true}' \
-  | python3 -m json.tool
-
-# Clear a stale Redis stage lease (if a job is stuck)
-docker exec holodub-redis-1 redis-cli DEL holodub:lease:job:<id>:stage:<stage>
-
-# Stop and clean up (keeps ./data and postgres-data volume)
-docker compose down
-```
-
----
-
-## 🎙 IndexTTS2 — zero-shot dubbing (available now)
-
-[IndexTTS2](https://github.com/index-tts/index-tts) (Bilibili, Apache 2.0) is the primary TTS backend HoloDub is built for. The `indextts2-inference` package is now **integrated and tested** inside `ml-service`.
-
-### Why IndexTTS2
-
-**1. Duration control** — the most critical feature for dubbing  
-- `max_mel_tokens` is estimated from the **translated text length** (empirical: ~50 AR tokens/sec, ~13.5 tokens/Chinese char) with 5 % headroom — not from the target duration.  Using text length as the primary constraint prevents the model from generating slow prosody to fill an over-generous budget.
-- `max_allowed_sec = target_sec + gap_to_next_segment` is passed as a hard ceiling so audio never exceeds the available silence window.
-- If generated audio overflows into the trailing silence gap: accepted silently (natural pacing).
-- If overflow exceeds the gap (would overlap next segment): Kimi-k2.5 re-translates with a tighter character budget (up to `RETRANSLATION_MAX_ATTEMPTS` times).
-- **No `atempo` time-stretching** — duration is aligned through re-translation and natural gap borrowing, not speed artifacts.
-
-**2. Zero-shot voice cloning**  
-- 3–10 s of reference audio clones any speaker's voice, no training required.
-- Integrates with HoloDub's **Voice Profile** system: upload a reference clip, bind it to `SPK_01` or `SPK_02`, and each speaker gets their own cloned voice.
-
-**3. Emotion-aware synthesis**  
-- Timbre and emotion are disentangled: use Speaker A's voice to convey Speaker B's emotion.
-- `use_emo_text=true` (default): the Qwen3 fine-tune infers an 8-dim emotion vector automatically from the translated text — angry lines sound angry without manual annotation.
-- Additional control: explicit emotion reference audio (`emo_audio_prompt`) or direct 8-dim vector.
-
-### Enabling IndexTTS2 inline mode
-
-**Requirements**: GPU + `ML_PYTHON_EXTRAS=real` image already built.
-
-```env
-# .env
-ML_TTS_BACKEND=indextts2
-INDEXTTS2_INLINE=true
-
-# optional: use local checkpoints instead of HuggingFace auto-download
-INDEXTTS2_MODEL_DIR=/data/models/indextts2
-
-# optional: attention backend (default sdpa; sage/flash for Ampere/Hopper)
-INDEXTTS2_ATTN_BACKEND=
-
-# emotion auto-detection from translated text (recommended)
 INDEXTTS2_USE_EMO_TEXT=true
-
-# fallback reference voice when no VoiceProfile is bound to a speaker
-INDEXTTS2_DEFAULT_VOICE_RELPATH=voices/default.wav
 ```
 
-Restart the stack (no rebuild needed):
+Build and start:
 
 ```powershell
+docker compose build ml-service
 docker compose --env-file .env up -d
 ```
 
-**First run**: the IndexTTS2 model (~3–5 GB) is downloaded automatically from HuggingFace to `./hf-cache` and cached for subsequent runs.
+Always pass `--env-file .env` when you run the stack. It prevents accidental fallback to `.env.example` when a shell-level `COMPOSE_ENV_FILE` is set.
 
-### Setting up voice profiles for zero-shot cloning
+For the full environment matrix, see the [configuration reference](docs/configuration.md).
+
+## IndexTTS2 In HoloDub
+
+IndexTTS2 is the primary TTS backend because dubbing needs more than a nice voice. It needs timing.
+
+HoloDub uses IndexTTS2 with:
+
+- Zero-shot voice cloning from short reference audio.
+- Per-speaker voice profile mapping.
+- Duration ceilings derived from translated text and available silence gap.
+- Drift-based retranslation when speech would overlap the next segment.
+- Background warmup and readiness reporting, so the first real TTS request does not silently block the operator.
+- Optional BigVGAN CUDA precompile path for Blackwell/RTX 50-series systems.
+
+Example voice profile:
 
 ```powershell
-# 1. Upload a reference audio clip (3-10 s, WAV preferred)
-#    Place it under data/voices/ so the container can access it via /data/voices/
-
-# 2. Create a VoiceProfile via API
 $body = @{
     name = "Host Voice"
     mode = "sample"
     language = "zh"
     sample_relpaths = @("voices/host_ref.wav")
 } | ConvertTo-Json
-Invoke-RestMethod -Uri "http://localhost:8080/voice-profiles" -Method Post -ContentType "application/json" -Body $body
 
-# 3. Bind SPK_01 in a job to this profile
-$body = @{ bindings = @(@{ speaker_label = "SPK_01"; voice_profile_id = <profile_id> }) } | ConvertTo-Json
-Invoke-RestMethod -Uri "http://localhost:8080/jobs/<job_id>/bindings" -Method Put -ContentType "application/json" -Body $body
+Invoke-RestMethod `
+  -Uri "http://localhost:8080/voice-profiles" `
+  -Method Post `
+  -ContentType "application/json" `
+  -Body $body
 ```
 
-### Alternative connection modes (no local GPU required)
+Bind a speaker in a job:
 
-**HTTP mode** — run IndexTTS2 as a sidecar service:
-```env
-ML_TTS_BACKEND=indextts2
-INDEXTTS2_ENDPOINT=http://your-indextts2-service:8000/tts
+```powershell
+$body = @{
+  bindings = @(@{ speaker_label = "SPK_01"; voice_profile_id = <profile_id> })
+} | ConvertTo-Json
+
+Invoke-RestMethod `
+  -Uri "http://localhost:8080/jobs/<job_id>/bindings" `
+  -Method Put `
+  -ContentType "application/json" `
+  -Body $body
 ```
 
-**Command mode** — call a local script:
-```env
-ML_TTS_BACKEND=indextts2
-INDEXTTS2_COMMAND=python run_tts.py --text "{text}" --duration "{duration}" --output "{output}"
-```
+## Operator Console
 
-### Remaining work
+The console is built around the work that actually happens after the model output arrives.
 
-- [ ] `emo_audio_prompt` support for cross-speaker emotion transfer
-- [ ] Per-segment emotion override via API (currently auto-detected from text)
-- [ ] Chinese reference audio for better prosody (current default is English; causes subtle rhythm mismatch)
+Read the [UI usage guide](docs/ui-guide.md) for the full operator workflow.
 
----
+| Surface                  | What it gives you                                                                                 |
+| ------------------------ | ------------------------------------------------------------------------------------------------- |
+| Job rail                 | Recent jobs and episodes with health/status summaries.                                            |
+| Language switcher        | Toggle the console between Chinese and English, persisted locally in the browser.                 |
+| Job observability header | Current stage, segment count, high-drift count, output readiness, AI score, runtime.              |
+| Stage timeline           | At-a-glance pipeline progress and failed stages.                                                  |
+| Segment table            | Source text, target text, voice, drift, delta seconds, judge score, audio, row actions.           |
+| Segment review           | LLM suggestions, manual merge/split, transcript edits, timestamp edits, single-segment ASR retry. |
+| Artifact panel           | Final video, intermediate audio, CSV/JSON traces, and latest outputs.                             |
 
-## 🎬 Demo run — validated results
+## Deployment Notes
 
-Full demo available on Bilibili: [BV1vrwszEELd](https://www.bilibili.com/video/BV1vrwszEELd/)
+The project ships with:
 
-### 60-second clip (9 segments)
+- Docker Compose for local and server runs.
+- `docker-compose.staging.yml` and `docker-compose.prod.yml` overlays.
+- Helm chart skeleton under `deploy/helm/holodub`.
+- Release and rollout notes under `docs/production`.
+- Prometheus scrape config, rules, and Grafana dashboard under `docs/observability`.
+- OpenAPI specification at `docs/openapi.yaml`.
 
-**Input**: MIT 6.824 Distributed Systems lecture, English, 60 s  
-**Pipeline**: Faster-Whisper large-v3 → Qwen-turbo → IndexTTS2 (zero-shot)  
-**Hardware**: RTX 5080, Docker + WSL2
-
-| Phase | Time |
-|-------|------|
-| IndexTTS2 cold-start (first job) | **~6 minutes** |
-| Single segment inference (warm) | **3.6 s** (GPT 1.06s + S2Mel 0.70s + BigVGAN 0.10s) |
-| Full 60-second job | **~7 minutes** |
-| Real-time factor (RTF) | **1.47×** per segment |
-
-### Full 79-minute lecture (626 segments)
-
-**Input**: MIT 6.824 full lecture video, English, 79 min, 946 MB  
-**Pipeline**: same as above  
-**Segmentation**: 626 segments, avg 6.9 s each (min 4 s, max 21.5 s)
-
-| Phase | Approximate time |
-|-------|-----------------|
-| ASR (Faster-Whisper large-v3) | ~8 min |
-| Translation (Qwen-turbo, 626 segments) | ~12 min |
-| TTS (IndexTTS2, warm after cold-start) | ~36 min |
-| Merge (batched ffmpeg, 21 chunks × 30 segs) | ~5 min |
-| **Total** | **~60 min** |
-
-**Timing accuracy**: avg drift < 1 % across all 626 segments; Kimi-k2.5 re-translation triggered on 3 segments where overflow exceeded trailing gap.
-
-**10-minute clip (test_10min.mp4)**: ~81 segments; drift-based retranslation (≤6% target, up to 10 attempts) keeps most segments within 5%; high-drift filter surfaces remaining outliers for manual review.
-
----
-
-## ⚠️ Known Issues & Help Wanted
-
-These are open problems found during real hardware testing. Contributions welcome!
-
-### 1. ~~BigVGAN CUDA kernel fails on Blackwell / RTX 50-series (sm_120)~~ — RESOLVED ✅
-
-**Original symptom**: `nvcc` was absent from the `nvidia/cuda:12.8.0-runtime` base image, so the BigVGAN anti-aliasing CUDA extension could not be JIT-compiled at runtime.
-
-**Fix applied** (`docker/ml.Dockerfile`):
-
-1. **Switch base image** from `nvidia/cuda:12.8.0-runtime-ubuntu22.04` to **`nvidia/cuda:12.8.0-devel-ubuntu22.04`** — the devel variant bundles the full CUDA compiler toolchain (`nvcc`, all headers including `cuda_runtime.h`, `cusparse.h`, etc.). Image size increases ~1 GB but the build is reliable.
-
-2. **Patch unused header** — BigVGAN's `.cu` source includes `<cuda_profiler_api.h>` which is absent from even the devel headers for CUDA 12.8. The header is never actually called, so it is removed via `sed` in the Dockerfile:
-   ```dockerfile
-   RUN find /usr/local/lib/python3.11/dist-packages/indextts -name "*.cu" \
-        -exec sed -i 's|#include <cuda_profiler_api.h>|// removed (unused)|g' {} \;
-   ```
-
-3. **Pre-compile and cache** — `docker/precompile_bigvgan.py` is executed during `docker build`, compiling the extension for architectures `7.5;8.0;8.6;8.9+PTX;12.0` and storing the resulting `.so` in the image layer. Every container start loads the cached kernel instantly.
-
-**Result on RTX 5080**: BigVGAN now uses the native CUDA kernel. Combined with `use_fp16=True` on IndexTTS2, TTS throughput improved **~2.5× vs FP32 + torch fallback** (3.08 s/segment vs ~7.7 s/segment on the 626-segment 79-minute benchmark).
-
-### 2. IndexTTS2 cold-start (mitigated)
-
-**Symptom**: Loading all components (GPT 3.3 GB, S2Mel 1.1 GB, BigVGAN, wav2vec2bert, CAMP++, NeMo text processor) takes **~6 minutes** on RTX 5080.
-
-**Mitigation (implemented)**:
-- IndexTTS2 is now **eager-loaded** at `ml-service` startup when `INDEXTTS2_INLINE=true` and `ML_TTS_BACKEND=indextts2`, so the first TTS request no longer blocks for 6 minutes.
-- `/healthz` returns `tts_warmup_status`: `idle` | `loading` | `ready` | `error`.
-- Go API exposes `GET /ml-health` (proxies to ml-service) for the UI.
-- The Web UI shows a "TTS 模型预热中…" banner while `tts_warmup_status === "loading"`.
-
-### 3. HuggingFace XetHub large-file download stalls in Docker
-
-**Symptom**: `snapshot_download` of IndexTTS2 via the XetHub protocol (`hf-xet`) stalls on 2–3 large blobs (`.incomplete` files stop growing).
-
-**Workaround** (included in `data/dl_gpt.py`): set `HF_HUB_DISABLE_XET=1` and use a `requests`-based streaming download instead:
-
-```python
-import os, requests
-os.environ["HF_HUB_DISABLE_XET"] = "1"
-from huggingface_hub import snapshot_download
-snapshot_download("IndexTeam/IndexTTS-2", token=os.environ.get("HF_TOKEN"))
-```
-
-Or directly download the stuck file with:
-
-```python
-import requests, os
-url = "https://huggingface.co/IndexTeam/IndexTTS-2/resolve/main/gpt.pth"
-headers = {"Authorization": f"Bearer {os.environ['HF_TOKEN']}"}
-with open("gpt.pth", "wb") as f:
-    for chunk in requests.get(url, headers=headers, stream=True).iter_content(8*1024*1024):
-        f.write(chunk)
-```
-
----
-
-### .env quick reference
-
-#### Backend selection
-
-| Variable | Smoke default | Real backends |
-|----------|---------------|---------------|
-| `TRANSLATION_PROVIDER` | `mock` | `openai_compatible` |
-| `ML_ASR_BACKEND` | `mock` | `faster_whisper` |
-| `ML_TTS_BACKEND` | `silence` | `indextts2` (preferred) · `edge_tts` (no-GPU fallback) |
-| `ML_VAD_BACKEND` | `none` | `pyannote` (optional) |
-| `ML_SEPARATOR_BACKEND` | `ffmpeg_stub` | `demucs` (optional) |
-| `ML_PYTHON_EXTRAS` | _(empty)_ | `real` |
-
-#### IndexTTS2
-
-| Variable | Default | Notes |
-|----------|---------|-------|
-| `INDEXTTS2_INLINE` | `false` | `true` when `ML_TTS_BACKEND=indextts2` so the model loads inside ml-service |
-| `INDEXTTS2_MODEL_DIR` | _(empty, auto-download)_ | `/data/models/indextts2` to use a local checkpoint |
-| `INDEXTTS2_USE_EMO_TEXT` | `false` | `true` enables the Qwen3-based 8-dim emotion vector inference from translated text |
-| `INDEXTTS2_DEFAULT_VOICE_RELPATH` | _(empty)_ | `voices/ref.wav` — **use a Chinese clip** for best prosody |
-| `INDEXTTS2_USE_CUDA_KERNEL` | `false` | `true` only with a freshly built image where `docker/precompile_bigvgan.py` baked the BigVGAN `.so` into site-packages; without it the runtime falls back to PyTorch native (identical audio, ~10–15 % slower) |
-
-#### Segment review + ASR splitter knobs
-
-| Variable | Default | Notes |
-|----------|---------|-------|
-| `SEGMENT_REVIEW_ENABLED` | `true` | `false` skips the LLM merge-suggestion stage and auto-advances `asr_smart → translate` |
-| `SEGMENT_REVIEW_MODEL` | _(falls back to `RETRANSLATION_MODEL`, then `OPENAI_MODEL`)_ | Override only if you want to use a different model just for the review prompts |
-| `HARD_MAX_SEGMENT_SEC` | `45` | Hard ceiling enforced by the post-merge passes (no merged segment may exceed this) — also caps `_merge_close_gap_segments` so connected speech is split here |
-| `CLOSE_GAP_MS` | `800` | Inter-segment gap threshold for the close-gap merge pass; lowered from the historic `1500 ms` to avoid over-aggressive chaining |
-| `ASR_END_PAD_MS` | `500` | Tail padding added to each segment's `end_ms` to recover Whisper's under-reported trailing phonemes |
-
-#### Re-translation loop
-
-| Variable | Default | Notes |
-|----------|---------|-------|
-| `RETRANSLATION_ENABLED` | `true` | Disable to skip the drift-based re-translation feedback loop entirely |
-| `RETRANSLATION_MODEL` | `kimi-k2.5` | Any model on the same `OPENAI_BASE_URL` |
-| `RETRANSLATION_DRIFT_THRESHOLD` | `0.06` | Max allowed `|actual − target| / target`; triggers re-translation if exceeded |
-| `RETRANSLATION_MAX_ATTEMPTS` | `30` | Max re-translation attempts per segment (raised from 10 in OPT-002-followup-5 to give UI rerun more headroom) |
-
-#### Concurrency, timeouts and security
-
-| Variable | Default | Notes |
-|----------|---------|-------|
-| `TTS_CONCURRENCY` | `2` | Parallel TTS requests from worker |
-| `GPU_CONCURRENCY` | `2` | Parallel GPU inferences in ml-service (requires ~16 GB VRAM) |
-| `MODEL_REGISTRY_MAX_MODELS` | _(empty, no eviction)_ | Optional LRU cap on the ml-service `ModelRegistry` |
-| `STAGE_TIMEOUT_SECONDS` | `14400` | Raise for very long videos |
-| `API_AUTH_TOKEN` | _(empty)_ | **Required when `APP_ENV=production`** — the API refuses to start without it; non-production logs a single warning and continues open |
-| `TRUSTED_PROXIES` | _(empty)_ | Set to `127.0.0.1` (or the actual proxy IP) when fronting with Nginx / Caddy so client IPs are read from `X-Forwarded-For` |
-
----
-
-## 🖥 Web UI — Segment Review & Fine-tuning
-
-The operator UI (`/ui/`) has been rebuilt as a Vue 3 SPA with an **Open WebUI-style dark sidebar** layout.
-
-![Segment fine-tuning interface](assets/精调界面截图.png)
-
-*Segment table with drift badges, inline edit, and high-drift filter — review and refine translations per segment.*
-
-### Phase 1 — translation review (post-translate)
-
-| Feature | Description |
-|---------|-------------|
-| **Job sidebar** | Real-time job list with status badges, auto-refreshes every 10 s |
-| **Segment table** | All segments with source text, translated text, and drift % badge |
-| **Drift badges** | Green < 5 % · Yellow 5–15 % · Red > 15 % |
-| **Audio playback** | Inline `<audio>` player per synthesized segment (lazy-loads blob) |
-| **Inline edit** | Click Edit → modify translated text → Save or Save + Re-synthesize |
-| **Filter / sort** | Filter by All / High-drift / Unsynthesized · Sort by ordinal or drift % |
-| **Re-merge** | Trigger merge stage retry after editing to regenerate `final.mp4` |
-
-### Segment review (pre-translate, `awaiting_review` stage)
-
-A separate dashboard appears while `job.status === 'awaiting_review'`. It is shown automatically right after `asr_smart` (and after the `segment_review` LLM stage if enabled) so reviewers can fix segmentation and ASR errors **before** translation costs are paid.
-
-| Control | Description |
-|---------|-------------|
-| **AI 分段建议** panel | Lists every `segment_suggestion` (currently merge proposals) with confidence, reason and the segments involved; per-row 采纳 / 否决 buttons. |
-| **🤖 ↻ 重试 ASR 分段** | Job-level "nuclear" reset: clears all segments + suggestions and re-queues the `asr_smart` stage. |
-| **✂ 拆分** | Per-row split UI: click the source-text characters or drag the slider to choose `split_char_index`; backend cuts the segment in two with linearly interpolated timing. |
-| **⊕ 合并↓** | Per-row "merge with next" button. |
-| **⏱ 调整时间** | Per-row textbox + ▶ 试听 to fine-tune `start_ms` / `end_ms` against the original `vocals.wav`. |
-| **✏ 编辑原文** | Wave 1: inline textarea + ✓ / ✕ to fix Whisper recognition errors; writes only `source_text` (start_ms, end_ms, status are guaranteed untouched). |
-| **↻ 重新识别** | Wave 2: re-runs faster-whisper just on this segment's window; the result replaces `source_text` in place. Empty transcripts surface a hint to edit manually instead of erroring. |
-| **✓ 确认分段，开始翻译** | Bottom action bar; calls `POST /jobs/:id/confirm-segmentation` to enqueue `translate`. |
-
-The five per-row controls are mutually exclusive — only one inline editor (split / timing / transcript edit) can be open per row at a time, and re-recognise auto-closes whichever is open before issuing the request.
-
-### To build the UI locally
+For a headless Linux GPU server, the high-level path is:
 
 ```bash
-cd ui
-npm install
-npm run build
-# Outputs to internal/ui/static/ (picked up by go:embed)
+git clone https://github.com/YuehaoDai/HoloDub.git
+cd HoloDub
+cp .env.example .env
+docker compose build ml-service
+docker compose -f docker-compose.yml -f docker-compose.staging.yml --env-file .env up -d
 ```
 
-**After UI-only changes** (avoids rebuilding ml-service and re-downloading CUDA/PyTorch):
-```bash
-cd ui && npm run build && cd ..
-docker compose build api && docker compose up -d
-```
+## Project Status
 
-For development with hot-reload:
-```bash
-cd ui
-npm install
-npm run dev
-# Vite dev server at http://localhost:5173/
-# API calls proxy to the Go server (configure VITE_API_BASE if needed)
-```
+HoloDub is already capable of real end-to-end dubbing, and the current engineering focus is reliability, controllability, and repeatable long-form quality.
 
-### Phase 2
+Completed highlights:
 
-- [x] **Original audio comparison**: Side-by-side playback of original vocal clip vs. TTS output (`GET /jobs/:id/audio/:ordinal` cut from `vocals.wav`)
-- [x] **Batch re-synthesize**: Multi-select segments with checkboxes + batch Rerun button
-- [x] **Keyboard shortcuts**: `J`/`K` to navigate segments, `Space` to play, `E` to edit
-- [x] **Waveform visualization**: WaveSurfer.js integration for precise audio inspection (expandable waveform row)
-- [x] **Segment quality tagging**: Mark segments as good / bad / skip, persisted to segment meta
-- [x] **Speaker binding UI**: Assign voice profiles to speakers directly from the segment table
+- Go API and worker pipeline.
+- Python ML service with real ASR and IndexTTS2 integration.
+- Duration-aware translation and retranslation loop.
+- Segment review workflow with human-in-the-loop controls.
+- Per-segment TTS persistence and retry.
+- Batched ffmpeg merge for long videos.
+- Web console redesign with observability-first UI.
+- Prometheus/Grafana observability assets.
+- CI/security hardening configuration.
 
----
+Active areas:
 
-## 🛠 Tech stack
+- Production-grade vocal/BGM separation defaults.
+- Pyannote diarization setup polish.
+- Chinese reference-audio guidance for better prosody.
+- More automated quality gates for chapter/episode-level judging.
+- Shareable operator reports for long-running jobs.
 
-- **Control plane**: Go, Gin, GORM, Redis, PostgreSQL  
-- **ML service**: FastAPI, PyTorch, Demucs/UVR5, Faster-Whisper, Pyannote, IndexTTS2  
-- **Orchestration**: Docker Compose  
-- **Translation**: Qwen / DeepSeek / pluggable LLM providers  
-- **Web UI**: Vue 3, Vite, Tailwind CSS  
+## Documentation
 
----
+Start here:
 
-## 📜 License
+- [Documentation map](docs/README.md)
+- [UI usage guide](docs/ui-guide.md)
+- [Configuration reference](docs/configuration.md)
+- [Observability setup](docs/observability/README.md)
+- [Production release runbook](docs/production/release-runbook.md)
+- [Scale roadmap](docs/production/scale-roadmap.md)
+- [OpenAPI spec](docs/openapi.yaml)
+- [Optimization roadmap](docs/roadmap/optimization-roadmap.md)
 
-Apache 2.0
+## Tech Stack
+
+- Control plane: Go, Gin, GORM, Redis, PostgreSQL.
+- ML service: Python, FastAPI, PyTorch, Faster-Whisper, Pyannote, Demucs/UVR5, IndexTTS2.
+- Frontend: Vue 3, Vite, Tailwind CSS, WaveSurfer.js.
+- Orchestration: Docker Compose, Helm skeleton.
+- LLM providers: OpenAI-compatible APIs such as DeepSeek, Qwen-compatible gateways, or self-hosted endpoints.
+
+## License
+
+Apache 2.0.
