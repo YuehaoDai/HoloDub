@@ -23,8 +23,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"sort"
 	"sync"
+	"unicode"
 )
 
 // EnsembleArgs is the input bundle for RetranslateEnsemble. Mirrors
@@ -71,6 +73,47 @@ type EnsembleCandidate struct {
 	Text    string
 	Verdict *JudgeResult // nil if the judge failed on this candidate
 	Err     error
+}
+
+// durationWindowFilter reports which candidate indices fall inside the
+// predicted-duration window, or nil when filtering cannot apply (no
+// observed speaking rate or no target duration). The predicted duration
+// uses the calibrated rate the retry loop measured from real TTS output.
+// The window is the wider of (target * max(threshold, 15%)) or 2 seconds,
+// so short targets are not over-constrained by rate-estimation noise
+// (measured ±15-20% on 2026-07-21 production data).
+func durationWindowFilter(args EnsembleArgs, candidates []EnsembleCandidate) map[int]bool {
+	if args.ObservedCharsPerSec <= 0 || args.TargetSec <= 0 {
+		return nil
+	}
+	rel := args.DriftThresholdPct
+	if rel < 0.15 {
+		rel = 0.15
+	}
+	windowSec := args.TargetSec * rel
+	if windowSec < 2.0 {
+		windowSec = 2.0
+	}
+	out := make(map[int]bool, len(candidates))
+	for i, cand := range candidates {
+		if cand.Err != nil || cand.Text == "" {
+			continue
+		}
+		chars := 0
+		for _, r := range cand.Text {
+			if !unicode.IsSpace(r) {
+				chars++
+			}
+		}
+		if chars == 0 {
+			continue
+		}
+		predictedSec := float64(chars) / args.ObservedCharsPerSec
+		if math.Abs(predictedSec-args.TargetSec) <= windowSec {
+			out[i] = true
+		}
+	}
+	return out
 }
 
 // RetranslateEnsemble runs args through every model in `models` in
@@ -185,6 +228,28 @@ func (c *Client) RetranslateEnsemble(ctx context.Context, args EnsembleArgs, mod
 			continue
 		}
 		pool = append(pool, scored{idx: i, score: cand.Verdict.OverallScore()})
+	}
+	// Duration-aware pre-filter (2026-07-21): the fidelity judge has no
+	// duration axis, so a faithful but duration-ignoring candidate can beat
+	// one that followed the drift instruction. When an observed speech rate
+	// is available, drop candidates whose predicted duration falls outside
+	// the drift window before ranking; if every candidate is out of window
+	// (or no rate is known), keep the full pool so behaviour degrades to the
+	// legacy fidelity-only ranking.
+	if inWindow := durationWindowFilter(args, candidates); inWindow != nil {
+		filtered := pool[:0]
+		for _, entry := range pool {
+			if inWindow[entry.idx] {
+				filtered = append(filtered, entry)
+			}
+		}
+		if len(filtered) > 0 {
+			if len(filtered) < len(pool) {
+				slog.Info("ensemble duration filter applied",
+					"kept", len(filtered), "dropped", len(pool)-len(filtered))
+			}
+			pool = filtered
+		}
 	}
 	if len(pool) == 0 {
 		// Fallback: every candidate failed retranslate or judge.

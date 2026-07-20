@@ -458,3 +458,78 @@ func TestEnsemble_TieBreakLowerIndexWins(t *testing.T) {
 		t.Fatalf("on tie, lower-index 'first' must win; got %q", res.BestModel)
 	}
 }
+
+// ── durationWindowFilter (2026-07-21 duration-aware selection) ─────────
+//
+// The fidelity judge has no duration axis, so the ensemble can crown a
+// faithful candidate that ignores the drift instruction (e.g. picking a
+// 72-char compression when the loop needed ~130 chars to fill the slot).
+// The filter drops predicted-duration outliers before ranking.
+
+func TestDurationWindowFilter_NilWithoutRateOrTarget(t *testing.T) {
+	cands := []EnsembleCandidate{{Text: "abc"}}
+	if got := durationWindowFilter(EnsembleArgs{ObservedCharsPerSec: 0, TargetSec: 10}, cands); got != nil {
+		t.Fatalf("expected nil filter without observed rate, got %v", got)
+	}
+	if got := durationWindowFilter(EnsembleArgs{ObservedCharsPerSec: 5, TargetSec: 0}, cands); got != nil {
+		t.Fatalf("expected nil filter without target, got %v", got)
+	}
+}
+
+func TestDurationWindowFilter_KeepsInWindowDropsOutliers(t *testing.T) {
+	// Observed rate 5 chars/sec, target 10s -> in-window 42.5..57.5 chars
+	// (window = max(0.06, 0.15) = 15%).
+	args := EnsembleArgs{
+		TargetSec:           10.0,
+		DriftThresholdPct:   0.06,
+		ObservedCharsPerSec: 5.0,
+	}
+	cands := []EnsembleCandidate{
+		{Text: strings.Repeat("译", 50)}, // 50 chars -> 10.0s, keep
+		{Text: "太短了"},                  // 3 chars -> 0.6s, drop
+		{Text: strings.Repeat("长", 70)}, // 70 chars -> 14.0s, drop
+	}
+	got := durationWindowFilter(args, cands)
+	if got == nil {
+		t.Fatal("expected non-nil filter")
+	}
+	if !got[0] {
+		t.Errorf("candidate 0 (in-window) should be kept")
+	}
+	if got[1] {
+		t.Errorf("candidate 1 (too short) should be dropped")
+	}
+	if got[2] {
+		t.Errorf("candidate 2 (too long) should be dropped")
+	}
+}
+
+func TestDurationWindowFilter_ShortTargetGetsTwoSecondFloor(t *testing.T) {
+	// Target 4s at 4 chars/sec: the 15% relative bound would be 0.6s,
+	// but the 2s floor keeps legitimate short-segment candidates.
+	args := EnsembleArgs{TargetSec: 4.0, DriftThresholdPct: 0.01, ObservedCharsPerSec: 4.0}
+	cands := []EnsembleCandidate{
+		{Text: strings.Repeat("短", 24)}, // 24 chars -> 6s, 2s over target, inside floor
+		{Text: strings.Repeat("超", 40)}, // 40 chars -> 10s, 6s over, dropped
+	}
+	got := durationWindowFilter(args, cands)
+	if !got[0] {
+		t.Errorf("candidate 2s over a short target must pass the 2s floor")
+	}
+	if got[1] {
+		t.Errorf("candidate 6s over target should be dropped")
+	}
+}
+
+func TestDurationWindowFilter_SkipsErrorAndEmptyCandidates(t *testing.T) {
+	args := EnsembleArgs{TargetSec: 10.0, DriftThresholdPct: 0.06, ObservedCharsPerSec: 5.0}
+	cands := []EnsembleCandidate{
+		{Text: "", Err: nil},
+		{Text: "   "},
+		{Text: "有效候选文本长度十个字符", Err: nil}, // 20 chars -> 4s, out of window anyway
+	}
+	got := durationWindowFilter(args, cands)
+	if got[0] || got[1] {
+		t.Errorf("empty/whitespace candidates must not be marked in-window")
+	}
+}
