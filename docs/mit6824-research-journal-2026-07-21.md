@@ -472,6 +472,49 @@ v7 durationpos adapter 改变了速率行为。需要用"adapter 装载态"重�
   现在通过并写出 chapters.json（段跨度回填 1460-60023=58.563s），已提交（b191555d）。
 - **验证轨收尾**：L1 PASS + L2 PASS（带 F1-F4），L3 放弃。当前栈健康度成立。
 
+## 27. TaskMaster #6 启动：chapter-2 drift-fix L2 验证（22:10 UTC）
+
+- 目标（TaskMaster #6）：对 job 154（episode 143 / lec1 的 chapter 2，45 段）用当前栈
+  （OPT-201/202/204 + F1-F4）重跑 TTS，验证 `hard_cap_exceeded = 0` 且 ensemble/prosody 生效。
+- 先行备份：`data/backups/job154_pre_f1234/`（音频目录 + segments.csv，含 5 月 run 产物）。
+- 已 `POST /jobs/154/segments/reset-tts` 全量重跑；监控 hard_cap 逃逸事件（目标 0 段）。
+- 历史参照：5 月 run 的 hard_cap_exceeded 段数本就为 0（c154444 PR-1+PR-2 的效果），
+  本次验证新门禁下不回退。
+
+## 28. 后台任务清理事件 + 154 验证推进（22:30 UTC）
+
+- 系统批量清理了 5 个后台任务（含 temporal 实验、154 等待器、状态守护）。
+  **job 154 重跑不受影响**（worker 任务，非 bash 后台）；实验进程死亡（已写 1/9 结果，
+  留待 154 完成后重跑）。已重新挂 154 等待器 + 状态守护。
+- **154 验证早期（1/45）**：hard_cap_exceeded **保持 0** ✓；10183 首发满分（37.987s/38s）。
+  继续观察 44 段。
+
+## 29. TaskMaster #6 关键数据点（23:42 UTC）
+
+- **hard-cap 逃逸事件 #1（10197）**：attempt 8 `accept reason=clip_overflow`，
+  51.41s/43.54s（+7.87s 超）→ **被 `SEGMENT_AGENT_REJECT_HARD_CAP_ESCAPE=true` 门禁正确拒收**，
+  段留 pending（未出厂）。这正是 6 月为防"截断出厂"设计的门禁在生效的实证。
+- 解读：TaskMaster #6 的"hard_cap_exceeded 日志 = 0"若按**出厂**口径，目前仍为 0
+  （10197 未 ship）；逃逸尝试被门禁记录并拦下，属设计行为而非缺陷。
+- 其余 22 段全干净合成。10193 仍在攻坚循环。
+
+## 30. TaskMaster #6 验证通过（01:20 UTC）✅
+
+**目标**：对 job 154（lec1 chapter 2，45 段）用当前栈重跑 TTS，验证 hard_cap_exceeded = 0
+且 ensemble/prosody recovery 生效。
+
+**结果**：
+- **45/45 全部合成**，最终 meta `hard_cap_exceeded=true` 段数 = **0** ✓
+- hard-cap 逃逸尝试 3 段（10197 over / 10210 under / 10213 over）—— 全部被
+  `SEGMENT_AGENT_REJECT_HARD_CAP_ESCAPE` 门禁**正确拒收并进入修复**（未出厂任何截断音频）。
+- 3 段全部经改写（10197）/ fresh 循环（10210、10213）修复，最终漂移 0.03-0.07%。
+- **漂移对比**：5 月 run mean 251.7ms / max 582ms → 今日 mean **26.9ms / max 248ms**
+  （mean -90%，max -57%）。judge_mean 0.971。
+- 运维事故：worker 因失败任务的 stage lease 残留 + 轮询卡死不接新任务 → 清 lease + 重启 worker 恢复。
+
+**结论**：TaskMaster #6 通过——漂移修复 bundle 在当前栈（OPT-201/202/204 + F1-F4）下
+不回退且大幅改善，hard-cap 零出厂。
+
 ## 待续
 
 - [ ] 16262 / 16364 / 16416 墙段攻坚结果
