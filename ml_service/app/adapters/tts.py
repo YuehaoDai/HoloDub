@@ -1303,10 +1303,12 @@ class TTSAdapter:
         kwargs["use_emo_text"] = False
         label = str(emo.get("label") or "").strip().lower()
         neutral_labels = {"", "neutral", "calm", "平静", "中性"}
-        if not (
+        suppress_for_neutral = (
             label in neutral_labels
             and arousal <= self.settings.indextts2_neutral_dubbing_max_arousal
-        ):
+            and not self.settings.indextts2_neutral_calm_vector_enabled
+        )
+        if not suppress_for_neutral:
             kwargs["emo_vector"] = _emo_vector_from_valence_arousal(
                 valence,
                 arousal,

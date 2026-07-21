@@ -125,6 +125,11 @@ class Settings(BaseSettings):
     # narration should stay close to the speaker prompt. Neutral/calm segments
     # under this arousal are synthesized without an explicit emotion vector.
     indextts2_neutral_dubbing_max_arousal: float = 0.65
+    # 2026-07-21 (user decision): apply a MILD calm emo_vector even for
+    # neutral/calm lecture narration instead of suppressing it — the calm
+    # vector sounds more natural to the reviewer than the flat no-vector path.
+    # Set False to restore the previous neutral-suppression behaviour.
+    indextts2_neutral_calm_vector_enabled: bool = True
     # IndexTTS2 expects emotion vector mass <= 0.8. Keep our dubbing vectors
     # deliberately below that so speaker identity and natural lecture prosody
     # remain dominant.
