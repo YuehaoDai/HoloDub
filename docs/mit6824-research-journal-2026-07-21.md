@@ -535,6 +535,12 @@ v7 durationpos adapter 改变了速率行为。需要用"adapter 装载态"重�
 
 实验产物：`data/validation/temporal_plan_experiments/20260721-092431/`。
 
+## 32. 环境备注：后台任务存活期限制（09:37 UTC）
+
+本会话中 `mit6824_status_refresh.py --watch` 类长驻后台守护两次被系统按存活期收割
+（`killed`）。非故障——课程产物用 `python tools/mit6824_status_refresh.py` 手动刷新即可保证时效。
+用户回归时 handoff/goal_status/delivery_index 均已是 human_review_ready 终态。
+
 ## 待续
 
 - [ ] 16262 / 16364 / 16416 墙段攻坚结果
