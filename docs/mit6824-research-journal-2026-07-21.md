@@ -515,6 +515,26 @@ v7 durationpos adapter 改变了速率行为。需要用"adapter 装载态"重�
 **结论**：TaskMaster #6 通过——漂移修复 bundle 在当前栈（OPT-201/202/204 + F1-F4）下
 不回退且大幅改善，hard-cap 零出厂。
 
+## 31. temporal-plan 合成对比实验（ep146 最差 3 段，01:40 UTC）
+
+`tools/temporal_plan_experiment.py --run-tts`，old / temporal / compact_temporal 三变体对比：
+
+| 段 | old | temporal（仅时间轴规划） | compact_temporal（规划+预压缩） |
+|---|---|---|---|
+| 10514 | 5638ms | 4651ms | **40ms** |
+| 10517 | 3046ms | 931ms | -2879ms |
+| 10527 | -5407ms | -2984ms | -4552ms |
+
+**结论（三点，互相印证）**：
+1. **仅时间轴规划（temporal）全段一致降漂**（5638→4651 / 3046→931 / -5407→-2984），
+   且**无过冲** —— pre-TTS 测量规划本身是安全增益。
+2. **预压缩（compact）高方差**：10514 上 40ms（完美），10517/10527 却过压欠产 ——
+   压缩必须**速率感知定量**，不能一刀切。这正是今日墙段战斗的同构证据。
+3. temporal-plan 的正确形态 = **时间轴规划常开 + 压缩仅在速率超标时触发**
+   （cps 实测窗判决），与 §24 的校准一致。
+
+实验产物：`data/validation/temporal_plan_experiments/20260721-092431/`。
+
 ## 待续
 
 - [ ] 16262 / 16364 / 16416 墙段攻坚结果
