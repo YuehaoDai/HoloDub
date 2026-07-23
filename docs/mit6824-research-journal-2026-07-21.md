@@ -541,6 +541,20 @@ v7 durationpos adapter 改变了速率行为。需要用"adapter 装载态"重�
 （`killed`）。非故障——课程产物用 `python tools/mit6824_status_refresh.py` 手动刷新即可保证时效。
 用户回归时 handoff/goal_status/delivery_index 均已是 human_review_ready 终态。
 
+## 33. 音色根因定位 + L8 基座重做（07-23 00:53 UTC）
+
+**根因（provenance 实证）**：发布的 L1-7 全部基座模型（runtime adapter 全空）→ 自然；
+L8 用 **v7/v8 durationpos adapter** → 机械/洪亮。用户记得"以前好的 LoRA"是 pilot adapter
+（音质练，非 durationpos）。**元凶是 durationpos 训练目标**，非 LoRA 本身。
+
+**决策**：L8 按基座方案重做（ep186，mit6824-lec08-zookeeper-prod-v1）。
+配置：`INDEXTTS2_LORA_ADAPTER_PATH=""` + `LORA_CANDIDATE_EXECUTION_ENABLED=false` +
+`ML_LORA_CANDIDATE_EXECUTION_ENABLED=false`（全走基座，时长靠文本规划+门禁+split）。
+env 备份：`.env.bak_base_redo`。
+
+**多目标训练（用户问"音色+时长能否同练"）**：能，是目标权重问题——durationpos 权重
+压过音质导致压平。正解=音质主导 + 时长轻量软约束，重新调权可兼顾（后续训练评审，需过 readiness）。
+
 ## 待续
 
 - [ ] 16262 / 16364 / 16416 墙段攻坚结果
