@@ -555,6 +555,14 @@ env 备份：`.env.bak_base_redo`。
 **多目标训练（用户问"音色+时长能否同练"）**：能，是目标权重问题——durationpos 权重
 压过音质导致压平。正解=音质主导 + 时长轻量软约束，重新调权可兼顾（后续训练评审，需过 readiness）。
 
+## 34. L8 基座重做 + 讲师音色切换（07-23 09:00 UTC）
+
+- 基座验证：用户 A/B 确认 ep186(基座) 比 ep183(adapter) **明显更自然** → durationpos 元凶坐实。
+- test_ref 音色被用户判"有点凶" → 从**讲师本人（Robert Morris）**剪 `voices/lecturer_rm_ref.wav`（18s 干净人声），用户确认"挺正常"。
+- 已建讲师 voice profile（id 3），ep186 六章 SPK_01 全绑讲师，**重置 TTS 用讲师音色重跑**（ASR+翻译保留，仅重合成）。
+- 讲师段韵律验证：366 段 f0 6.88、367 段 f0 4.33（vs test_ref 8.65-8.98）—— 沉稳，符合讲师风格。
+- 配置可回滚：`.env.bak_base_redo`（基座）/ `.env.bak_pilot_test`（pilot adapter）。
+
 ## 待续
 
 - [ ] 16262 / 16364 / 16416 墙段攻坚结果
