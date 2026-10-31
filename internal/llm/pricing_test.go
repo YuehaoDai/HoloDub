@@ -38,9 +38,9 @@ func TestComputeUSD_UnknownModelFallback(t *testing.T) {
 // must NOT extend an over-budget episode).
 func TestComputeUSD_ZeroAndNegative(t *testing.T) {
 	cases := []struct {
-		name                              string
-		model                             string
-		input, output, cached             int
+		name                  string
+		model                 string
+		input, output, cached int
 	}{
 		{"all_zero", "kimi-k2.5", 0, 0, 0},
 		{"empty_model", "", 100, 50, 0},

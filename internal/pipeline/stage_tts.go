@@ -181,8 +181,8 @@ func (s *Service) refreshLongStageProgress(ctx context.Context, jobID uint, stag
 	}
 }
 
-// processOneTTSSegment runs the per-segment TTS synthesis loop with adaptive
-// duration alignment. The pure decision helpers used here live in
+// processOneTTSSegmentWithHint runs the per-segment TTS synthesis loop with
+// adaptive duration alignment. The pure decision helpers used here live in
 // internal/pipeline/tts and are unit-tested independently.
 //
 // translationSummary is the OPT-402 episode-aware summary (job's own
@@ -191,18 +191,14 @@ func (s *Service) refreshLongStageProgress(ctx context.Context, jobID uint, stag
 // canonical terminology even on a single isolated retry.
 //
 // OPT-201 dual-path: when cfg.SegmentAgentEnabled is true, the per-
-// segment loop is delegated to runSegmentAgentV2 (internal/agents.Agent).
-// The legacy inline loop below is preserved verbatim until the 2-week
-// soak after L4 default-on (PR-6 deletes it). The two paths produce
-// byte-identical outputs given the same tool sequences — verified in
-// PR-5 L2 staging.
-func (s *Service) processOneTTSSegment(ctx context.Context, job *models.Job, segments []models.Segment, idx int, isInitial bool, translationSummary string) error {
-	return s.processOneTTSSegmentWithHint(ctx, job, segments, idx, isInitial, translationSummary, nil)
-}
-
-// processOneTTSSegmentWithHint is the rework-aware variant; the
-// SegmentAgent path threads `hint` through to V2WithHint, and the
-// legacy path simply ignores it (hint is only honoured by the agent).
+// segment loop is delegated to runSegmentAgentV2WithHint
+// (internal/agents.Agent). The legacy inline loop below is preserved
+// verbatim until the 2-week soak after L4 default-on (PR-6 deletes it).
+// The two paths produce byte-identical outputs given the same tool
+// sequences — verified in PR-5 L2 staging.
+//
+// hint is the OPT-407 rework hint; only the SegmentAgent path honours it,
+// the legacy path ignores it. Pass nil for a normal synthesis.
 func (s *Service) processOneTTSSegmentWithHint(ctx context.Context, job *models.Job, segments []models.Segment, idx int, isInitial bool, translationSummary string, hint *models.ReworkHint) error {
 	if s.cfg.SegmentAgentEnabled {
 		return s.runSegmentAgentV2WithHint(ctx, job, segments, idx, isInitial, translationSummary, hint)
@@ -300,7 +296,7 @@ func (s *Service) processOneTTSSegmentWithHint(ctx context.Context, job *models.
 	}
 
 	// Non-convergence and best-result tracking.
-	var bestAbsDrift float64 = math.MaxFloat64
+	var bestAbsDrift = math.MaxFloat64
 	var bestText string
 	var bestActualMs int64
 	var attemptsWithoutImprovement int

@@ -4,8 +4,8 @@ import (
 	"context"
 	"log/slog"
 
-	apihttp "holodub/internal/http"
 	"holodub/internal/config"
+	apihttp "holodub/internal/http"
 	"holodub/internal/llm"
 	"holodub/internal/ml"
 	"holodub/internal/observability"

@@ -266,7 +266,7 @@ func (c *Client) SummarizeTranslation(ctx context.Context, sourceLanguage, targe
 
 	var sb strings.Builder
 	for i, seg := range sample {
-		sb.WriteString(fmt.Sprintf("[%d] %s: %s\n    %s: %s\n", i+1, sourceLanguage, seg.SrcText, targetLanguage, seg.TgtText))
+		fmt.Fprintf(&sb, "[%d] %s: %s\n    %s: %s\n", i+1, sourceLanguage, seg.SrcText, targetLanguage, seg.TgtText)
 	}
 
 	systemPrompt := fmt.Sprintf(
@@ -668,11 +668,11 @@ func (c *Client) retranslateWithConstraintModel(
 		contextSuffix.WriteString("\n\n[Adjacent segments — for coherence and natural flow]\n")
 		for i, seg := range contextBefore {
 			label := fmt.Sprintf("-%d", len(contextBefore)-i)
-			contextSuffix.WriteString(fmt.Sprintf("(%s) %s: %s\n     %s: %s\n", label, sourceLanguage, seg.SrcText, targetLanguage, seg.TgtText))
+			fmt.Fprintf(&contextSuffix, "(%s) %s: %s\n     %s: %s\n", label, sourceLanguage, seg.SrcText, targetLanguage, seg.TgtText)
 		}
-		contextSuffix.WriteString(fmt.Sprintf("(→ current segment) %s: %s\n", sourceLanguage, srcText))
+		fmt.Fprintf(&contextSuffix, "(→ current segment) %s: %s\n", sourceLanguage, srcText)
 		if nextSrcText != "" {
-			contextSuffix.WriteString(fmt.Sprintf("(+1) %s: %s  ← upcoming (for tone reference only, do NOT translate)\n", sourceLanguage, nextSrcText))
+			fmt.Fprintf(&contextSuffix, "(+1) %s: %s  ← upcoming (for tone reference only, do NOT translate)\n", sourceLanguage, nextSrcText)
 		}
 		contextSuffix.WriteString("[End of adjacent segments]")
 	}
@@ -901,8 +901,8 @@ func (c *Client) translateWithDurationViaOpenAI(ctx context.Context, sourceLangu
 	// it at the head of the user message keeps system byte-stable per job.
 	var userMsg strings.Builder
 	userMsg.WriteString("[Per-segment constraints]\n")
-	userMsg.WriteString(fmt.Sprintf("Segment duration: %.1f seconds.\n", targetSec))
-	userMsg.WriteString(fmt.Sprintf("Hard character limit: %d characters.\n\n", limit))
+	fmt.Fprintf(&userMsg, "Segment duration: %.1f seconds.\n", targetSec)
+	fmt.Fprintf(&userMsg, "Hard character limit: %d characters.\n\n", limit)
 	if hint := sourceTimingHint(text, targetSec); hint != "" {
 		userMsg.WriteString(hint)
 	}
@@ -913,11 +913,11 @@ func (c *Client) translateWithDurationViaOpenAI(ctx context.Context, sourceLangu
 		userMsg.WriteString("[Preceding segments — for terminology and style reference]\n")
 		for i, seg := range contextBefore {
 			label := fmt.Sprintf("-%d", len(contextBefore)-i)
-			userMsg.WriteString(fmt.Sprintf("(%s) %s: %s\n     %s: %s\n", label, sourceLanguage, seg.SrcText, targetLanguage, seg.TgtText))
+			fmt.Fprintf(&userMsg, "(%s) %s: %s\n     %s: %s\n", label, sourceLanguage, seg.SrcText, targetLanguage, seg.TgtText)
 		}
 		userMsg.WriteString("\n[Segment to translate now]\n")
 	}
-	userMsg.WriteString(fmt.Sprintf("Source language: %s\nText: %s", sourceLanguage, text))
+	fmt.Fprintf(&userMsg, "Source language: %s\nText: %s", sourceLanguage, text)
 
 	requestPayload := chatCompletionRequest{
 		Model:       c.model,
@@ -1363,49 +1363,6 @@ func mustMarshalJSON(v any) json.RawMessage {
 	return b
 }
 
-// reviewSystemPrompt is the system prompt for the segment_review LLM. It is
-// the SAME content for both the prompt-only path and the tool-call path —
-// the tool path simply skips the "Respond with a JSON array … return ONLY
-// the JSON array" closing instruction, since strict tool calling enforces
-// the shape at the protocol level. Returning it from a single function keeps
-// the system prompt cache-stable across the two routes (OPT-001 friendly).
-func reviewSystemPrompt(sourceLanguage string, toolMode bool) string {
-	base := fmt.Sprintf(
-		"You are an expert ASR post-processing agent for a video dubbing pipeline.\n"+
-			"Source language: %s.\n\n"+
-			"You will receive a list of ASR segments.  Each segment has:\n"+
-			"  ordinal   – 0-based index (used to identify segments)\n"+
-			"  text      – transcribed speech\n"+
-			"  duration_ms – segment length in milliseconds\n"+
-			"  gap_after_ms – silence gap to the next segment\n"+
-			"  split_reason – why the ASR engine created this boundary\n\n"+
-			"Your task: identify adjacent segments that should be MERGED because they form\n"+
-			"a single natural utterance that was incorrectly split. Common cases:\n"+
-			"  - A sentence was split mid-clause due to a brief pause\n"+
-			"  - A conjunction or subordinator (but, and, so, because, …) starts the\n"+
-			"    following segment, making the split feel unnatural\n"+
-			"  - Two very short segments (<1 s each) that together form one coherent phrase\n\n"+
-			"Do NOT suggest merges when:\n"+
-			"  - There is a clear topic or sentence boundary\n"+
-			"  - The gap_after_ms is large (>2000 ms) indicating a deliberate pause\n"+
-			"  - The merged segment would exceed ~20 seconds\n\n",
-		sourceLanguage,
-	)
-	if toolMode {
-		// Strict tool call path: structure enforced by schema, just describe semantics.
-		return base + "Call the emit_segment_suggestions function with your suggestions. " +
-			"Return an empty suggestions array if there are no problems. " +
-			"Only adjacent segments (consecutive ordinals) may be merged."
-	}
-	// Legacy prompt path: explicit JSON shape + format directives.
-	return base +
-		"Respond with a JSON array of suggestions.  Each element:\n" +
-		"  { \"ordinals\": [<ordinal_a>, <ordinal_b>], \"reason\": \"<short reason>\", \"confidence\": <0.0-1.0> }\n" +
-		"Only adjacent segments may be merged (consecutive ordinals).\n" +
-		"If there are no problems, return an empty array: []\n" +
-		"Return ONLY the JSON array, no other text."
-}
-
 // reviewSystemPromptV2 is the production segment_review prompt. Tunable
 // thresholds are supplied in the user-message policy object, keeping this
 // system prompt cache-stable while operators tune behaviour.
@@ -1634,29 +1591,6 @@ func marshalReviewRequest(policy SegmentReviewPolicy, segments []SegmentInfo) ([
 		Policy:   policy,
 		Segments: segList,
 	})
-}
-
-func marshalReviewSegments(segments []SegmentInfo) ([]byte, error) {
-	type segJSON struct {
-		Ordinal     int    `json:"ordinal"`
-		ID          int    `json:"id"` // placeholder — actual DB IDs added by caller
-		Text        string `json:"text"`
-		DurationMs  int64  `json:"duration_ms"`
-		GapAfterMs  int64  `json:"gap_after_ms"`
-		SplitReason string `json:"split_reason"`
-	}
-	segList := make([]segJSON, len(segments))
-	for i, s := range segments {
-		segList[i] = segJSON{
-			Ordinal:     s.Ordinal,
-			ID:          s.Ordinal,
-			Text:        s.Text,
-			DurationMs:  s.EndMs - s.StartMs,
-			GapAfterMs:  s.GapAfterMs,
-			SplitReason: s.SplitReason,
-		}
-	}
-	return json.Marshal(segList)
 }
 
 func finaliseReviewSuggestions(rawItems []reviewRawSuggestion, segments []SegmentInfo) []SegmentReviewSuggestion {

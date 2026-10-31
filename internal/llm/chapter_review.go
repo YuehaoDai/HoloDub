@@ -35,15 +35,15 @@ import (
 // the anchor — the full chapter ASR text would blow the context window for
 // a 30-min chapter, and DP cuts are already correctness-checked offline.
 type ChapterCutInput struct {
-	Ordinal           int      `json:"ordinal"`             // 1-based; what the user sees
-	StartMs           int64    `json:"start_ms"`            // chapter start in episode wall-clock
-	EndMs             int64    `json:"end_ms"`              // chapter end (exclusive)
-	StartSegmentIdx   int      `json:"start_segment_idx"`   // first ASR segment in this chapter
-	EndSegmentIdx     int      `json:"end_segment_idx"`     // last ASR segment in this chapter
-	SilenceLeftMs     int64    `json:"silence_left_ms"`     // silence gap to previous chapter
-	SilenceRightMs    int64    `json:"silence_right_ms"`    // silence gap to next chapter
-	OpeningSegments   []string `json:"opening_segments"`    // ≤5 ASR snippets at chapter start
-	ClosingSegments   []string `json:"closing_segments"`    // ≤3 ASR snippets at chapter end
+	Ordinal         int      `json:"ordinal"`           // 1-based; what the user sees
+	StartMs         int64    `json:"start_ms"`          // chapter start in episode wall-clock
+	EndMs           int64    `json:"end_ms"`            // chapter end (exclusive)
+	StartSegmentIdx int      `json:"start_segment_idx"` // first ASR segment in this chapter
+	EndSegmentIdx   int      `json:"end_segment_idx"`   // last ASR segment in this chapter
+	SilenceLeftMs   int64    `json:"silence_left_ms"`   // silence gap to previous chapter
+	SilenceRightMs  int64    `json:"silence_right_ms"`  // silence gap to next chapter
+	OpeningSegments []string `json:"opening_segments"`  // ≤5 ASR snippets at chapter start
+	ClosingSegments []string `json:"closing_segments"`  // ≤3 ASR snippets at chapter end
 }
 
 // ChapterReviewVerdict is one LLM response for one chapter. Action is one of
@@ -53,12 +53,12 @@ type ChapterCutInput struct {
 // The pipeline applies shifts in left-to-right order so a chain of shifts
 // can compose without conflicting.
 type ChapterReviewVerdict struct {
-	Ordinal          int    `json:"ordinal"`
-	Action           string `json:"action"`         // keep / shift_left / shift_right
-	TitleSource      string `json:"title_source"`   // bilingual: source-language title
-	TitleTranslated  string `json:"title_translated"` // bilingual: target-language title
-	SummaryMD        string `json:"summary_md"`     // 1–2 sentence summary in target language
-	Rationale        string `json:"rationale,omitempty"` // optional one-liner for shifts
+	Ordinal         int    `json:"ordinal"`
+	Action          string `json:"action"`              // keep / shift_left / shift_right
+	TitleSource     string `json:"title_source"`        // bilingual: source-language title
+	TitleTranslated string `json:"title_translated"`    // bilingual: target-language title
+	SummaryMD       string `json:"summary_md"`          // 1–2 sentence summary in target language
+	Rationale       string `json:"rationale,omitempty"` // optional one-liner for shifts
 }
 
 // ChapterReviewResult is the strict tool-call output. Verdicts are 1:1 with
@@ -179,27 +179,25 @@ func (c *Client) ReviewChapterCuts(
 		userMsg.WriteString(referenceCardMD)
 		userMsg.WriteString("\n[End reference card]\n\n")
 	}
-	userMsg.WriteString(fmt.Sprintf("[Proposed chapters: %d total. Confirm or nudge each, then title+summary each.]\n", len(chapters)))
+	fmt.Fprintf(&userMsg, "[Proposed chapters: %d total. Confirm or nudge each, then title+summary each.]\n", len(chapters))
 	for _, ch := range chapters {
-		userMsg.WriteString(fmt.Sprintf(
-			"\n--- chapter %d  [%.1fs → %.1fs, duration %.1fs]  silence-left=%dms silence-right=%dms ---\n",
+		fmt.Fprintf(&userMsg, "\n--- chapter %d  [%.1fs → %.1fs, duration %.1fs]  silence-left=%dms silence-right=%dms ---\n",
 			ch.Ordinal,
 			float64(ch.StartMs)/1000,
 			float64(ch.EndMs)/1000,
 			float64(ch.EndMs-ch.StartMs)/1000,
 			ch.SilenceLeftMs,
-			ch.SilenceRightMs,
-		))
+			ch.SilenceRightMs)
 		if len(ch.OpeningSegments) > 0 {
 			userMsg.WriteString("Opening segments:\n")
 			for i, s := range ch.OpeningSegments {
-				userMsg.WriteString(fmt.Sprintf("  %d. %s\n", i+1, strings.TrimSpace(s)))
+				fmt.Fprintf(&userMsg, "  %d. %s\n", i+1, strings.TrimSpace(s))
 			}
 		}
 		if len(ch.ClosingSegments) > 0 {
 			userMsg.WriteString("Closing segments:\n")
 			for i, s := range ch.ClosingSegments {
-				userMsg.WriteString(fmt.Sprintf("  %d. %s\n", i+1, strings.TrimSpace(s)))
+				fmt.Fprintf(&userMsg, "  %d. %s\n", i+1, strings.TrimSpace(s))
 			}
 		}
 	}

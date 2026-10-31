@@ -70,9 +70,9 @@ type ChapterJudgeArgs struct {
 
 // ChapterJudgeWeakSegment is one entry in the top-3-weakest list.
 type ChapterJudgeWeakSegment struct {
-	Ordinal         int    `json:"ordinal"`
-	Issue           string `json:"issue"`
-	RecommendedFix  string `json:"recommended_fix"`
+	Ordinal        int    `json:"ordinal"`
+	Issue          string `json:"issue"`
+	RecommendedFix string `json:"recommended_fix"`
 }
 
 // ChapterJudgeResult is the structured verdict returned by the chapter judge LLM.
@@ -81,15 +81,15 @@ type ChapterJudgeWeakSegment struct {
 // "chapter_ready" | "needs_revision" | "needs_major_rework"; observe-only
 // mode logs but does not act on it (OPT-407 will).
 type ChapterJudgeResult struct {
-	NarrativeCoherenceWithinChapter      float64                   `json:"narrative_coherence_within_chapter"`
-	SpeakerVoiceStabilityWithinChapter   float64                   `json:"speaker_voice_stability_within_chapter"`
-	TerminologyConsistencyWithinChapter  float64                   `json:"terminology_consistency_within_chapter"`
-	RegisterConsistencyWithinChapter     float64                   `json:"register_consistency_within_chapter"`
-	OverallFidelityChapter               float64                   `json:"overall_fidelity_chapter"`
-	OverallFluencyChapter                float64                   `json:"overall_fluency_chapter"`
-	Top3WeakestSegments                  []ChapterJudgeWeakSegment `json:"top_3_weakest_segments,omitempty"`
-	Verdict                              string                    `json:"verdict"`
-	OneParagraphSummary                  string                    `json:"one_paragraph_summary,omitempty"`
+	NarrativeCoherenceWithinChapter     float64                   `json:"narrative_coherence_within_chapter"`
+	SpeakerVoiceStabilityWithinChapter  float64                   `json:"speaker_voice_stability_within_chapter"`
+	TerminologyConsistencyWithinChapter float64                   `json:"terminology_consistency_within_chapter"`
+	RegisterConsistencyWithinChapter    float64                   `json:"register_consistency_within_chapter"`
+	OverallFidelityChapter              float64                   `json:"overall_fidelity_chapter"`
+	OverallFluencyChapter               float64                   `json:"overall_fluency_chapter"`
+	Top3WeakestSegments                 []ChapterJudgeWeakSegment `json:"top_3_weakest_segments,omitempty"`
+	Verdict                             string                    `json:"verdict"`
+	OneParagraphSummary                 string                    `json:"one_paragraph_summary,omitempty"`
 }
 
 // OverallScore returns a single scalar 0..1 used as Job.ChapterJudgeScore.
@@ -153,7 +153,7 @@ var chapterJudgeToolSchema = mustMarshalJSON(map[string]any{
 			"description": "How natural would this chapter sound spoken aloud end-to-end by a native target-language speaker? 1.0 = native quality, 0.0 = unintelligible / robotic.",
 		},
 		"top_3_weakest_segments": map[string]any{
-			"type": "array",
+			"type":        "array",
 			"description": "Up to 3 weakest segments in THIS chapter, with concrete issue + recommended fix. Empty when verdict='chapter_ready'.",
 			"items": map[string]any{
 				"type": "object",
@@ -168,12 +168,12 @@ var chapterJudgeToolSchema = mustMarshalJSON(map[string]any{
 			"maxItems": 3,
 		},
 		"verdict": map[string]any{
-			"type": "string",
-			"enum": []string{"chapter_ready", "needs_revision", "needs_major_rework"},
+			"type":        "string",
+			"enum":        []string{"chapter_ready", "needs_revision", "needs_major_rework"},
 			"description": "chapter_ready = all axes >= 0.85; needs_revision = any axis in [0.7, 0.85) OR <=2 weak segments; needs_major_rework = any axis < 0.7 OR >2 weak segments.",
 		},
 		"one_paragraph_summary": map[string]any{
-			"type": "string",
+			"type":        "string",
 			"description": "2-3 sentences in the target language summarising overall chapter quality and the most important fix. Optional; populate when verdict != 'chapter_ready'.",
 		},
 	},
@@ -267,7 +267,7 @@ func (c *Client) JudgeChapter(ctx context.Context, args ChapterJudgeArgs) (*Chap
 	// call the tool. Non-thinking models keep the strict force so non-tool
 	// responses become a parse error rather than silent prose drift.
 	// Same pattern used by OPT-405 glossary.go.
-	var toolChoice any = forceToolChoice("emit_chapter_judge_verdict")
+	var toolChoice = forceToolChoice("emit_chapter_judge_verdict")
 	if isThinkingModelName(c.chapterJudgeModel) {
 		toolChoice = "auto"
 	}

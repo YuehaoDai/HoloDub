@@ -28,8 +28,8 @@ import (
 // fanout: if calls were serial, the slow model would dominate wall time.
 type ensembleStubHandler struct {
 	t                  *testing.T
-	retranslateReplies map[string]string  // model -> candidate text
-	retranslateErrors  map[string]int     // model -> HTTP status to return (0 = ok)
+	retranslateReplies map[string]string // model -> candidate text
+	retranslateErrors  map[string]int    // model -> HTTP status to return (0 = ok)
 	retranslateLatency map[string]time.Duration
 	judgeReplies       map[string]float64 // candidate text -> fidelity score
 	retranslateCalls   atomic.Int32
@@ -486,7 +486,7 @@ func TestDurationWindowFilter_KeepsInWindowDropsOutliers(t *testing.T) {
 	}
 	cands := []EnsembleCandidate{
 		{Text: strings.Repeat("译", 50)}, // 50 chars -> 10.0s, keep
-		{Text: "太短了"},                  // 3 chars -> 0.6s, drop
+		{Text: "太短了"},                   // 3 chars -> 0.6s, drop
 		{Text: strings.Repeat("长", 70)}, // 70 chars -> 14.0s, drop
 	}
 	got := durationWindowFilter(args, cands)

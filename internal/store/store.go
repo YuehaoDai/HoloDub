@@ -415,7 +415,7 @@ func (s *Store) RunBackfillIfNeeded(ctx context.Context) error {
 
 		// Postgres: advance the episodes id sequence past the highest
 		// back-filled id so subsequent CreateEpisode calls keep monotonic.
-		if tx.Dialector.Name() == "postgres" {
+		if tx.Name() == "postgres" {
 			if err := tx.Exec(
 				"SELECT setval('episodes_id_seq', GREATEST((SELECT COALESCE(MAX(id),0) FROM episodes), 1))",
 			).Error; err != nil {
@@ -1967,7 +1967,7 @@ func (s *Store) UpdateLoudnormStats(
 	// Atomic shallow merge via Postgres `||`. SQLite has no `||` jsonb op so
 	// we fall back to read-modify-write under that driver — the test suite
 	// uses sqlite-in-memory and merge concurrency is not exercised there.
-	dialectName := s.db.Dialector.Name()
+	dialectName := s.db.Name()
 	if dialectName == "postgres" || dialectName == "postgresql" {
 		return s.db.WithContext(ctx).Exec(
 			"UPDATE episodes SET loudnorm_stats = COALESCE(loudnorm_stats, '{}'::jsonb) || ?::jsonb, updated_at = ? WHERE id = ?",

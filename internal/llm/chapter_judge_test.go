@@ -336,9 +336,9 @@ func TestChapterJudgeOverallScore(t *testing.T) {
 // form (same constraint OPT-405 glossary discovered).
 func TestChapterJudgeThinkingModelUsesAutoToolChoice(t *testing.T) {
 	cases := []struct {
-		name      string
-		model     string
-		wantAuto  bool
+		name     string
+		model    string
+		wantAuto bool
 	}{
 		{"thinking model gets auto", "kimi-k2-thinking", true},
 		{"qwen3 thinking gets auto", "qwen3-235b-a22b-thinking-2507", true},

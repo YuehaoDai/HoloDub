@@ -14,20 +14,20 @@ import (
 // re-declaring 12 unrelated fields.
 func baseEnsembleCfg() Config {
 	return Config{
-		TargetSec:                      10.0,
-		TargetMs:                       10_000,
-		GapAfterMs:                     500,
-		MaxAttempts:                    5,
-		DriftThreshold:                 0.06,
-		MaxBorrowDriftPct:              0.10,
-		AbsMaxDriftSec:                 2.0,
-		StuckThreshold:                 2,
-		NonConvergenceWindow:           3,
-		RetranslationEnabled:           true,
-		EnsembleEnabled:                true,
-		EnsembleNonConvergenceTrigger:  2,
-		EnsembleJudgeScoreTrigger:      0.7,
-		EnsembleMaxPerSegment:          1,
+		TargetSec:                     10.0,
+		TargetMs:                      10_000,
+		GapAfterMs:                    500,
+		MaxAttempts:                   5,
+		DriftThreshold:                0.06,
+		MaxBorrowDriftPct:             0.10,
+		AbsMaxDriftSec:                2.0,
+		StuckThreshold:                2,
+		NonConvergenceWindow:          3,
+		RetranslationEnabled:          true,
+		EnsembleEnabled:               true,
+		EnsembleNonConvergenceTrigger: 2,
+		EnsembleJudgeScoreTrigger:     0.7,
+		EnsembleMaxPerSegment:         1,
 	}
 }
 
@@ -76,11 +76,11 @@ func TestShouldUseEnsemble_NonConvergenceTrigger(t *testing.T) {
 func TestShouldUseEnsemble_JudgeScoreTrigger(t *testing.T) {
 	cfg := baseEnsembleCfg()
 	cases := []struct {
-		name     string
-		attempt  int
-		verdict  string
-		score    float64
-		want     bool
+		name    string
+		attempt int
+		verdict string
+		score   float64
+		want    bool
 	}{
 		{"first-attempt-low-score-no-trigger", 0, "retry", 0.5, false},
 		{"second-attempt-low-score-triggers", 1, "retry", 0.5, true},
@@ -178,7 +178,7 @@ func TestShouldUseEnsemble_AbsDriftTriggerAfterTwoAttempts(t *testing.T) {
 	state := State{Attempt: 2, AttemptsWithoutImprovement: 0}
 	obs := Observation{
 		ActualSec: 42.0,
-		AbsDrift:  8.0,  // 16% — well above the 10% adaptive band
+		AbsDrift:  8.0, // 16% — well above the 10% adaptive band
 	}
 	if !shouldUseEnsemble(state, obs, cfg) {
 		t.Fatalf("abs-drift trigger should fire when attempt>=2 and drift>adaptive band: state=%+v obs=%+v",

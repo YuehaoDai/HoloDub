@@ -382,7 +382,7 @@ func TestExtractEpisodeGlossaryThinkingModelUsesAutoToolChoice(t *testing.T) {
 func TestBuildIndexedTranscriptShape(t *testing.T) {
 	segs := []EpisodeSegment{
 		{StartMs: 0, EndMs: 4500, Text: "Hello world", SpeakerLabel: "SPK_01"},
-		{StartMs: 5000, EndMs: 9500, Text: "  ", SpeakerLabel: "SPK_01"},        // blank → skipped
+		{StartMs: 5000, EndMs: 9500, Text: "  ", SpeakerLabel: "SPK_01"},         // blank → skipped
 		{StartMs: 65 * 60 * 1000, EndMs: 65*60*1000 + 4500, Text: "after 65min"}, // hour roll-over
 	}
 	got := buildIndexedTranscript(segs, "en", true)

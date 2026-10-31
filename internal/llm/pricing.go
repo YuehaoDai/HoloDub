@@ -4,10 +4,10 @@
 // already collected by ObserveLLMTokens into an estimated dollar amount via
 // a hardcoded per-model price table (modelPrices below). The value drives
 // two things:
-//   1. holodub_llm_cost_usd_total Prometheus counter (cost dashboards).
-//   2. The OPT-407 rework engine's per-episode cost ceiling — once a series
-//      of retries on one episode burns more than EPISODE_REWORK_COST_CEILING_USD,
-//      the engine emits ActionHaltCost and refuses further dispatch.
+//  1. holodub_llm_cost_usd_total Prometheus counter (cost dashboards).
+//  2. The OPT-407 rework engine's per-episode cost ceiling — once a series
+//     of retries on one episode burns more than EPISODE_REWORK_COST_CEILING_USD,
+//     the engine emits ActionHaltCost and refuses further dispatch.
 //
 // The price table is intentionally:
 //
@@ -47,21 +47,21 @@ type ModelPrice struct {
 // entry under the OPT-407 cost-tracking notes.
 var modelPrices = map[string]ModelPrice{
 	// Alibaba DashScope (Qwen)
-	"qwen-turbo":              {InputPer1M: 0.30, OutputPer1M: 0.60, CachedPer1M: 0.06},
-	"qwen-plus":               {InputPer1M: 0.80, OutputPer1M: 2.00, CachedPer1M: 0.16},
-	"qwen-plus-latest":        {InputPer1M: 0.80, OutputPer1M: 2.00, CachedPer1M: 0.16},
-	"qwen-max":                {InputPer1M: 2.40, OutputPer1M: 9.60, CachedPer1M: 0.48},
-	"qwen-max-latest":         {InputPer1M: 2.40, OutputPer1M: 9.60, CachedPer1M: 0.48},
+	"qwen-turbo":                    {InputPer1M: 0.30, OutputPer1M: 0.60, CachedPer1M: 0.06},
+	"qwen-plus":                     {InputPer1M: 0.80, OutputPer1M: 2.00, CachedPer1M: 0.16},
+	"qwen-plus-latest":              {InputPer1M: 0.80, OutputPer1M: 2.00, CachedPer1M: 0.16},
+	"qwen-max":                      {InputPer1M: 2.40, OutputPer1M: 9.60, CachedPer1M: 0.48},
+	"qwen-max-latest":               {InputPer1M: 2.40, OutputPer1M: 9.60, CachedPer1M: 0.48},
 	"qwen3-235b-a22b-thinking-2507": {InputPer1M: 2.00, OutputPer1M: 8.00, CachedPer1M: 0.40},
 
 	// Moonshot (Kimi)
-	"kimi-k2.5":               {InputPer1M: 0.60, OutputPer1M: 2.50, CachedPer1M: 0.15},
-	"kimi-k2-thinking":        {InputPer1M: 1.20, OutputPer1M: 5.00, CachedPer1M: 0.30},
+	"kimi-k2.5":        {InputPer1M: 0.60, OutputPer1M: 2.50, CachedPer1M: 0.15},
+	"kimi-k2-thinking": {InputPer1M: 1.20, OutputPer1M: 5.00, CachedPer1M: 0.30},
 
 	// DeepSeek
-	"deepseek-v3":             {InputPer1M: 0.27, OutputPer1M: 1.10, CachedPer1M: 0.07},
-	"deepseek-chat":           {InputPer1M: 0.27, OutputPer1M: 1.10, CachedPer1M: 0.07},
-	"deepseek-reasoner":       {InputPer1M: 0.55, OutputPer1M: 2.20, CachedPer1M: 0.14},
+	"deepseek-v3":       {InputPer1M: 0.27, OutputPer1M: 1.10, CachedPer1M: 0.07},
+	"deepseek-chat":     {InputPer1M: 0.27, OutputPer1M: 1.10, CachedPer1M: 0.07},
+	"deepseek-reasoner": {InputPer1M: 0.55, OutputPer1M: 2.20, CachedPer1M: 0.14},
 }
 
 // unknownPrice is the fallback when a model name is not in modelPrices.

@@ -17,7 +17,7 @@
 // The tool is fail-safe by default:
 //
 //   - --dry-run prints a planned-action report (per-episode disposition
-//     + projected paths + total bytes touched) WITHOUT touching disk or
+//   - projected paths + total bytes touched) WITHOUT touching disk or
 //     DB. Always run dry-run first.
 //   - --use-hardlink=true (default) uses os.Link. Falls back to byte
 //     copy on failure (NTFS across volumes, FUSE mounts, etc.) so
@@ -112,17 +112,17 @@ Flags:
 // Fields are deliberately verbose (vs. cryptic single-letter codes) so
 // the audit trail stays grep-friendly years from now.
 type EpisodeReport struct {
-	EpisodeID         uint     `json:"episode_id"`
-	Name              string   `json:"name,omitempty"`
-	ChapterCount      int      `json:"chapter_count"`
-	PreLayoutVersion  int8     `json:"pre_layout_version"`
-	Disposition       string   `json:"disposition"`
-	NewEpisodeOutput  string   `json:"new_episode_output,omitempty"`
-	NewManifestPath   string   `json:"new_manifest_path,omitempty"`
-	BytesTouched      int64    `json:"bytes_touched"`
-	HardLinkUsed      bool     `json:"hard_link_used"`
-	OldFilesRemoved   []string `json:"old_files_removed,omitempty"`
-	Errors            []string `json:"errors,omitempty"`
+	EpisodeID        uint     `json:"episode_id"`
+	Name             string   `json:"name,omitempty"`
+	ChapterCount     int      `json:"chapter_count"`
+	PreLayoutVersion int8     `json:"pre_layout_version"`
+	Disposition      string   `json:"disposition"`
+	NewEpisodeOutput string   `json:"new_episode_output,omitempty"`
+	NewManifestPath  string   `json:"new_manifest_path,omitempty"`
+	BytesTouched     int64    `json:"bytes_touched"`
+	HardLinkUsed     bool     `json:"hard_link_used"`
+	OldFilesRemoved  []string `json:"old_files_removed,omitempty"`
+	Errors           []string `json:"errors,omitempty"`
 }
 
 // ToolReport is the top-level JSON report written to stdout.

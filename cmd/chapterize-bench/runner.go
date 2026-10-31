@@ -44,10 +44,10 @@ import (
 // All durations are in milliseconds; rendered as minutes only at
 // report-time so JSON consumers stay precise.
 type ExtractRun struct {
-	Model       string `json:"model"`
-	RunIndex    int    `json:"run_index"` // 1-based
-	WallTimeMs  int64  `json:"wall_time_ms"`
-	Error       string `json:"error,omitempty"`
+	Model      string `json:"model"`
+	RunIndex   int    `json:"run_index"` // 1-based
+	WallTimeMs int64  `json:"wall_time_ms"`
+	Error      string `json:"error,omitempty"`
 
 	// RawChapters is what the model emitted — index pairs + titles. Empty
 	// when Error != "" or the model declined to chapterize.
@@ -62,7 +62,7 @@ type ExtractRun struct {
 	// FinalRanges + FinalTitles are what stage_chapterize would persist
 	// AFTER snap-to-silence + hard-constraint enforcement. Empty when
 	// the raw plan failed validation.
-	FinalRanges []chapterize.ChapterRange `json:"final_ranges,omitempty"`
+	FinalRanges []chapterize.ChapterRange   `json:"final_ranges,omitempty"`
 	FinalTitles []chapterize.LLMChapterMeta `json:"final_titles,omitempty"`
 
 	StaticMetrics StaticMetrics `json:"static_metrics"`
@@ -71,16 +71,16 @@ type ExtractRun struct {
 	// free in the same call. A weak glossary can hint that the model
 	// doesn't read the transcript well, which often correlates with
 	// poor chapter cuts.
-	GlossaryEntryCount   int `json:"glossary_entry_count"`
-	SpeakerHintCount     int `json:"speaker_hint_count"`
-	ReferenceCardChars   int `json:"reference_card_chars"`
+	GlossaryEntryCount int `json:"glossary_entry_count"`
+	SpeakerHintCount   int `json:"speaker_hint_count"`
+	ReferenceCardChars int `json:"reference_card_chars"`
 }
 
 // StaticMetrics is the cheap, deterministic shape derived from the raw +
 // final chapter plan. No LLM involvement.
 type StaticMetrics struct {
-	RawChapterCount   int   `json:"raw_chapter_count"`
-	FinalChapterCount int   `json:"final_chapter_count"`
+	RawChapterCount   int `json:"raw_chapter_count"`
+	FinalChapterCount int `json:"final_chapter_count"`
 
 	MeanDurMs int64 `json:"mean_dur_ms"`
 	MinDurMs  int64 `json:"min_dur_ms"`

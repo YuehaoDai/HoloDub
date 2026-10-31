@@ -142,9 +142,9 @@ func TestTranslateWithDubbingPlan_MissingOptionalFields(t *testing.T) {
 // stuck pipeline.
 func TestTranslateWithDubbingPlan_DefensivePauseClipping(t *testing.T) {
 	cases := []struct {
-		name   string
-		input  int
-		want   int
+		name  string
+		input int
+		want  int
 	}{
 		{"negative", -50, 0},
 		{"too-large", 5000, 1000},

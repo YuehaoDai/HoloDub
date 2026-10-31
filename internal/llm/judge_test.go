@@ -210,8 +210,8 @@ func buildToolCallResponse(toolName, args string, usage providerUsage) chatCompl
 				ToolCalls []toolCall `json:"tool_calls,omitempty"`
 			}{
 				ToolCalls: []toolCall{{
-					ID:   "call_1",
-					Type: "function",
+					ID:       "call_1",
+					Type:     "function",
 					Function: toolCallFunction{Name: toolName, Arguments: args},
 				}},
 			},

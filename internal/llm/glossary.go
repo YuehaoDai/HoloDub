@@ -12,10 +12,10 @@
 //  4. (OPT-405) Chapter cuts derived from SEMANTIC theme transitions, not
 //     silence + duration heuristics. The model receives every ASR segment
 //     indexed with [N] timestamps and is instructed to:
-//       - put theme completeness above duration balance
-//       - cut on natural pivots ("ok let's move on", "next we'll talk about")
-//       - prefer 5–45min chapters as a SOFT range, NEVER force-cut a
-//         coherent argument and NEVER pad an unrelated topic
+//     - put theme completeness above duration balance
+//     - cut on natural pivots ("ok let's move on", "next we'll talk about")
+//     - prefer 5–45min chapters as a SOFT range, NEVER force-cut a
+//     coherent argument and NEVER pad an unrelated topic
 //
 // Why all four in one call: they share the same context (full ASR text)
 // and the same expensive prompt-prefix (~50–100k tokens for a 1h video).
@@ -54,8 +54,8 @@ type GlossaryEntry struct {
 // like "narrator/calm" / "host/energetic" / "interviewee/measured" — kept
 // free-form because OPT-402 is observe-only on the speaker pipeline.
 type SpeakerHint struct {
-	Label         string `json:"label"`         // ASR-level label (SPK_01, …)
-	DisplayName   string `json:"display_name"`  // human-friendly name when known
+	Label         string `json:"label"`          // ASR-level label (SPK_01, …)
+	DisplayName   string `json:"display_name"`   // human-friendly name when known
 	VoiceRegister string `json:"voice_register"` // tone / register description
 }
 
@@ -323,7 +323,7 @@ func (c *Client) ExtractEpisodeGlossary(
 	// models still call the tool. Non-thinking models keep the strict
 	// force so non-tool-call responses become a parse error rather than
 	// a silent prose drift.
-	var toolChoice any = forceToolChoice("emit_episode_glossary")
+	var toolChoice = forceToolChoice("emit_episode_glossary")
 	if isThinkingModelName(model) {
 		toolChoice = "auto"
 	}

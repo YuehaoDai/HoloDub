@@ -137,10 +137,11 @@ func (t *realDubbingTools) JudgeFidelity(ctx context.Context, args agents.JudgeA
 	return t.svc.llm.JudgeFidelity(ctx, args)
 }
 
-// runSegmentAgentV2 is the OPT-201 SegmentAgent entry point that replaces
-// the inline retry loop. It is gated behind cfg.SegmentAgentEnabled; the
-// legacy path lives in processOneTTSSegment and is preserved verbatim
-// until the 2-week soak after L4 default-on (see PR-6).
+// runSegmentAgentV2WithHint is the OPT-201 SegmentAgent entry point that
+// replaces the inline retry loop. It is gated behind
+// cfg.SegmentAgentEnabled; the legacy path lives in
+// processOneTTSSegmentWithHint and is preserved verbatim until the 2-week
+// soak after L4 default-on (see PR-6).
 //
 // Functional parity contract: given identical inputs (segment metadata,
 // voice profile, ml/llm tool sequences), V2 MUST produce byte-identical
@@ -170,14 +171,10 @@ func (t *realDubbingTools) JudgeFidelity(ctx context.Context, args agents.JudgeA
 //
 // Returning a non-nil error fails the whole segment (same as legacy)
 // and bubbles up to runTTSDuration, which records firstErr.
-func (s *Service) runSegmentAgentV2(ctx context.Context, job *models.Job, segments []models.Segment, idx int, isInitial bool, translationSummary string) error {
-	return s.runSegmentAgentV2WithHint(ctx, job, segments, idx, isInitial, translationSummary, nil)
-}
-
-// runSegmentAgentV2WithHint is the rework-aware variant that accepts
-// an OPT-407 ReworkHint. The hint tightens the drift threshold and
-// adds rework_verdict / rework_reason fields to the agent's log lines.
-// processOneTTSSegment delegates here when SegmentAgentEnabled.
+//
+// hint is the optional OPT-407 ReworkHint: it tightens the drift threshold
+// and adds rework_verdict / rework_reason fields to the agent's log lines.
+// processOneTTSSegmentWithHint delegates here when SegmentAgentEnabled.
 func (s *Service) runSegmentAgentV2WithHint(ctx context.Context, job *models.Job, segments []models.Segment, idx int, isInitial bool, translationSummary string, hint *models.ReworkHint) error {
 	seg := &segments[idx]
 

@@ -172,14 +172,14 @@ const (
 
 // OverflowDecisionInput collects the inputs to DecideOverflow.
 type OverflowDecisionInput struct {
-	ActualMs            int64
-	TargetMs            int64
-	GapAfterMs          int64
-	MaxBorrowDriftPct   float64
-	AbsMaxDriftSec      float64
-	DriftThreshold      float64 // for under-run / overall-drift acceptance
-	RetranslationOn     bool
-	IsLastAttempt       bool
+	ActualMs          int64
+	TargetMs          int64
+	GapAfterMs        int64
+	MaxBorrowDriftPct float64
+	AbsMaxDriftSec    float64
+	DriftThreshold    float64 // for under-run / overall-drift acceptance
+	RetranslationOn   bool
+	IsLastAttempt     bool
 }
 
 // DecideOverflow encodes the overflow policy that previously lived inline

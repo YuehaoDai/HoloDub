@@ -191,8 +191,8 @@ type ChapterRange struct {
 	Ordinal           int
 	StartMs           int64
 	EndMs             int64
-	StartSegmentIdx   int // inclusive; -1 if no segment falls in this range
-	EndSegmentIdx     int // inclusive; -1 if no segment falls in this range
+	StartSegmentIdx   int   // inclusive; -1 if no segment falls in this range
+	EndSegmentIdx     int   // inclusive; -1 if no segment falls in this range
 	StartCutSilenceMs int64 // silence on the LEFT edge (0 for first chapter)
 	EndCutSilenceMs   int64 // silence on the RIGHT edge (0 for last chapter)
 }
@@ -295,4 +295,3 @@ func MaxAbsDeviation(ranges []ChapterRange, targetMs int64) int64 {
 	}
 	return worst
 }
-

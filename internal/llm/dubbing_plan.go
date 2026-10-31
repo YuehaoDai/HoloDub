@@ -116,13 +116,13 @@ var dubbingPlanSchema = mustMarshalJSON(map[string]any{
 			"additionalProperties": false,
 		},
 		"pacing": map[string]any{
-			"type": "string",
-			"enum": []string{"slow", "normal", "fast"},
+			"type":        "string",
+			"enum":        []string{"slow", "normal", "fast"},
 			"description": "Relative speaking rate (slow=0.85x, normal=1.0x, fast=1.15x).",
 		},
 		"emphasis_words": map[string]any{
-			"type": "array",
-			"items": map[string]any{"type": "string"},
+			"type":        "array",
+			"items":       map[string]any{"type": "string"},
 			"description": "Target-language words to stress when speaking. Each must appear verbatim in `translation`.",
 		},
 		"pause_after_ms": map[string]any{
@@ -147,7 +147,7 @@ func dubbingPlanSystemPrompt(targetLanguage string, rate float64, translationSum
 	sb.WriteString("Call the emit_dubbing_plan tool with the structured result.\n\n")
 	sb.WriteString("Translation rules:\n")
 	sb.WriteString("- Preserve meaning faithfully.\n")
-	sb.WriteString(fmt.Sprintf("- Keep length appropriate for the speaking rate (≈ %.1f chars/sec in %s).\n", rate, targetLanguage))
+	fmt.Fprintf(&sb, "- Keep length appropriate for the speaking rate (≈ %.1f chars/sec in %s).\n", rate, targetLanguage)
 	sb.WriteString("- Match register and tone of the source.\n\n")
 	sb.WriteString("Emotion guidance:\n")
 	sb.WriteString("- valence: -1 (strongly negative) … +1 (strongly positive); 0 = neutral.\n")

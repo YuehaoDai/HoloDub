@@ -50,34 +50,34 @@ type ReportJSON struct {
 }
 
 type EpisodeMeta struct {
-	ID              uint    `json:"id"`
-	Name            string  `json:"name"`
-	SourceLanguage  string  `json:"source_language"`
-	TargetLanguage  string  `json:"target_language"`
-	SegmentCount    int     `json:"segment_count"`
-	TotalDurationMs int64   `json:"total_duration_ms"`
+	ID               uint    `json:"id"`
+	Name             string  `json:"name"`
+	SourceLanguage   string  `json:"source_language"`
+	TargetLanguage   string  `json:"target_language"`
+	SegmentCount     int     `json:"segment_count"`
+	TotalDurationMs  int64   `json:"total_duration_ms"`
 	TotalDurationMin float64 `json:"total_duration_min"`
 }
 
 type LeaderboardRow struct {
-	Rank             int     `json:"rank"`
-	Model            string  `json:"model"`
-	JudgeTotal       float64 `json:"judge_total"`
-	BoundaryAvg      float64 `json:"boundary_avg"`
-	TitleAvg         float64 `json:"title_avg"`
-	TopicAvg         float64 `json:"topic_avg"`
-	AvgChapters      float64 `json:"avg_chapters"`
-	MeanDurMin       float64 `json:"mean_dur_min"`
+	Rank               int     `json:"rank"`
+	Model              string  `json:"model"`
+	JudgeTotal         float64 `json:"judge_total"`
+	BoundaryAvg        float64 `json:"boundary_avg"`
+	TitleAvg           float64 `json:"title_avg"`
+	TopicAvg           float64 `json:"topic_avg"`
+	AvgChapters        float64 `json:"avg_chapters"`
+	MeanDurMin         float64 `json:"mean_dur_min"`
 	ValidationPassRate float64 `json:"validation_pass_rate"`
-	AvgWallTimeMs    int64   `json:"avg_wall_time_ms"`
-	JudgeError       string  `json:"judge_error,omitempty"`
+	AvgWallTimeMs      int64   `json:"avg_wall_time_ms"`
+	JudgeError         string  `json:"judge_error,omitempty"`
 }
 
 type ModelDetails struct {
-	Runs           []ExtractRun  `json:"runs"`
-	Judge          JudgeResult   `json:"judge"`
-	ChapterCounts  []int         `json:"chapter_counts_per_run"`
-	StabilityNote  string        `json:"stability_note,omitempty"`
+	Runs            []ExtractRun    `json:"runs"`
+	Judge           JudgeResult     `json:"judge"`
+	ChapterCounts   []int           `json:"chapter_counts_per_run"`
+	StabilityNote   string          `json:"stability_note,omitempty"`
 	WorstBoundaries []BoundaryScore `json:"worst_boundaries,omitempty"`
 }
 
@@ -151,12 +151,12 @@ func writeReport(
 // the report displays it with one decimal.
 func buildLeaderboardRow(model string, runs []ExtractRun, j JudgeResult) LeaderboardRow {
 	row := LeaderboardRow{
-		Model:        model,
-		JudgeTotal:   j.Total,
-		BoundaryAvg:  j.BoundaryAvg,
-		TitleAvg:     j.TitleAvg,
-		TopicAvg:     j.TopicAvg,
-		JudgeError:   j.Error,
+		Model:       model,
+		JudgeTotal:  j.Total,
+		BoundaryAvg: j.BoundaryAvg,
+		TitleAvg:    j.TitleAvg,
+		TopicAvg:    j.TopicAvg,
+		JudgeError:  j.Error,
 	}
 	if len(runs) == 0 {
 		return row

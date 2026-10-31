@@ -12,8 +12,8 @@ import (
 // stack — every call is captured in an internal slice so the test can
 // assert exactly what the engine dispatched.
 type fakeRetryAPI struct {
-	retryCalls   []retryCall
-	episodeCalls []episodeCall
+	retryCalls    []retryCall
+	episodeCalls  []episodeCall
 	dispatchCalls []dispatchCall
 }
 

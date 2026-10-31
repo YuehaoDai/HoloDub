@@ -7,24 +7,24 @@
 // EnqueueEpisodeStage, and this handler picks it up.
 //
 // What it does, in order:
-//   1. Re-runs the OPT-402 glossary extractor on the SAME ASR transcript
-//      (no source-text mutation; the ASR transcript is stable post-asr_smart).
-//   2. Diffs the new glossary against the persisted Episode.Glossary by
-//      `source` term — finds all source terms whose target translation
-//      changed, plus any source terms newly added.
-//   3. Searches every chapter's segments for SourceText that mentions one
-//      of those changed source terms (substring match — the source term IS
-//      the original-language phrase the translator picked up on first pass).
-//   4. Truncates the affected segment list at MAX_GLOSSARY_BROADCAST_SEGMENTS
-//      (default 20) per chapter to keep blast radius bounded; if a single
-//      chapter exceeds that many hits, we record the excess in the log so
-//      operators can tune the threshold.
-//   5. For each (chapter, affected segment IDs) pair, calls
-//      ResetSegmentsForRerun + RetryJob(stage=translate) so the translator
-//      re-runs on those segments with the NEW glossary loaded as context.
-//   6. Persists the new glossary onto Episode (after step 5 enqueues are
-//      done — if we wrote first and crashed before re-queueing, the new
-//      glossary would silently apply to NO segments).
+//  1. Re-runs the OPT-402 glossary extractor on the SAME ASR transcript
+//     (no source-text mutation; the ASR transcript is stable post-asr_smart).
+//  2. Diffs the new glossary against the persisted Episode.Glossary by
+//     `source` term — finds all source terms whose target translation
+//     changed, plus any source terms newly added.
+//  3. Searches every chapter's segments for SourceText that mentions one
+//     of those changed source terms (substring match — the source term IS
+//     the original-language phrase the translator picked up on first pass).
+//  4. Truncates the affected segment list at MAX_GLOSSARY_BROADCAST_SEGMENTS
+//     (default 20) per chapter to keep blast radius bounded; if a single
+//     chapter exceeds that many hits, we record the excess in the log so
+//     operators can tune the threshold.
+//  5. For each (chapter, affected segment IDs) pair, calls
+//     ResetSegmentsForRerun + RetryJob(stage=translate) so the translator
+//     re-runs on those segments with the NEW glossary loaded as context.
+//  6. Persists the new glossary onto Episode (after step 5 enqueues are
+//     done — if we wrote first and crashed before re-queueing, the new
+//     glossary would silently apply to NO segments).
 //
 // Failure-mode contract (mirrors stage_glossary_extract.go):
 //   - LLM extraction failure → log warning, return nil, do nothing. The

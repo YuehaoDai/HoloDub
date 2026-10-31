@@ -130,18 +130,18 @@ type EpisodeJudgeGlossaryEntry struct {
 // one of "production_ready" | "needs_minor_revision" | "needs_major_revision";
 // observe-only mode logs but does not act on it (OPT-407 will).
 type EpisodeJudgeResult struct {
-	TerminologyConsistency     float64 `json:"terminology_consistency"`
-	RegisterConsistency        float64 `json:"register_consistency"`
-	NarrativeCoherence         float64 `json:"narrative_coherence"`
-	CharacterVoiceStability    float64 `json:"character_voice_stability"`
-	CulturalLocalization       float64 `json:"cultural_localization"`
-	OverallFidelity            float64 `json:"overall_fidelity"`
-	OverallFluency             float64 `json:"overall_fluency"`
-	Top3WeakestChapters        []EpisodeJudgeWeakChapter   `json:"top_3_weakest_chapters,omitempty"`
-	Top3WeakestSegments        []EpisodeJudgeWeakSegment   `json:"top_3_weakest_segments,omitempty"`
+	TerminologyConsistency      float64                     `json:"terminology_consistency"`
+	RegisterConsistency         float64                     `json:"register_consistency"`
+	NarrativeCoherence          float64                     `json:"narrative_coherence"`
+	CharacterVoiceStability     float64                     `json:"character_voice_stability"`
+	CulturalLocalization        float64                     `json:"cultural_localization"`
+	OverallFidelity             float64                     `json:"overall_fidelity"`
+	OverallFluency              float64                     `json:"overall_fluency"`
+	Top3WeakestChapters         []EpisodeJudgeWeakChapter   `json:"top_3_weakest_chapters,omitempty"`
+	Top3WeakestSegments         []EpisodeJudgeWeakSegment   `json:"top_3_weakest_segments,omitempty"`
 	TerminologyGlossaryObserved []EpisodeJudgeGlossaryEntry `json:"terminology_glossary_observed,omitempty"`
-	Verdict                    string `json:"verdict"`
-	OneParagraphSummary        string `json:"one_paragraph_summary,omitempty"`
+	Verdict                     string                      `json:"verdict"`
+	OneParagraphSummary         string                      `json:"one_paragraph_summary,omitempty"`
 }
 
 // OverallScore returns a single scalar 0..1 used as Episode.EpisodeJudgeScore.
@@ -210,7 +210,7 @@ var episodeJudgeToolSchema = mustMarshalJSON(map[string]any{
 			"description": "How natural would this episode sound spoken aloud end-to-end by a native target-language speaker? 1.0 = native quality, 0.0 = unintelligible / robotic.",
 		},
 		"top_3_weakest_chapters": map[string]any{
-			"type": "array",
+			"type":        "array",
 			"description": "Up to 3 weakest chapters in this episode (whole-chapter rework candidates). Empty when verdict='production_ready'.",
 			"items": map[string]any{
 				"type": "object",
@@ -225,7 +225,7 @@ var episodeJudgeToolSchema = mustMarshalJSON(map[string]any{
 			"maxItems": 3,
 		},
 		"top_3_weakest_segments": map[string]any{
-			"type": "array",
+			"type":        "array",
 			"description": "Up to 3 weakest INDIVIDUAL segments across the entire episode (segment-level rework candidates). Each entry MUST include chapter_ordinal + ordinal so the segment can be located unambiguously. Empty when verdict='production_ready'.",
 			"items": map[string]any{
 				"type": "object",
@@ -241,7 +241,7 @@ var episodeJudgeToolSchema = mustMarshalJSON(map[string]any{
 			"maxItems": 3,
 		},
 		"terminology_glossary_observed": map[string]any{
-			"type": "array",
+			"type":        "array",
 			"description": "Cross-chapter terminology actually observed. For each recurring term: source_term, the target_term that won out across the episode, and an optional note flagging inconsistent or contested translations.",
 			"items": map[string]any{
 				"type": "object",
@@ -255,12 +255,12 @@ var episodeJudgeToolSchema = mustMarshalJSON(map[string]any{
 			},
 		},
 		"verdict": map[string]any{
-			"type": "string",
-			"enum": []string{"production_ready", "needs_minor_revision", "needs_major_revision"},
+			"type":        "string",
+			"enum":        []string{"production_ready", "needs_minor_revision", "needs_major_revision"},
 			"description": "production_ready = every axis >= 0.9 AND no weakest entries; needs_minor_revision = any axis in [0.8, 0.9) OR 1-2 weak entries (chapters or segments combined); needs_major_revision = any axis < 0.8 OR 3 weak entries.",
 		},
 		"one_paragraph_summary": map[string]any{
-			"type": "string",
+			"type":        "string",
 			"description": "3-4 sentences in the target language summarising overall quality and the most important fix. Optional; populate when verdict != 'production_ready'.",
 		},
 	},
@@ -378,7 +378,7 @@ func (c *Client) JudgeEpisode(ctx context.Context, args EpisodeJudgeArgs) (*Epis
 	// DashScope thinking-mode models reject the strict object form of
 	// tool_choice; fall back to "auto". Same pattern as chapter_judge.go
 	// and OPT-405 glossary.go.
-	var toolChoice any = forceToolChoice("emit_episode_judge_verdict")
+	var toolChoice = forceToolChoice("emit_episode_judge_verdict")
 	if isThinkingModelName(c.episodeJudgeModel) {
 		toolChoice = "auto"
 	}

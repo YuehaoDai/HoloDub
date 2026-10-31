@@ -52,15 +52,15 @@ import (
 )
 
 type flags struct {
-	episode    uint
-	models     string
-	judge      string
-	runs       int
-	judgeRuns  int
-	out        string
+	episode     uint
+	models      string
+	judge       string
+	runs        int
+	judgeRuns   int
+	out         string
 	skipExtract bool
 	skipJudge   bool
-	dryRun     bool
+	dryRun      bool
 }
 
 func parseFlags() flags {

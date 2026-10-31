@@ -20,16 +20,16 @@ type Notifier struct {
 }
 
 type EventPayload struct {
-	Event       string            `json:"event"`
-	JobID       uint              `json:"job_id"`
-	TenantKey   string            `json:"tenant_key"`
-	Status      models.JobStatus  `json:"status"`
-	Stage       models.JobStage   `json:"stage"`
-	Attempt     int               `json:"attempt"`
-	OutputRelPath string          `json:"output_relpath,omitempty"`
-	ErrorMessage string           `json:"error_message,omitempty"`
-	Timestamp   time.Time         `json:"timestamp"`
-	Meta        map[string]any    `json:"meta,omitempty"`
+	Event         string           `json:"event"`
+	JobID         uint             `json:"job_id"`
+	TenantKey     string           `json:"tenant_key"`
+	Status        models.JobStatus `json:"status"`
+	Stage         models.JobStage  `json:"stage"`
+	Attempt       int              `json:"attempt"`
+	OutputRelPath string           `json:"output_relpath,omitempty"`
+	ErrorMessage  string           `json:"error_message,omitempty"`
+	Timestamp     time.Time        `json:"timestamp"`
+	Meta          map[string]any   `json:"meta,omitempty"`
 }
 
 func New(cfg config.Config) *Notifier {

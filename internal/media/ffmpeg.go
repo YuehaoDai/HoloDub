@@ -425,15 +425,6 @@ func ClampMuxedVideoDuration(ctx context.Context, ffmpegBin, inputPath string, d
 	return nil
 }
 
-func overlayFadeFilter(durationMs int64) string {
-	if durationMs <= 80 {
-		return "aresample=24000,"
-	}
-	fadeDurationSec := 0.03
-	fadeOutStartSec := (float64(durationMs) / 1000.0) - fadeDurationSec
-	return fmt.Sprintf("aresample=24000,afade=t=in:st=0:d=%.2f,afade=t=out:st=%.2f:d=%.2f,", fadeDurationSec, fadeOutStartSec, fadeDurationSec)
-}
-
 // clipAndFadeFilter returns a filter string that hard-clips the audio to
 // maxDurationMs and applies a short fade-in/out.  This prevents a TTS segment
 // that ran longer than its time slot from spilling audio into the next segment.

@@ -12,16 +12,16 @@ import (
 // future PR. It also documents the JobsAPI contract: every call records its
 // invocation arguments and lets the test pre-program a return error.
 type fakeJobsAPI struct {
-	starts                []startCall
-	retries               []retryCall
-	cancels               []uint
-	confirmSegmentations  []confirmCall
-	retryASRs             []retryASRCall
-	startErr              error
-	retryErr              error
-	cancelErr             error
-	confirmErr            error
-	retryASRErr           error
+	starts               []startCall
+	retries              []retryCall
+	cancels              []uint
+	confirmSegmentations []confirmCall
+	retryASRs            []retryASRCall
+	startErr             error
+	retryErr             error
+	cancelErr            error
+	confirmErr           error
+	retryASRErr          error
 }
 
 type startCall struct {

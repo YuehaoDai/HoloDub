@@ -33,19 +33,19 @@ import (
 type baselineReport struct {
 	GeneratedBy string `json:"generated_by"`
 	Input       struct {
-		EpisodeName       string `json:"episode_name"`
-		TotalDurationMs   int64  `json:"total_duration_ms"`
-		SegmentCount      int    `json:"segment_count"`
-		AvgSegmentMs      int64  `json:"avg_segment_ms"`
-		AvgGapMs          int64  `json:"avg_gap_ms"`
-		MinGapMs          int64  `json:"min_gap_ms_seen"`
-		MaxGapMs          int64  `json:"max_gap_ms_seen"`
+		EpisodeName     string `json:"episode_name"`
+		TotalDurationMs int64  `json:"total_duration_ms"`
+		SegmentCount    int    `json:"segment_count"`
+		AvgSegmentMs    int64  `json:"avg_segment_ms"`
+		AvgGapMs        int64  `json:"avg_gap_ms"`
+		MinGapMs        int64  `json:"min_gap_ms_seen"`
+		MaxGapMs        int64  `json:"max_gap_ms_seen"`
 	} `json:"input"`
 	AlgorithmKnobs struct {
-		TargetChapterMs    int64 `json:"target_chapter_ms"`
-		MinChapterMs       int64 `json:"min_chapter_ms"`
-		MaxChapterMs       int64 `json:"max_chapter_ms"`
-		MinSilenceGapMs    int64 `json:"min_silence_gap_ms"`
+		TargetChapterMs int64 `json:"target_chapter_ms"`
+		MinChapterMs    int64 `json:"min_chapter_ms"`
+		MaxChapterMs    int64 `json:"max_chapter_ms"`
+		MinSilenceGapMs int64 `json:"min_silence_gap_ms"`
 	} `json:"algorithm_knobs"`
 	Pass1Candidates struct {
 		Count   int   `json:"count"`
@@ -58,11 +58,11 @@ type baselineReport struct {
 		SilenceGapMs int64 `json:"silence_gap_ms"`
 	} `json:"pass2_cuts"`
 	Chapters []struct {
-		Ordinal      int   `json:"ordinal"`
-		StartMs      int64 `json:"start_ms"`
-		EndMs        int64 `json:"end_ms"`
-		DurationMs   int64 `json:"duration_ms"`
-		DurationMin  float64 `json:"duration_min"`
+		Ordinal     int     `json:"ordinal"`
+		StartMs     int64   `json:"start_ms"`
+		EndMs       int64   `json:"end_ms"`
+		DurationMs  int64   `json:"duration_ms"`
+		DurationMin float64 `json:"duration_min"`
 	} `json:"chapters"`
 	Metrics struct {
 		ChapterCount         int     `json:"chapter_count"`
@@ -129,10 +129,10 @@ func main() {
 	avgGap := gapSum / int64(segmentCount-1)
 
 	const (
-		targetMs    = 22 * 60 * 1000 // 22 min
-		minMs       = 18 * 60 * 1000 // 18 min
-		maxMs       = 30 * 60 * 1000 // 30 min
-		minGapMs    = int64(800)
+		targetMs = 22 * 60 * 1000 // 22 min
+		minMs    = 18 * 60 * 1000 // 18 min
+		maxMs    = 30 * 60 * 1000 // 30 min
+		minGapMs = int64(800)
 	)
 
 	candidates := chapterize.ExtractCandidates(segs, minGapMs)
@@ -168,7 +168,7 @@ func main() {
 	}
 
 	minCh, maxCh := int64(1<<62), int64(0)
-	minSilence := int64(1<<62)
+	minSilence := int64(1 << 62)
 	for _, r := range ranges {
 		dur := r.EndMs - r.StartMs
 		if dur < minCh {

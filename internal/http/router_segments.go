@@ -64,9 +64,7 @@ func (s *Server) acceptSegmentSuggestion(c *gin.Context) {
 	// Apply the action
 	if sug.Action == "merge" {
 		ids := make([]uint, len(sug.SegmentIDs))
-		for i, v := range sug.SegmentIDs {
-			ids[i] = v
-		}
+		copy(ids, sug.SegmentIDs)
 		if err := s.store.MergeSegments(ctx, jobID, ids); err != nil {
 			respondError(c, stdhttp.StatusBadRequest, "merge_failed", err.Error())
 			return
@@ -238,4 +236,3 @@ func (s *Server) retrySegmentASR(c *gin.Context) {
 		respondError(c, stdhttp.StatusInternalServerError, "retry_segment_asr_failed", msg)
 	}
 }
-

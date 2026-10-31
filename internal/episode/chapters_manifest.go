@@ -39,19 +39,19 @@ const ManifestSchemaVersion = 1
 // Field ordering matters for stable diff-friendly output; jsonMarshalIndent
 // preserves struct order so we can review changes with a normal `diff`.
 type ChaptersManifest struct {
-	SchemaVersion       int               `json:"schema_version"`
-	EpisodeID           uint              `json:"episode_id"`
-	EpisodeName         string            `json:"episode_name,omitempty"`
-	SourceLanguage      string            `json:"source_language,omitempty"`
-	TargetLanguage      string            `json:"target_language,omitempty"`
-	TotalChapters       int               `json:"total_chapters"`
-	TotalDurationMs     int64             `json:"total_duration_ms"`
-	OutputLayoutVersion int8              `json:"output_layout_version"`
-	OutputRelPath       string            `json:"output_rel_path,omitempty"`
-	GeneratedAt         time.Time         `json:"generated_at"`
-	GeneratedBy         string            `json:"generated_by"` // e.g. "stage_episode_merge" / "cmd/migrate-output"
-	Chapters            []ChapterEntry    `json:"chapters"`
-	LoudnormStats       map[string]any    `json:"loudnorm_stats,omitempty"` // mirrors Episode.LoudnormStats
+	SchemaVersion       int            `json:"schema_version"`
+	EpisodeID           uint           `json:"episode_id"`
+	EpisodeName         string         `json:"episode_name,omitempty"`
+	SourceLanguage      string         `json:"source_language,omitempty"`
+	TargetLanguage      string         `json:"target_language,omitempty"`
+	TotalChapters       int            `json:"total_chapters"`
+	TotalDurationMs     int64          `json:"total_duration_ms"`
+	OutputLayoutVersion int8           `json:"output_layout_version"`
+	OutputRelPath       string         `json:"output_rel_path,omitempty"`
+	GeneratedAt         time.Time      `json:"generated_at"`
+	GeneratedBy         string         `json:"generated_by"` // e.g. "stage_episode_merge" / "cmd/migrate-output"
+	Chapters            []ChapterEntry `json:"chapters"`
+	LoudnormStats       map[string]any `json:"loudnorm_stats,omitempty"` // mirrors Episode.LoudnormStats
 }
 
 // ChapterEntry describes one chapter in the manifest. Bilingual title

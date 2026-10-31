@@ -29,7 +29,7 @@ type visitorLimiter struct {
 }
 
 type rateLimiterStore struct {
-	mu      sync.Mutex
+	mu       sync.Mutex
 	visitors map[string]*visitorLimiter
 }
 
@@ -82,13 +82,13 @@ func tenantMiddleware(defaultTenant string) gin.HandlerFunc {
 // configured token. Liveness/readiness/metrics/UI must always be reachable so
 // that orchestrators can probe the service.
 var publicRoutes = map[string]struct{}{
-	"/":              {},
-	"/ui":            {},
-	"/ui/*filepath":  {},
-	"/healthz":       {},
-	"/readyz":        {},
-	"/ml-health":     {},
-	"/metrics":       {},
+	"/":             {},
+	"/ui":           {},
+	"/ui/*filepath": {},
+	"/healthz":      {},
+	"/readyz":       {},
+	"/ml-health":    {},
+	"/metrics":      {},
 }
 
 func isPublicRoute(path string) bool {
