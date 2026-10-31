@@ -173,13 +173,14 @@ class _StubSettings:
     default_channels = 1
     ffmpeg_bin = "ffmpeg"
     indextts2_neutral_dubbing_max_arousal = 0.65
+    indextts2_neutral_calm_vector_enabled = False
     indextts2_dubbing_emo_vector_max_sum = 0.35
 
 
-def _make_adapter():
+def _make_adapter(settings=None):
     from app.adapters.tts import TTSAdapter
 
-    return TTSAdapter(_StubSettings())  # type: ignore[arg-type]
+    return TTSAdapter(settings or _StubSettings())  # type: ignore[arg-type]
 
 
 def test_resolve_prosody_kwargs_disables_emo_text():
@@ -224,6 +225,22 @@ def test_resolve_prosody_kwargs_neutralizes_calm_lecture_segments():
     )
     assert kwargs["use_emo_text"] is False
     assert "emo_vector" not in kwargs
+
+
+def test_resolve_prosody_kwargs_applies_calm_vector_when_enabled():
+    settings = _StubSettings()
+    settings.indextts2_neutral_calm_vector_enabled = True
+    a = _make_adapter(settings)
+    kwargs = a._resolve_prosody_kwargs(
+        {
+            "emotion": {"valence": 0.3, "arousal": 0.6, "label": "calm"},
+            "pacing": "normal",
+        },
+        text="lecture narration",
+    )
+    assert kwargs["use_emo_text"] is False
+    assert len(kwargs["emo_vector"]) == 8
+    assert sum(kwargs["emo_vector"]) <= settings.indextts2_dubbing_emo_vector_max_sum + 1e-9
 
 
 def test_resolve_prosody_kwargs_skips_empty_emphasis_list():
