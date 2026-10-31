@@ -61,6 +61,12 @@ func TestStageHeartbeatRefreshesLongRunningJob(t *testing.T) {
 	for time.Now().Before(deadline) {
 		got, err := st.GetJob(context.Background(), job.ID)
 		if err != nil {
+			// Shared-cache SQLite reports SQLITE_LOCKED instead of waiting
+			// while the heartbeat goroutine writes the same table.
+			if strings.Contains(err.Error(), "locked") {
+				time.Sleep(20 * time.Millisecond)
+				continue
+			}
 			t.Fatalf("get job during heartbeat: %v", err)
 		}
 		if got.HeartbeatAt != nil {

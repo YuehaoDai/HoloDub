@@ -47,7 +47,7 @@ func SecureJoinUnderRoot(dataRoot, relPath string) (string, error) {
 	if strings.HasPrefix(trimmed, "/") || strings.HasPrefix(trimmed, "\\") {
 		return "", fmt.Errorf("%w: %q starts with a separator", ErrPathEscape, relPath)
 	}
-	osRel := filepath.FromSlash(trimmed)
+	osRel := filepath.FromSlash(strings.ReplaceAll(trimmed, "\\", "/"))
 	if filepath.IsAbs(osRel) {
 		return "", fmt.Errorf("%w: %q is absolute", ErrPathEscape, relPath)
 	}

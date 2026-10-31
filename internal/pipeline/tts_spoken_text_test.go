@@ -15,6 +15,7 @@ import (
 	"holodub/internal/ml"
 	"holodub/internal/models"
 	pipettstts "holodub/internal/pipeline/tts"
+	"holodub/internal/queue"
 	"holodub/internal/store"
 
 	"gorm.io/datatypes"
@@ -40,6 +41,8 @@ func TestProcessOneTTSSegmentLegacyNormalizesTextAndPersistsProvenance(t *testin
 		cfg:   testTTSConfig(t.TempDir()),
 		store: st,
 		ml:    ml.New(server.URL),
+		// Unreachable Redis: stage-lease refresh fails and is only logged.
+		queue: queue.New(config.Config{RedisAddr: "127.0.0.1:1"}),
 	}
 	if err := svc.processOneTTSSegmentWithHint(ctx, job, segments, 0, true, "", nil); err != nil {
 		t.Fatalf("processOneTTSSegmentWithHint: %v", err)
