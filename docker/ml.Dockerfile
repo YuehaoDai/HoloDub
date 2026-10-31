@@ -1,4 +1,6 @@
-# syntax=docker/dockerfile:1.7
+# Requires Docker BuildKit (RUN cache mounts are used below). Omitting the
+# external docker/dockerfile frontend keeps offline rebuilds on Docker Desktop
+# from failing before locally cached base layers can be used.
 
 # CUDA 12.8 devel image includes nvcc, all CUDA headers, and development libs
 # needed to compile third-party CUDA extensions (e.g. BigVGAN anti-alias kernel).
@@ -18,7 +20,13 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     TORCH_HOME=/root/.cache/torch \
     XDG_CACHE_HOME=/root/.cache
 
-RUN apt-get update \
+# Optional Ubuntu mirror base URL (e.g. https://mirrors.tuna.tsinghua.edu.cn/ubuntu)
+# for hosts whose proxy drops long plain-HTTP downloads from archive.ubuntu.com.
+ARG APT_MIRROR=
+RUN if [ -n "$APT_MIRROR" ]; then \
+        sed -i "s|http://archive.ubuntu.com/ubuntu|${APT_MIRROR}|g; s|http://security.ubuntu.com/ubuntu|${APT_MIRROR}|g" /etc/apt/sources.list; \
+    fi \
+    && apt-get update \
     && apt-get install -y --no-install-recommends \
         python3.11 python3.11-dev python3-pip \
         ffmpeg build-essential \
