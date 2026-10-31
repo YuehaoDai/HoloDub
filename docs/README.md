@@ -32,6 +32,7 @@ For day-to-day usage, see the [UI usage guide](ui-guide.md).
 ## Running And Deploying
 
 - [Configuration reference](configuration.md): readable guide to `.env.example`, real backend modes, IndexTTS2, review, chapterization, judge, and rework flags.
+- [Data management](data-management.md): data tiers, target directory layout, cleanup log, deliverable records, and the migration plan.
 - [UI usage guide](ui-guide.md): console walkthrough for creating jobs, reviewing ASR segments, repairing drift, managing voices, and checking outputs.
 - [Production release runbook](production/release-runbook.md): release checklist, validation sequence, deployment command path, and rollback.
 - [Real backend rollout](production/real-backend-rollout.md): staged migration from smoke/demo mode into real ASR, translation, TTS, and merge execution.
