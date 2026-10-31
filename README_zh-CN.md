@@ -65,19 +65,24 @@ HoloDub 选择另一条路：你控制模型，你控制数据，你控制最终
 - 只重跑失败段、高漂移段或被人工修改过的段，而不是重跑整个视频。
 - 在 UI 里审核 ASR 边界、合并/拆分片段、调整时间、编辑原文、重识别单段。
 - 在操作台查看模型预热、阶段进度、输出文件、漂移率、AI 评分、弱段和当前错误。
+- 把长视频切成多个章节任务，整集共享一份术语表，最后把章节合并成一条响度归一化的整集输出。
 - 暴露 Prometheus 指标，并提供 Grafana、OpenAPI、发布和部署文档骨架。
 
-## 操作台设计
+## 操作台
 
-HoloDub 的 UI 已按“可观测配音工作台”重构。任务不再是一个黑盒：每个阶段、每个片段、每个输出文件和每个时间漂移都应该能被看见。
+HoloDub 的 UI 是一个“可观测配音工作台”。任务不再是黑盒：每个阶段、每个片段、每个输出文件和每个时间漂移都能被看见。以下截图来自真实的 MIT 6.824 任务。
 
-![HoloDub 可观测操作台](assets/holodub-console-observability.png)
+任务页展示当前阶段、已合成段数、高漂移段数、输出就绪度、AI 评分、运行时长和阶段时间线：
 
-段落工作台服务于真正的精修工作：筛选高漂移段、对比原声与 TTS、查看波形、编辑译文、切换音色、只重跑有问题的行。
+![HoloDub 任务概览](assets/ui-job-overview-zh.png)
 
-![HoloDub 段落精修工作台](assets/holodub-segment-workbench.png)
+段落工作台逐行展示原文、译文、音色、漂移率和偏差秒数。编辑某一行可以修改译文或音色，并只重新合成这一段：
 
-上面的图是本次 UI 改造使用的设计图例，当前 Vue 3 + Tailwind 实现已经沿用这套视觉系统。接入 Go API 和 Worker 后，界面会展示真实任务数据。
+![HoloDub 段落工作台](assets/ui-segments-zh.png)
+
+长视频以剧集（Episode）为单位跟踪：剧集阶段、章节进度、整集评分、合并输出、参考卡和共享术语表：
+
+![HoloDub 剧集视图](assets/ui-episode-zh.png)
 
 ## 公开生产案例
 
@@ -127,6 +132,26 @@ flowchart LR
 | `tts_duration`   | 按目标时长和音色约束合成每个片段。            |
 | `merge`          | 把对齐后的配音重组回最终视频。                |
 
+## 长视频：剧集与章节
+
+每个任务都隶属于一个剧集（Episode）。剧集级阶段包在上面的单任务流水线外面：
+
+```mermaid
+flowchart LR
+  A["ep_media / ep_separate / ep_asr_smart"] --> B["ep_glossary_extract"]
+  B --> C["ep_chapterize"]
+  C --> D["章节任务（单任务流水线）"]
+  D --> E["ep_episode_merge"]
+  E --> F["ep_episode_judge"]
+```
+
+- `ep_glossary_extract`：生成参考卡和术语表，所有章节的翻译共用。
+- `ep_chapterize`：按静音和话题边界把长视频切成约 22 分钟一章（默认 18–30 分钟）。短视频保持单章节。
+- `ep_episode_merge`：拼接各章节输出并做响度归一化。
+- `ep_episode_judge`：配置 `EPISODE_JUDGE_MODEL` 后，对整集做 LLM 质量评分。章节级评分使用 `CHAPTER_JUDGE_MODEL`。
+
+`CHAPTERIZE_ENABLED` 与 `EPISODE_MERGE_ENABLED` 默认开启，详见 [配置参考](docs/configuration.md#chapter-episode-and-judge-features)。
+
 ## 架构
 
 ```mermaid
@@ -154,11 +179,23 @@ HoloDub 默认适合单机部署：
 
 ## 快速开始
 
-### 1. 烟测模式：无需 GPU，无需 API key
+### 1. 烟测模式：无需模型，无需 API key
 
 ```powershell
 Copy-Item .env.example .env
-docker compose up --build -d
+docker compose --env-file .env up --build -d
+```
+
+`docker-compose.yml` 默认给 `ml-service` 申请一块 NVIDIA GPU。没有 GPU 的机器需要叠加 CPU 覆盖文件：
+
+```powershell
+docker compose -f docker-compose.yml -f docker-compose.cpu.yml --env-file .env up --build -d
+```
+
+在共享的 `/data` 目录里生成一段 10 秒测试视频（API 镜像自带 ffmpeg）：
+
+```powershell
+docker compose exec api ffmpeg -y -f lavfi -i "testsrc=duration=10:size=640x360:rate=25" -f lavfi -i "sine=frequency=440:duration=10" -shortest -c:v libx264 -pix_fmt yuv420p -c:a aac /data/input-smoke.mp4
 ```
 
 提交测试任务：
@@ -211,6 +248,12 @@ docker compose --env-file .env up -d
 ```
 
 建议每次启动都显式传入 `--env-file .env`，避免 shell 中的 `COMPOSE_ENV_FILE` 误指向 `.env.example`。
+
+如果构建 `ml-service` 时 `apt-get` 从 `archive.ubuntu.com` 下载超时（在代理环境下很常见），可以改用 HTTPS 的 Ubuntu 镜像源：
+
+```powershell
+docker compose build --build-arg APT_MIRROR=https://mirrors.tuna.tsinghua.edu.cn/ubuntu ml-service
+```
 
 完整环境变量矩阵见 [配置参考](docs/configuration.md)。
 
@@ -273,13 +316,31 @@ HoloDub 的前端不是装饰，它是长视频译制的控制台。
 | 段落表格     | 原文、译文、音色、漂移率、偏差秒数、AI 评分、音频和行操作。  |
 | 分段审查     | LLM 建议、手动合并/拆分、原文编辑、时间调整、单段 ASR 重试。 |
 | 产物面板     | 最终视频、中间音频、CSV/JSON trace 和最新输出文件。          |
+| 剧集视图     | 剧集阶段、章节进度、整集评分、合并输出、参考卡和术语表。     |
+| LoRA 页面（实验） | LoRA 训练任务登记、smoke/canary/regression 校验、Adapter 管理。 |
+
+## 实验性功能
+
+以下功能已经实现，但默认关闭。建议先在单个任务上开启，并与默认路径对比后再依赖。
+
+| 功能                             | 开关                                   |
+| -------------------------------- | -------------------------------------- |
+| 逐段 TTS agent 循环              | `SEGMENT_AGENT_ENABLED`                |
+| 多模型 ensemble 重译             | `ENSEMBLE_RETRANSLATE_ENABLED`         |
+| 结构化情绪/语速配音计划          | `DUBBING_PLAN_ENABLED`                 |
+| TTS 前的时长规划                 | `TEMPORAL_PLAN_ENABLED`                |
+| 根据评分结果自动返工             | `REWORK_ENGINE_LEVEL`（默认 `none`）   |
+| TTS 循环中使用 IndexTTS2 LoRA 候选 | `LORA_CANDIDATE_LOOP_ENABLED`        |
+| 完整 LoRA 训练 runner            | `LORA_TRAINING_FULL_RUNNER_ENABLED`    |
+
+LoRA 训练流程见 [LoRA adapter 训练 SOP](docs/lora-adapter-training-sop.md)。生产运行使用 IndexTTS2 基础模型。
 
 ## 部署说明
 
 项目已经包含：
 
 - 本地和服务器运行用 Docker Compose。
-- `docker-compose.staging.yml` 与 `docker-compose.prod.yml`。
+- `docker-compose.staging.yml` 与 `docker-compose.prod.yml`，以及无 NVIDIA GPU 机器用的 `docker-compose.cpu.yml`。
 - `deploy/helm/holodub` 下的 Helm chart 骨架。
 - `docs/production` 下的发布、扩容和真实后端 rollout 文档。
 - `docs/observability` 下的 Prometheus 抓取配置、告警规则和 Grafana dashboard。
@@ -307,16 +368,19 @@ HoloDub 已经可以完成真实端到端配音，目前工程重点是稳定性
 - 分段审查与人工介入工作流。
 - 段级 TTS 即时入库和精确重试。
 - 长视频 ffmpeg 分批合并。
+- 剧集流水线：共享术语表、自动分章、章节与整集合并及响度归一化。
+- 段落、章节、整集三级异步 LLM 质量评分。
 - 可观测优先的 Web UI 重构。
 - Prometheus/Grafana 可观测资产。
 - CI、安全扫描和 OpenAPI 配置。
 
 仍在推进：
 
-- 更稳定的真实人声/BGM 分离默认方案。
+- 听感自然的时长控制：让译文适配时间窗口，而不是硬拉伸语速。
+- 更稳定的真实人声/BGM 分离默认方案（默认分离后端仍是 `ffmpeg_stub`）。
 - Pyannote 说话人分离的安装和体验优化。
 - 中文参考音频和韵律配置指南。
-- 章节/整集级质量评估的自动门禁。
+- 验证上面的实验性功能，再决定是否默认开启。
 - 面向团队协作的长任务报告和分享能力。
 
 ## 文档入口
@@ -335,7 +399,7 @@ HoloDub 已经可以完成真实端到端配音，目前工程重点是稳定性
 ## 技术栈
 
 - 控制面：Go、Gin、GORM、Redis、PostgreSQL。
-- ML 服务：Python、FastAPI、PyTorch、Faster-Whisper、Pyannote、Demucs/UVR5、IndexTTS2。
+- ML 服务：Python、FastAPI、PyTorch、Faster-Whisper、Pyannote、Demucs、IndexTTS2。
 - 前端：Vue 3、Vite、Tailwind CSS、WaveSurfer.js。
 - 编排：Docker Compose、Helm chart 骨架。
 - LLM 提供方：DeepSeek、Qwen 兼容网关、OpenAI 兼容 API 或自托管 endpoint。

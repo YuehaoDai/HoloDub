@@ -7,7 +7,7 @@ HoloDub is more than a demo pipeline. It is a local-first dubbing studio with a 
 | Reader                       | Best Entry Point                                                   | What You Get                                                               |
 | ---------------------------- | ------------------------------------------------------------------ | -------------------------------------------------------------------------- |
 | New visitor                  | [Project README](../README.md) / [中文 README](../README_zh-CN.md) | Product story, screenshots, architecture, quick start, current status      |
-| Backend or frontend engineer | [System overview](system-overview.md)                              | Service boundaries, runtime responsibilities, data flow                    |
+| Backend or frontend engineer | [Architecture](../README.md#architecture)                          | Service boundaries, runtime responsibilities, data flow                    |
 | Console user                 | [UI usage guide](ui-guide.md)                                      | Create jobs, review segmentation, fix drift, manage voices, inspect output |
 | Local operator               | [Configuration reference](configuration.md)                        | Environment modes, real ML settings, IndexTTS2, review, judge flags        |
 | API integrator               | [OpenAPI spec](openapi.yaml)                                       | Jobs, segments, review, metrics, and operational endpoints                 |
@@ -21,11 +21,11 @@ HoloDub is more than a demo pipeline. It is a local-first dubbing studio with a 
 
 The redesigned UI is organized around an operator-first idea: every job should reveal its state, risk, timing drift, and segment quality without forcing the user to read logs first.
 
-![HoloDub console observability concept](../assets/holodub-console-observability.png)
+![HoloDub job overview](../assets/ui-job-overview-en.png)
 
-![HoloDub segment workbench concept](../assets/holodub-segment-workbench.png)
+![HoloDub segment workbench](../assets/ui-segments-en.png)
 
-These images are design references for the current console direction. The implementation keeps the same priorities: live pipeline visibility, filterable segments, waveform review, drift-aware quality signals, and fast retry controls.
+These screenshots come from real MIT 6.824 runs. The console keeps the same priorities: live pipeline visibility, filterable segments, waveform review, drift-aware quality signals, and fast retry controls.
 
 For day-to-day usage, see the [UI usage guide](ui-guide.md).
 
