@@ -112,6 +112,16 @@ tests/quality/_debug/
 # Node.js / frontend build artifacts
 ui/node_modules/
 ui/.vite/
+ui/test-results/
+
+# Local env variants (contain credentials) and scratch runtime output
+.env.*
+!.env.example
+!.env.*.example
+tmp/
+data/preview/
+data/qa/
+data/ml-build-context-*/
 
 # Editor/IDE
 # .idea/
