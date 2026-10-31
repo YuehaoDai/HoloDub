@@ -1,0 +1,5 @@
+# CPU-only override for smoke runs on machines without an NVIDIA GPU.
+# Usage: docker compose -f docker-compose.yml -f docker-compose.cpu.yml --env-file .env up --build -d
+services:
+  ml-service:
+    deploy: !reset {}
