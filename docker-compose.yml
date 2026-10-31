@@ -41,9 +41,9 @@ services:
     volumes:
       # Runtime model caches live on the host so container recreation does not
       # redownload Hugging Face or torch.hub/Demucs weights.
-      - ./data:/data
-      - ./hf-cache:/root/.cache/huggingface
-      - ./torch-cache:/root/.cache/torch
+      - ${HOLODUB_DATA_ROOT:-../HoloDubData}:/data
+      - ${HOLODUB_DATA_ROOT:-../HoloDubData}/models/hf-cache:/root/.cache/huggingface
+      - ${HOLODUB_DATA_ROOT:-../HoloDubData}/models/torch-cache:/root/.cache/torch
     # GPU passthrough via nvidia Container Toolkit.
     # Requires: Docker Desktop with WSL2 backend + nvidia runtime (already verified).
     # Remove the deploy block entirely if you want CPU-only mode.
@@ -81,7 +81,7 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      - ./data:/data
+      - ${HOLODUB_DATA_ROOT:-../HoloDubData}:/data
 
   worker:
     build:
@@ -107,7 +107,7 @@ services:
       # Set WORKER_METRICS_ADDR="" to disable.
       - "8081:8081"
     volumes:
-      - ./data:/data
+      - ${HOLODUB_DATA_ROOT:-../HoloDubData}:/data
 
 volumes:
   postgres-data:

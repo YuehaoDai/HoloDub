@@ -84,6 +84,6 @@ services:
       redis:
         condition: service_healthy
     volumes:
-      - ./data:/data
+      - ${HOLODUB_DATA_ROOT:-../HoloDubData}:/data
     profiles:
       - tools

@@ -341,6 +341,7 @@ LoRA 训练流程见 [LoRA adapter 训练 SOP](docs/lora-adapter-training-sop.md
 
 - 本地和服务器运行用 Docker Compose。
 - `docker-compose.staging.yml` 与 `docker-compose.prod.yml`，以及无 NVIDIA GPU 机器用的 `docker-compose.cpu.yml`。
+- 数据放在代码仓库之外：`HOLODUB_DATA_ROOT`（默认 `../HoloDubData`）挂载为 `/data`，模型缓存在其 `models/` 下。详见 [数据管理规范](docs/data-management.md)。
 - `deploy/helm/holodub` 下的 Helm chart 骨架。
 - `docs/production` 下的发布、扩容和真实后端 rollout 文档。
 - `docs/observability` 下的 Prometheus 抓取配置、告警规则和 Grafana dashboard。

@@ -75,7 +75,11 @@ B 站合集 [BV1uYXFBLEPo](https://www.bilibili.com/video/BV1uYXFBLEPo/) 各分 
 
 每一步先出演练报告，确认后执行，并能回退。
 
-1. **数据根迁移与原片整理**：`F:/HoloDub/data` 移到 `F:/HoloDubData`；`hf-cache`、`torch-cache` 移到 `models/`；`docker-compose.yml` 挂载随之修改。原片按 `sources/mit-6.824-2020/lec-NN.<ext>` 规范命名，数据库中引用原片的路径在一个事务内改写，执行后逐条核对文件存在。
+1. **数据根迁移与原片整理（2026-10-31 已完成）**：`F:/HoloDub/data` 移到 `F:/HoloDubData`；`hf-cache`、`torch-cache` 移到 `models/`；Compose 挂载改为 `${HOLODUB_DATA_ROOT:-../HoloDubData}`。原片按 `sources/mit-6.824-2020/lec-NN.<ext>` 命名（第 7–9 讲的 mkv 与 mp4 两个版本并存），测试片段移到 `sources/test-clips/`，音色样本移到 `assets/voices/`，3 个与项目无关的直播回放移到 `F:/HoloDub-unrelated/`。
+   - 数据库在一个事务内改写：任务 64 条、剧集 101 条、音色档案 3 条、LoRA 参考音 2 条、段落来源记录 36 条；报错文字和历史命令保持原样。
+   - 验证：数据库引用的 8,192 个路径中 4,653 个在新位置存在，其余 3,539 个在迁移前就已缺失，迁移丢失为 0；段落配音、原声、任务/剧集成片的下载接口均正常返回。
+   - 回退依据：`F:/HoloDubBackups/migration-step1-moves.csv`（89 条搬迁记录）与 `legacy-postgres-20261031-pre-step1.sql`。
+   - `F:/HoloDub/data` 中只保留 5 个被 git 跟踪的调试文件。`tools/lora_canary_*.py` 仍假设数据位于 `仓库/data`，恢复 LoRA 实验前需要先适配。
 2. **交付物登记**：第 1、5、7 讲的候选成片放入 `deliverables/` 并写 `provenance.json`；其余讲次标记为“仅存于 B 站”。
 3. **按规则清理**（逐项出报告确认）：单章节重复成片改为硬链接；已交付剧集的 L3 缓存；失败/取消任务目录；与项目无关的直播回放；LoRA 训练与实验数据（待决定归档或删除）。
 4. **代码改造**（前三步跑顺后）：产物自动登记到数据目录、发布交付物的操作、默认只出报告的清理命令、修复 Windows 上章节输出走复制而非硬链接的问题。

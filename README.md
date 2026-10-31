@@ -341,6 +341,7 @@ The project ships with:
 
 - Docker Compose for local and server runs.
 - `docker-compose.staging.yml` and `docker-compose.prod.yml` overlays, plus `docker-compose.cpu.yml` for machines without an NVIDIA GPU.
+- Data lives outside the repository: `HOLODUB_DATA_ROOT` (default `../HoloDubData`) is mounted as `/data`, with model caches under `models/`. See the [data management guide](docs/data-management.md).
 - Helm chart skeleton under `deploy/helm/holodub`.
 - Release and rollout notes under `docs/production`.
 - Prometheus scrape config, rules, and Grafana dashboard under `docs/observability`.
