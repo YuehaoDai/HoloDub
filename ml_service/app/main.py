@@ -2,7 +2,7 @@ import logging
 import sys
 import threading
 import time
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI
 
@@ -25,7 +25,6 @@ from app.routes.media import router as media_router  # noqa: E402
 from app.routes.tts import router as tts_router  # noqa: E402
 from app.runtime import ServiceContainer  # noqa: E402
 
-
 WARMUP_HEARTBEAT_SEC = 30.0
 WARMUP_HARD_TIMEOUT_SEC = 30 * 60.0
 
@@ -41,10 +40,8 @@ def _flush_logging() -> None:
     crashed".
     """
     for handler in list(logging.getLogger().handlers):
-        try:
+        with suppress(Exception):
             handler.flush()
-        except Exception:  # noqa: BLE001
-            pass
     sys.stdout.flush()
     sys.stderr.flush()
 
@@ -81,7 +78,7 @@ def _spawn_indextts2_warmup(services: ServiceContainer) -> None:
             final = services.tts.get_indextts2_warmup_status()
             set_warmup_status(final)
             logger.info("IndexTTS2 warm-up complete: status=%s", final)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             set_warmup_status("error")
             logger.exception("IndexTTS2 warm-up raised: %s", exc)
         finally:

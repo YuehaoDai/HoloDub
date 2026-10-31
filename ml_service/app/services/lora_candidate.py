@@ -6,10 +6,10 @@ import shutil
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from app.adapters.asr import ASRAdapter
 from app.adapters.indextts2_lora import LoraAdapterController, ensure_lora_adapter
 from app.adapters.media import probe_duration
 from app.adapters.tts import TTSAdapter, _LoraCandidatePolicy
-from app.adapters.asr import ASRAdapter
 from app.config import Settings
 from app.models import TTSRequest, TTSResponse
 from app.services.lora_candidate_quality import (
@@ -22,7 +22,6 @@ from app.services.lora_candidate_quality import (
 )
 from app.services.lora_candidate_split import SplitPlanOptions, build_split_plan, should_split
 from app.storage import ensure_parent, resolve_data_path
-
 
 logger = logging.getLogger(__name__)
 
@@ -93,7 +92,7 @@ class LoraCandidateService:
             tts_model = self.tts.ensure_indextts2_loaded()
             controller = ensure_lora_adapter(tts_model, adapter_path)
             return self._run_candidates(request, policy, controller)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.exception("LoRA candidate execution failed; falling back to default TTS")
             return self._fallback_response(
                 request,
@@ -308,7 +307,7 @@ class LoraCandidateService:
             "execution_mode": policy.execution_mode,
             "audio_selection_mode": audio_selection_mode,
             "selected_family": selected["family"],
-            "selection_reason": "highest_gate_score" if not fallback_reason else fallback_reason,
+            "selection_reason": fallback_reason or "highest_gate_score",
             "fallback_reason": fallback_reason,
             "candidate_families": families,
             "split_plan": self._runtime_split_plan(split_plan, split_plan_alternates, selected),
@@ -446,7 +445,6 @@ class LoraCandidateService:
         part_paths: list[Path] = []
         part_rows: list[dict[str, Any]] = []
         for part in split_plan["parts"]:
-            index = int(part["index"])
             part_row = self._cached_part(
                 request,
                 split_plan,
@@ -618,7 +616,7 @@ class LoraCandidateService:
                 0,
                 duration_ms,
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             asr_diagnostics = [f"asr_failed={exc}"]
         sim = asr_similarity(expected_text, asr_text)
         term = critical_term_metrics(expected_text, asr_text)
@@ -830,9 +828,7 @@ class LoraCandidateService:
         if isinstance(join_rescue, dict) and bool(join_rescue.get("applied")):
             return False
         jq = row.get("join_quality")
-        if jq is not None and not bool(jq.get("pass")):
-            return False
-        return True
+        return jq is None or bool(jq.get("pass"))
 
     def _select_candidate(self, candidates: list[dict[str, Any]]) -> dict[str, Any]:
         passed = [row for row in candidates if row.get("gate_pass")]

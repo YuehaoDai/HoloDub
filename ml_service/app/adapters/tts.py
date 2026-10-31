@@ -104,7 +104,7 @@ class _LoraCandidatePolicy:
     gate: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_meta(cls, dubbing_meta: dict[str, Any] | None) -> "_LoraCandidatePolicy":
+    def from_meta(cls, dubbing_meta: dict[str, Any] | None) -> _LoraCandidatePolicy:
         if not isinstance(dubbing_meta, dict):
             return cls()
         candidate = dubbing_meta.get("lora_candidate")
@@ -375,7 +375,7 @@ def _indextts2_duration_tokens(
     generation_meta: dict[str, Any] | None = None,
 ) -> int:
     rate = _indextts2_duration_token_rate(settings, target_sec, generation_meta)
-    return max(1, int(round(max(0.05, target_sec) * rate)))
+    return max(1, round(max(0.05, target_sec) * rate))
 
 
 def _indextts2_duration_max_tokens(
@@ -420,7 +420,7 @@ def _apply_generation_seed(generation_meta: dict[str, Any]) -> str:
         torch.manual_seed(seed)
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(seed)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         return f" seed={seed} seed_warn={exc}"
     return f" seed={seed}"
 
@@ -688,7 +688,7 @@ class TTSAdapter:
             return
         try:
             self.ensure_indextts2_loaded()
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.exception("IndexTTS2 warm-up failed: %s", exc)
 
     def release_indextts2(self) -> bool:
@@ -710,7 +710,7 @@ class TTSAdapter:
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
                 torch.cuda.ipc_collect()
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.warning("IndexTTS2 release memory cleanup failed: %s", exc)
         logger.info("IndexTTS2 released; warmup_status=idle")
         return True
@@ -813,11 +813,6 @@ class TTSAdapter:
         # unexpectedly long audio for degenerate inputs like lone periods.
         if not _has_speakable_text(request.text):
             return self._run_silence(request)
-        _printable = request.text.translate(
-            str.maketrans("", "", " \t\n\r.,!?。！？，、；：…—–")
-        )
-        if False and not _printable:
-            return self._run_silence(request)
 
         backend = self.settings.ml_tts_backend
         if backend == "indextts2":
@@ -910,11 +905,11 @@ class TTSAdapter:
 
         target_sec = max(request.target_duration_sec, 0.1)
         max_allowed_sec = request.max_allowed_sec if request.max_allowed_sec > 0 else target_sec
-        if duration_mode == "embedding":
-            if target_sec < _indextts2_duration_min_sec(self.settings, generation_meta):
-                duration_mode = "off"
-            elif not _patch_indextts2_duration_control(tts):
-                duration_mode = "off"
+        if duration_mode == "embedding" and (
+            target_sec < _indextts2_duration_min_sec(self.settings, generation_meta)
+            or not _patch_indextts2_duration_control(tts)
+        ):
+            duration_mode = "off"
         text_chars = max(1, len([c for c in request.text if not c.isspace()]))
 
         # Scheme 2: blend observed tokens_per_char with prior if feedback
@@ -1030,7 +1025,7 @@ class TTSAdapter:
                     f"prosody=plan(emotion={emo_label} pacing={pacing_label}"
                     f" pause_ms={pause_after_ms})"
                 )
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 # Malformed dubbing_meta must NEVER fail a TTS call —
                 # an upstream translator bug should produce slightly
                 # less prosodic audio, not a stuck pipeline. Logged at
@@ -1788,7 +1783,7 @@ def _find_loud_reference_start(source_path: Path, window_sec: float, hop_sec: fl
 
     if not energies:
         return 0.0
-    window_hops = max(1, int(round(window_sec / hop_sec)))
+    window_hops = max(1, round(window_sec / hop_sec))
     if len(energies) <= window_hops:
         return 0.0
 
@@ -1823,13 +1818,13 @@ def _find_stable_reference_candidate(
         frames = _reference_hop_features(source_path, hop_sec)
         if not frames:
             continue
-        window_hops = max(1, int(round(window_sec / hop_sec)))
+        window_hops = max(1, round(window_sec / hop_sec))
         if len(frames) <= window_hops:
             candidate = {"path": source_path, "start_sec": 0.0, "score": 0.0}
             best = candidate if best is None or candidate["score"] < best["score"] else best
             continue
         duration_sec = len(frames) * hop_sec
-        for idx in range(0, len(frames) - window_hops + 1):
+        for idx in range(len(frames) - window_hops + 1):
             start_sec = float(idx) * hop_sec
             end_sec = start_sec + window_sec
             # Avoid chapter edges where intro/outro silence and clipped applause

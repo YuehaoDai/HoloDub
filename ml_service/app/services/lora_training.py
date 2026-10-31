@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
-import json
+from collections.abc import Callable
 from pathlib import Path, PurePosixPath
-from typing import Any, Callable
+from typing import Any
 
 from app.config import Settings
 from app.models import (
@@ -15,7 +16,6 @@ from app.models import (
     LoraTrainingRunRequest,
     LoraTrainingRunResponse,
 )
-
 
 SubprocessRun = Callable[..., subprocess.CompletedProcess[str]]
 
@@ -260,7 +260,7 @@ class LoraTrainingRunner:
                     check=False,
                 )
                 exit_code = int(completed.returncode)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 stderr_handle.write(f"\n[runner] failed to launch training: {exc}\n")
                 return self._response(
                     status="failed",
@@ -396,7 +396,7 @@ class LoraTrainingRunner:
         stdout_log = self.settings.data_root / stdout_log_relpath
         stderr_log = self.settings.data_root / stderr_log_relpath
         stdout_log.parent.mkdir(parents=True, exist_ok=True)
-        diagnostics = [f"execution_mode=ml_service_subprocess", f"runner_mode={mode}"]
+        diagnostics = ["execution_mode=ml_service_subprocess", f"runner_mode={mode}"]
         with stdout_log.open("w", encoding="utf-8", newline="\n") as stdout_handle, stderr_log.open(
             "w", encoding="utf-8", newline="\n"
         ) as stderr_handle:
@@ -410,7 +410,7 @@ class LoraTrainingRunner:
                     check=False,
                 )
                 exit_code = int(completed.returncode)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 stderr_handle.write(f"\n[runner] failed to launch {mode}: {exc}\n")
                 return None, [*diagnostics, f"launch_error={exc}"]
         if exit_code != 0:

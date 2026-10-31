@@ -3,9 +3,9 @@ from __future__ import annotations
 import contextlib
 import math
 import re
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, Iterator
-
+from typing import Any
 
 _CONTROLLER_ATTR = "_holodub_lora_controller"
 _IS_LORA_MODULE_ATTR = "_holodub_lora_conv1d"

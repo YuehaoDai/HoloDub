@@ -162,7 +162,7 @@ def _spans_from_scores(
     active = False
     start_sec = 0.0
     last_end_sec = 0.0
-    for score, window in zip(scores, windows):
+    for score, window in zip(scores, windows, strict=False):
         if not active and score >= onset:
             start_sec = float(window.start)
             active = True

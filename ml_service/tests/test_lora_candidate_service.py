@@ -7,8 +7,7 @@ from typing import Any
 import pytest
 
 from app.adapters.indextts2_lora import ensure_lora_adapter
-from app.adapters.tts import _LoraCandidatePolicy
-from app.adapters.tts import write_silence_wav
+from app.adapters.tts import _LoraCandidatePolicy, write_silence_wav
 from app.models import TTSRequest, TTSResponse
 from app.services.lora_candidate import LoraCandidateService
 from app.services.lora_candidate_quality import fit_audio_duration

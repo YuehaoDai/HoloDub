@@ -7,8 +7,8 @@ from types import SimpleNamespace
 import pytest
 
 from app.models import LoraCanaryRunRequest, LoraRegressionRunRequest, LoraTrainingRunRequest
-from app.services.lora_training import LoraTrainingRunner
 from app.runtime import LazyLoraTrainingRunner
+from app.services.lora_training import LoraTrainingRunner
 
 
 def _settings(data_root: Path) -> SimpleNamespace:
@@ -46,7 +46,7 @@ def test_lora_training_smoke_caps_steps_and_records_artifacts(tmp_path: Path):
     script.write_text("print('fake')\n", encoding="utf-8")
     data_root = tmp_path / "data"
 
-    def fake_run(command, cwd, stdout, stderr, text, check):  # noqa: ANN001
+    def fake_run(command, cwd, stdout, stderr, text, check):
         assert "--max-steps" in command
         assert command[command.index("--max-steps") + 1] == "1"
         assert command[command.index("--save-every") + 1] == "1"
@@ -89,7 +89,7 @@ def test_lora_training_full_keeps_requested_cadence_and_official_output(tmp_path
     request = _request()
     request.output_dir_relpath = "training/lora_runs/run-a"
 
-    def fake_run(command, cwd, stdout, stderr, text, check):  # noqa: ANN001
+    def fake_run(command, cwd, stdout, stderr, text, check):
         assert command[command.index("--max-steps") + 1] == "120"
         assert command[command.index("--save-every") + 1] == "20"
         assert command[command.index("--eval-interval") + 1] == "10"
@@ -124,7 +124,7 @@ def test_lora_training_smoke_rejects_unsafe_paths(tmp_path: Path):
 
 def test_lazy_lora_training_runner_defers_missing_tools_until_use(tmp_path: Path, monkeypatch):
     class MissingRunner:
-        def __init__(self, settings):  # noqa: ANN001
+        def __init__(self, settings):
             raise FileNotFoundError("LoRA tools directory not found")
 
     monkeypatch.setattr("app.runtime.LoraTrainingRunner", MissingRunner)
@@ -143,7 +143,7 @@ def test_lora_canary_runner_uses_no_docker_and_returns_review_artifacts(tmp_path
     (tools / "lora_canary_regression_check.py").write_text("print('fake')\n", encoding="utf-8")
     data_root = tmp_path / "data"
 
-    def fake_run(command, cwd, stdout, stderr, text, check):  # noqa: ANN001
+    def fake_run(command, cwd, stdout, stderr, text, check):
         assert "lora_canary_candidate_loop.py" in command[1]
         assert "--no-docker" in command
         assert command[command.index("--candidate-families") + 1] == "flat,split_light_vector,split_mix"
@@ -195,7 +195,7 @@ def test_lora_regression_runner_writes_report(tmp_path: Path):
     (tools / "lora_canary_regression_check.py").write_text("print('fake')\n", encoding="utf-8")
     data_root = tmp_path / "data"
 
-    def fake_run(command, cwd, stdout, stderr, text, check):  # noqa: ANN001
+    def fake_run(command, cwd, stdout, stderr, text, check):
         assert "lora_canary_regression_check.py" in command[1]
         assert command[command.index("--min-count") + 1] == "84"
         stdout.write('{"ok": true}\n')

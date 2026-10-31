@@ -83,6 +83,9 @@ ignore = [
   "E501",   # line length (handled by formatter)
   "B008",   # mutable default args (FastAPI Depends pattern)
   "SIM108", # ternary if (readability sometimes worse)
+  "RUF001", # ambiguous unicode in strings: Chinese full-width punctuation is intentional
+  "RUF002", # same, in docstrings
+  "RUF003", # same, in comments
 ]
 
 [tool.ruff.lint.per-file-ignores]

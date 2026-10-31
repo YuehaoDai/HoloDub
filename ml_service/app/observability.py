@@ -170,7 +170,7 @@ class _RequestIDLogFilter(logging.Filter):
     can pull request IDs from contextvars without runtime errors.
     """
 
-    def filter(self, record: logging.LogRecord) -> bool:  # noqa: D401
+    def filter(self, record: logging.LogRecord) -> bool:
         return True
 
 

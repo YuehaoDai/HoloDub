@@ -1,6 +1,5 @@
 import asyncio
 import logging
-from functools import partial
 
 from fastapi import APIRouter, HTTPException, Request
 

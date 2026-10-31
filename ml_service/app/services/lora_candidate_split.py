@@ -5,7 +5,6 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-
 HARD_BOUNDARY_RE = re.compile(r"([.!?;:\n\u3002\uff01\uff1f\uff1b\uff1a])")
 SOFT_BOUNDARY_RE = re.compile(r"([,\u3001\uff0c])")
 SPLIT_PROTECTED_TERMS = (
@@ -293,7 +292,7 @@ def enforce_max_part_seconds(parts: list[str], sec: float, opts: SplitPlanOption
         available_new_parts = max(1, opts.max_parts) - len(parts)
         if len(split) - 1 > available_new_parts:
             kept_count = available_new_parts + 1
-            split = split[: available_new_parts] + ["".join(split[available_new_parts:]).strip()]
+            split = [*split[:available_new_parts], "".join(split[available_new_parts:]).strip()]
             if len(split) != kept_count:
                 break
         parts = parts[:worst_index] + split + parts[worst_index + 1 :]
@@ -320,11 +319,11 @@ def build_split_plan(text: str, target_sec: float, options: SplitPlanOptions | N
     for index, part in enumerate(parts, start=1):
         part_chars = count_chars(part)
         if index == len(parts):
-            part_ms = max(50, int(round(speech_sec * 1000.0)) - assigned_ms)
+            part_ms = max(50, round(speech_sec * 1000.0) - assigned_ms)
         else:
             part_ms = max(
                 50,
-                int(round(speech_sec * 1000.0 * part_chars / max(total_chars, 1))),
+                round(speech_sec * 1000.0 * part_chars / max(total_chars, 1)),
             )
             assigned_ms += part_ms
         part_sec = part_ms / 1000.0

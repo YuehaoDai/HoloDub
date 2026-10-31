@@ -3,8 +3,8 @@ from app.adapters.media import MediaSeparatorAdapter
 from app.adapters.tts import TTSAdapter
 from app.adapters.vad import VADAdapter
 from app.config import Settings
-from app.services.lora_candidate import LoraCandidateService
 from app.services.gpu_guard import GPUGuard
+from app.services.lora_candidate import LoraCandidateService
 from app.services.lora_training import LoraTrainingRunner
 from app.services.model_manifest import ModelManifest
 from app.services.model_registry import ModelRegistry

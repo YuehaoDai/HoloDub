@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import subprocess
 import logging
+import subprocess
 from pathlib import Path
 
 from app.adapters.media import MediaSeparatorAdapter
@@ -30,7 +30,7 @@ def test_demucs_segment_arg_is_integer(tmp_path, monkeypatch):
     (tmp_path / "in.mkv").write_bytes(b"not really media")
     seen: dict[str, list[str]] = {}
 
-    def fake_run(command, check, capture_output, text, env):  # noqa: ANN001
+    def fake_run(command, check, capture_output, text, env):
         seen["command"] = command
         seen["env"] = env
         out_dir = Path(command[command.index("--out") + 1])
@@ -66,7 +66,7 @@ def test_demucs_timeout_accepts_completed_stems(tmp_path, monkeypatch):
     class TimeoutSettings(_Settings):
         ml_demucs_timeout_sec = 1.0
 
-    def fake_run(command, **kwargs):  # noqa: ANN001
+    def fake_run(command, **kwargs):
         assert kwargs["timeout"] == 1.0
         out_dir = Path(command[command.index("--out") + 1])
         demucs_dir = out_dir / "mdx_q" / "in"
@@ -99,12 +99,12 @@ def test_demucs_chunk_logs_total_progress(tmp_path, monkeypatch, caplog):
     temp_root = tmp_path / "chunks"
     temp_root.mkdir()
 
-    def fake_run(command, **kwargs):  # noqa: ANN001
+    def fake_run(command, **kwargs):
         output = Path(command[-1])
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_bytes(b"chunk")
 
-    def fake_demucs_command(chunk_input, chunk_out, segment_sec):  # noqa: ANN001
+    def fake_demucs_command(chunk_input, chunk_out, segment_sec):
         chunk_out.mkdir(parents=True, exist_ok=True)
         vocals = chunk_out / "vocals.wav"
         bgm = chunk_out / "no_vocals.wav"

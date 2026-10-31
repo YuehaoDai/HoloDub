@@ -1,6 +1,6 @@
+import wave
 from array import array
 from pathlib import Path
-import wave
 
 from app.services.lora_candidate_quality import (
     asr_similarity,

@@ -159,10 +159,7 @@ class ASRAdapter:
             words, mock_diag = self._run_mock(tmp_path)
             return render_text(words), diagnostics + mock_diag
         finally:
-            try:
-                tmp_path.unlink()
-            except FileNotFoundError:
-                pass
+            tmp_path.unlink(missing_ok=True)
 
     def _transcribe_full_text(self, audio_path: Path, source_language: str) -> str:
         """Run faster-whisper on a (typically short) clip and return the
@@ -674,9 +671,7 @@ def segment_words(
     # between them; merging prevents TTS spillover.  close_gap_ms defaults to 800 ms
     # (down from the old 1500 ms) to avoid over-aggressively chaining segments.
     # hard_max_ms acts as a safety ceiling so no merged segment can exceed it.
-    segments = _merge_close_gap_segments(segments, close_gap_ms=close_gap_ms, hard_max_ms=hard_max_ms)
-
-    return segments
+    return _merge_close_gap_segments(segments, close_gap_ms=close_gap_ms, hard_max_ms=hard_max_ms)
 
 
 def _merge_short_segments(segments: list[Segment], min_word_count: int, hard_max_ms: int = 0) -> list[Segment]:

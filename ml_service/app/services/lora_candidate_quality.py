@@ -11,7 +11,6 @@ from typing import Any
 
 from app.adapters.media import probe_duration
 
-
 LATIN_TERM_RE = re.compile(r"[A-Za-z][A-Za-z0-9_.+-]*|\d+(?:\.\d+)?")
 CHINESE_DOMAIN_TERMS = (
     "\u65e5\u5fd7\u6761\u76ee",
