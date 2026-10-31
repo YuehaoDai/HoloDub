@@ -62,3 +62,7 @@ formatters:
 issues:
   max-issues-per-linter: 0
   max-same-issues: 0
+  # Legacy baseline: only report issues on lines changed after this commit.
+  # 114 pre-existing issues (errcheck, gosec, govet shadow, gocyclo, ...)
+  # remain to be paid down; move this forward only after fixing them.
+  new-from-rev: 0de35810b92c36785cfb668716f6c53696b25306
