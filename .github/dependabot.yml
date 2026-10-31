@@ -38,3 +38,7 @@ updates:
     directory: /docker
     schedule:
       interval: monthly
+    ignore:
+      # CUDA must stay on 12.8 to match the cu128 torch/torchaudio wheels.
+      - dependency-name: nvidia/cuda
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
